@@ -1,0 +1,6 @@
+_VMMouseClient_Disable
+_VMMouseClient_Enable
+_VMMouseClient_GetInput
+_VMMouseClient_RequestAbsolute
+_VMMouseClient_RequestRelative
+_VMMouseProto_SendCmd

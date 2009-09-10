@@ -1,0 +1,265 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 45;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		7966BF830FDC697F00B5A040 /* vmmouse_client.c in Sources */ = {isa = PBXBuildFile; fileRef = 7966BF7E0FDC697F00B5A040 /* vmmouse_client.c */; };
+		7966BF860FDC697F00B5A040 /* vmmouse_proto.c in Sources */ = {isa = PBXBuildFile; fileRef = 7966BF810FDC697F00B5A040 /* vmmouse_proto.c */; };
+		799F5C7D0FDC5C2D005D5D93 /* VMMouse.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 799F5C7B0FDC5C2D005D5D93 /* VMMouse.cpp */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		32D94FCF0562CBF700B6AF17 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		32D94FD00562CBF700B6AF17 /* VMMouse.kext */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = VMMouse.kext; sourceTree = BUILT_PRODUCTS_DIR; };
+		7966BF7E0FDC697F00B5A040 /* vmmouse_client.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; name = vmmouse_client.c; path = shared/vmmouse_client.c; sourceTree = "<group>"; };
+		7966BF7F0FDC697F00B5A040 /* vmmouse_client.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = vmmouse_client.h; path = shared/vmmouse_client.h; sourceTree = "<group>"; };
+		7966BF800FDC697F00B5A040 /* vmmouse_defs.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = vmmouse_defs.h; path = shared/vmmouse_defs.h; sourceTree = "<group>"; };
+		7966BF810FDC697F00B5A040 /* vmmouse_proto.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; name = vmmouse_proto.c; path = shared/vmmouse_proto.c; sourceTree = "<group>"; };
+		7966BF820FDC697F00B5A040 /* vmmouse_proto.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = vmmouse_proto.h; path = shared/vmmouse_proto.h; sourceTree = "<group>"; };
+		799F5C7B0FDC5C2D005D5D93 /* VMMouse.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = VMMouse.cpp; sourceTree = "<group>"; };
+		799F5C7C0FDC5C2D005D5D93 /* VMMouse.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = VMMouse.h; sourceTree = "<group>"; };
+		8DA8362C06AD9B9200E5AC22 /* Kernel.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Kernel.framework; path = /System/Library/Frameworks/Kernel.framework; sourceTree = "<absolute>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		32D94FCB0562CBF700B6AF17 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		089C166AFE841209C02AAC07 /* VMMouse */ = {
+			isa = PBXGroup;
+			children = (
+				79A0513C0FDC6E1400B20DE3 /* Headers */,
+				247142CAFF3F8F9811CA285C /* Source */,
+				8DA8362C06AD9B9200E5AC22 /* Kernel.framework */,
+				089C167CFE841241C02AAC07 /* Resources */,
+				19C28FB6FE9D52B211CA2CBB /* Products */,
+			);
+			name = VMMouse;
+			sourceTree = "<group>";
+		};
+		089C167CFE841241C02AAC07 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				32D94FCF0562CBF700B6AF17 /* Info.plist */,
+			);
+			name = Resources;
+			sourceTree = "<group>";
+		};
+		19C28FB6FE9D52B211CA2CBB /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				32D94FD00562CBF700B6AF17 /* VMMouse.kext */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		247142CAFF3F8F9811CA285C /* Source */ = {
+			isa = PBXGroup;
+			children = (
+				799F5C7B0FDC5C2D005D5D93 /* VMMouse.cpp */,
+				7966BF7E0FDC697F00B5A040 /* vmmouse_client.c */,
+				7966BF810FDC697F00B5A040 /* vmmouse_proto.c */,
+			);
+			name = Source;
+			sourceTree = "<group>";
+		};
+		79A0513C0FDC6E1400B20DE3 /* Headers */ = {
+			isa = PBXGroup;
+			children = (
+				799F5C7C0FDC5C2D005D5D93 /* VMMouse.h */,
+				7966BF820FDC697F00B5A040 /* vmmouse_proto.h */,
+				7966BF800FDC697F00B5A040 /* vmmouse_defs.h */,
+				7966BF7F0FDC697F00B5A040 /* vmmouse_client.h */,
+			);
+			name = Headers;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXHeadersBuildPhase section */
+		32D94FC50562CBF700B6AF17 /* Headers */ = {
+			isa = PBXHeadersBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXHeadersBuildPhase section */
+
+/* Begin PBXNativeTarget section */
+		32D94FC30562CBF700B6AF17 /* VMMouse */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 1DEB91D908733DB10010E9CD /* Build configuration list for PBXNativeTarget "VMMouse" */;
+			buildPhases = (
+				32D94FC50562CBF700B6AF17 /* Headers */,
+				32D94FC70562CBF700B6AF17 /* Resources */,
+				32D94FC90562CBF700B6AF17 /* Sources */,
+				32D94FCB0562CBF700B6AF17 /* Frameworks */,
+				32D94FCC0562CBF700B6AF17 /* Rez */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = VMMouse;
+			productInstallPath = "$(SYSTEM_LIBRARY_DIR)/Extensions/ApplePS2Controller.kext/Contents/PlugIns";
+			productName = VMMouse;
+			productReference = 32D94FD00562CBF700B6AF17 /* VMMouse.kext */;
+			productType = "com.apple.product-type.kernel-extension.iokit";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		089C1669FE841209C02AAC07 /* Project object */ = {
+			isa = PBXProject;
+			buildConfigurationList = 1DEB91DD08733DB10010E9CD /* Build configuration list for PBXProject "VMMouse" */;
+			compatibilityVersion = "Xcode 3.1";
+			hasScannedForEncodings = 1;
+			mainGroup = 089C166AFE841209C02AAC07 /* VMMouse */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				32D94FC30562CBF700B6AF17 /* VMMouse */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		32D94FC70562CBF700B6AF17 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXRezBuildPhase section */
+		32D94FCC0562CBF700B6AF17 /* Rez */ = {
+			isa = PBXRezBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXRezBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		32D94FC90562CBF700B6AF17 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				799F5C7D0FDC5C2D005D5D93 /* VMMouse.cpp in Sources */,
+				7966BF830FDC697F00B5A040 /* vmmouse_client.c in Sources */,
+				7966BF860FDC697F00B5A040 /* vmmouse_proto.c in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		1DEB91DA08733DB10010E9CD /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				INFOPLIST_FILE = Info.plist;
+				INFOPLIST_PREPROCESS = YES;
+				MODULE_NAME = net.osx86.driver.VMMouse;
+				MODULE_VERSION = "$(CURRENT_PROJECT_VERSION)";
+				PRODUCT_NAME = VMMouse;
+				UNEXPORTED_SYMBOLS_FILE = no_export.txt;
+				WRAPPER_EXTENSION = kext;
+			};
+			name = Debug;
+		};
+		1DEB91DB08733DB10010E9CD /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				INFOPLIST_FILE = Info.plist;
+				INFOPLIST_PREPROCESS = YES;
+				MODULE_NAME = net.osx86.driver.VMMouse;
+				MODULE_VERSION = "$(CURRENT_PROJECT_VERSION)";
+				PRODUCT_NAME = VMMouse;
+				STRIPFLAGS = "-R no_export.txt";
+				WRAPPER_EXTENSION = kext;
+			};
+			name = Release;
+		};
+		1DEB91DE08733DB10010E9CD /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ARCHS = "$(ARCHS_STANDARD_32_BIT)";
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1.2.0;
+				GCC_MODEL_TUNING = G5;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = VMX86_DEVEL;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				HEADER_SEARCH_PATHS = (
+					"$(SDKROOT)/usr/include",
+					include,
+				);
+				INSTALL_PATH = "$(SYSTEM_LIBRARY_DIR)/Extensions/ApplePS2Controller.kext/Contents/PlugIns";
+				ONLY_ACTIVE_ARCH = YES;
+				PREBINDING = NO;
+				SDKROOT = macosx10.5;
+			};
+			name = Debug;
+		};
+		1DEB91DF08733DB10010E9CD /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ARCHS = "$(ARCHS_STANDARD_32_BIT)";
+				CURRENT_PROJECT_VERSION = 1.2.0;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEPLOYMENT_POSTPROCESSING = YES;
+				GCC_MODEL_TUNING = G5;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				HEADER_SEARCH_PATHS = (
+					"$(SDKROOT)/usr/include",
+					include,
+				);
+				INSTALL_PATH = "$(SYSTEM_LIBRARY_DIR)/Extensions/ApplePS2Controller.kext/Contents/PlugIns";
+				ONLY_ACTIVE_ARCH = YES;
+				PREBINDING = NO;
+				SDKROOT = macosx10.5;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		1DEB91D908733DB10010E9CD /* Build configuration list for PBXNativeTarget "VMMouse" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				1DEB91DA08733DB10010E9CD /* Debug */,
+				1DEB91DB08733DB10010E9CD /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		1DEB91DD08733DB10010E9CD /* Build configuration list for PBXProject "VMMouse" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				1DEB91DE08733DB10010E9CD /* Debug */,
+				1DEB91DF08733DB10010E9CD /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 089C1669FE841209C02AAC07 /* Project object */;
+}

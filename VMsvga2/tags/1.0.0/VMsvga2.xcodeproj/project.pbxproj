@@ -1,0 +1,281 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 45;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		32D94FC60562CBF700B6AF17 /* VMsvga2.h in Headers */ = {isa = PBXBuildFile; fileRef = 1A224C3EFF42367911CA2CB7 /* VMsvga2.h */; };
+		32D94FCA0562CBF700B6AF17 /* VMsvga2.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 1A224C3FFF42367911CA2CB7 /* VMsvga2.cpp */; settings = {ATTRIBUTES = (); }; };
+		792AA6B60FFF858500B0B5B1 /* VMsvga2Client.h in Headers */ = {isa = PBXBuildFile; fileRef = 792AA6B40FFF858500B0B5B1 /* VMsvga2Client.h */; };
+		792AA6B70FFF858500B0B5B1 /* VMsvga2Client.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 792AA6B50FFF858500B0B5B1 /* VMsvga2Client.cpp */; };
+		798421121007C15200C4C763 /* svga_overlay.h in Headers */ = {isa = PBXBuildFile; fileRef = 798421111007C15200C4C763 /* svga_overlay.h */; };
+		79BD1DBC1005132C00D12B9A /* send.s in Sources */ = {isa = PBXBuildFile; fileRef = 79BD1DBB1005132C00D12B9A /* send.s */; };
+		79C59DEF0FFD2A780090150B /* svga_reg.h in Headers */ = {isa = PBXBuildFile; fileRef = 79C59DEE0FFD2A780090150B /* svga_reg.h */; };
+		79CD27F20FFD0E97002D58FE /* SVGADevice.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 79CD27F00FFD0E97002D58FE /* SVGADevice.cpp */; };
+		79CD27F30FFD0E97002D58FE /* SVGADevice.h in Headers */ = {isa = PBXBuildFile; fileRef = 79CD27F10FFD0E97002D58FE /* SVGADevice.h */; };
+		79D55C980FFFB1AA004151C8 /* common.h in Headers */ = {isa = PBXBuildFile; fileRef = 79D55C970FFFB1AA004151C8 /* common.h */; };
+		79D6E26B1008D086005D1591 /* modes.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 79D6E26A1008D086005D1591 /* modes.cpp */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		1A224C3EFF42367911CA2CB7 /* VMsvga2.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = VMsvga2.h; sourceTree = "<group>"; };
+		1A224C3FFF42367911CA2CB7 /* VMsvga2.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = VMsvga2.cpp; sourceTree = "<group>"; };
+		32D94FCF0562CBF700B6AF17 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		32D94FD00562CBF700B6AF17 /* VMsvga2.kext */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = VMsvga2.kext; sourceTree = BUILT_PRODUCTS_DIR; };
+		792AA6B40FFF858500B0B5B1 /* VMsvga2Client.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = VMsvga2Client.h; sourceTree = "<group>"; };
+		792AA6B50FFF858500B0B5B1 /* VMsvga2Client.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = VMsvga2Client.cpp; sourceTree = "<group>"; };
+		798421111007C15200C4C763 /* svga_overlay.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = svga_overlay.h; sourceTree = "<group>"; };
+		79BD1DBB1005132C00D12B9A /* send.s */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.asm; path = send.s; sourceTree = "<group>"; };
+		79C59DEE0FFD2A780090150B /* svga_reg.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = svga_reg.h; sourceTree = "<group>"; };
+		79CD27F00FFD0E97002D58FE /* SVGADevice.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = SVGADevice.cpp; sourceTree = "<group>"; };
+		79CD27F10FFD0E97002D58FE /* SVGADevice.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = SVGADevice.h; sourceTree = "<group>"; };
+		79D55C970FFFB1AA004151C8 /* common.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = common.h; sourceTree = "<group>"; };
+		79D6E26A1008D086005D1591 /* modes.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = modes.cpp; sourceTree = "<group>"; };
+		8DA8362C06AD9B9200E5AC22 /* Kernel.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Kernel.framework; path = /System/Library/Frameworks/Kernel.framework; sourceTree = "<absolute>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		32D94FCB0562CBF700B6AF17 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		089C166AFE841209C02AAC07 /* VMsvga2 */ = {
+			isa = PBXGroup;
+			children = (
+				79CD27F50FFD0EA4002D58FE /* Headers */,
+				247142CAFF3F8F9811CA285C /* Source */,
+				8DA8362C06AD9B9200E5AC22 /* Kernel.framework */,
+				089C167CFE841241C02AAC07 /* Resources */,
+				19C28FB6FE9D52B211CA2CBB /* Products */,
+			);
+			name = VMsvga2;
+			sourceTree = "<group>";
+		};
+		089C167CFE841241C02AAC07 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				32D94FCF0562CBF700B6AF17 /* Info.plist */,
+			);
+			name = Resources;
+			sourceTree = "<group>";
+		};
+		19C28FB6FE9D52B211CA2CBB /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				32D94FD00562CBF700B6AF17 /* VMsvga2.kext */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		247142CAFF3F8F9811CA285C /* Source */ = {
+			isa = PBXGroup;
+			children = (
+				79CD27F00FFD0E97002D58FE /* SVGADevice.cpp */,
+				1A224C3FFF42367911CA2CB7 /* VMsvga2.cpp */,
+				792AA6B50FFF858500B0B5B1 /* VMsvga2Client.cpp */,
+				79BD1DBB1005132C00D12B9A /* send.s */,
+				79D6E26A1008D086005D1591 /* modes.cpp */,
+			);
+			name = Source;
+			sourceTree = "<group>";
+		};
+		79CD27F50FFD0EA4002D58FE /* Headers */ = {
+			isa = PBXGroup;
+			children = (
+				798421111007C15200C4C763 /* svga_overlay.h */,
+				792AA6B40FFF858500B0B5B1 /* VMsvga2Client.h */,
+				79C59DEE0FFD2A780090150B /* svga_reg.h */,
+				79CD27F10FFD0E97002D58FE /* SVGADevice.h */,
+				1A224C3EFF42367911CA2CB7 /* VMsvga2.h */,
+				79D55C970FFFB1AA004151C8 /* common.h */,
+			);
+			name = Headers;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXHeadersBuildPhase section */
+		32D94FC50562CBF700B6AF17 /* Headers */ = {
+			isa = PBXHeadersBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				32D94FC60562CBF700B6AF17 /* VMsvga2.h in Headers */,
+				79CD27F30FFD0E97002D58FE /* SVGADevice.h in Headers */,
+				79C59DEF0FFD2A780090150B /* svga_reg.h in Headers */,
+				792AA6B60FFF858500B0B5B1 /* VMsvga2Client.h in Headers */,
+				79D55C980FFFB1AA004151C8 /* common.h in Headers */,
+				798421121007C15200C4C763 /* svga_overlay.h in Headers */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXHeadersBuildPhase section */
+
+/* Begin PBXNativeTarget section */
+		32D94FC30562CBF700B6AF17 /* VMsvga2 */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 1DEB91D908733DB10010E9CD /* Build configuration list for PBXNativeTarget "VMsvga2" */;
+			buildPhases = (
+				32D94FC50562CBF700B6AF17 /* Headers */,
+				32D94FC70562CBF700B6AF17 /* Resources */,
+				32D94FC90562CBF700B6AF17 /* Sources */,
+				32D94FCB0562CBF700B6AF17 /* Frameworks */,
+				32D94FCC0562CBF700B6AF17 /* Rez */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = VMsvga2;
+			productInstallPath = "$(SYSTEM_LIBRARY_DIR)/Extensions";
+			productName = VMsvga2;
+			productReference = 32D94FD00562CBF700B6AF17 /* VMsvga2.kext */;
+			productType = "com.apple.product-type.kernel-extension.iokit";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		089C1669FE841209C02AAC07 /* Project object */ = {
+			isa = PBXProject;
+			buildConfigurationList = 1DEB91DD08733DB10010E9CD /* Build configuration list for PBXProject "VMsvga2" */;
+			compatibilityVersion = "Xcode 3.1";
+			hasScannedForEncodings = 1;
+			mainGroup = 089C166AFE841209C02AAC07 /* VMsvga2 */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				32D94FC30562CBF700B6AF17 /* VMsvga2 */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		32D94FC70562CBF700B6AF17 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXRezBuildPhase section */
+		32D94FCC0562CBF700B6AF17 /* Rez */ = {
+			isa = PBXRezBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXRezBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		32D94FC90562CBF700B6AF17 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				32D94FCA0562CBF700B6AF17 /* VMsvga2.cpp in Sources */,
+				79CD27F20FFD0E97002D58FE /* SVGADevice.cpp in Sources */,
+				792AA6B70FFF858500B0B5B1 /* VMsvga2Client.cpp in Sources */,
+				79BD1DBC1005132C00D12B9A /* send.s in Sources */,
+				79D6E26B1008D086005D1591 /* modes.cpp in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		1DEB91DA08733DB10010E9CD /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				INFOPLIST_FILE = Info.plist;
+				INFOPLIST_PREPROCESS = YES;
+				MODULE_NAME = net.osx86.driver.VMsvga2;
+				MODULE_VERSION = "$(CURRENT_PROJECT_VERSION)";
+				PRODUCT_NAME = VMsvga2;
+				WRAPPER_EXTENSION = kext;
+			};
+			name = Debug;
+		};
+		1DEB91DB08733DB10010E9CD /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				INFOPLIST_FILE = Info.plist;
+				INFOPLIST_PREPROCESS = YES;
+				MODULE_NAME = net.osx86.driver.VMsvga2;
+				MODULE_VERSION = "$(CURRENT_PROJECT_VERSION)";
+				PRODUCT_NAME = VMsvga2;
+				WRAPPER_EXTENSION = kext;
+			};
+			name = Release;
+		};
+		1DEB91DE08733DB10010E9CD /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ARCHS = "$(ARCHS_STANDARD_32_BIT)";
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1.0.0;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_MODEL_TUNING = G5;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				INSTALL_PATH = "$(SYSTEM_LIBRARY_DIR)/Extensions";
+				ONLY_ACTIVE_ARCH = YES;
+				PREBINDING = NO;
+				SDKROOT = macosx10.5;
+			};
+			name = Debug;
+		};
+		1DEB91DF08733DB10010E9CD /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ARCHS = "$(ARCHS_STANDARD_32_BIT)";
+				CURRENT_PROJECT_VERSION = 1.0.0;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEPLOYMENT_POSTPROCESSING = YES;
+				GCC_MODEL_TUNING = G5;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				INSTALL_PATH = "$(SYSTEM_LIBRARY_DIR)/Extensions";
+				ONLY_ACTIVE_ARCH = YES;
+				PREBINDING = NO;
+				SDKROOT = macosx10.5;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		1DEB91D908733DB10010E9CD /* Build configuration list for PBXNativeTarget "VMsvga2" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				1DEB91DA08733DB10010E9CD /* Debug */,
+				1DEB91DB08733DB10010E9CD /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		1DEB91DD08733DB10010E9CD /* Build configuration list for PBXProject "VMsvga2" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				1DEB91DE08733DB10010E9CD /* Debug */,
+				1DEB91DF08733DB10010E9CD /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 089C1669FE841209C02AAC07 /* Project object */;
+}

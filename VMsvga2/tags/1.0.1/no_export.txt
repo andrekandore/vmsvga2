@@ -1,0 +1,11 @@
+_VMLog_SendString
+_customMode
+_modeList
+_vmw_options
+_vma_options
+_RectCopy
+_RectFill
+_SyncFIFO
+_UpdateFramebuffer
+_useAccelUpdates
+_RegionCopy
