@@ -448,7 +448,7 @@ void VMMouse::dispatchRelativePointerEventWithPacket(UInt8 * packet,
 		}
 		while ((numPackets = VMMouseClient_GetInput(&vmmouseInput)))
 		{
-			if (numPackets == VMMOUSE_ERROR) {
+			if (numPackets == static_cast<int>(VMMOUSE_ERROR)) {
 				VMMouseClient_Disable();
 				VMMouseClient_Enable();
 				if (_absoluteModeRequested)
