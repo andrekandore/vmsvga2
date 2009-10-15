@@ -16,7 +16,7 @@
 		7986DC2D1030405A00B83FAC /* CoreFoundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 7986DC2C1030405A00B83FAC /* CoreFoundation.framework */; };
 		7986DC4E10304ED500B83FAC /* VMsvga22DContext.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 7986DC381030478900B83FAC /* VMsvga22DContext.cpp */; };
 		7987F8861037020E003B52A2 /* SendString.c in Sources */ = {isa = PBXBuildFile; fileRef = 7987F8851037020E003B52A2 /* SendString.c */; };
-		799EFBD010483D9C003195B5 /* VMsvga2Allocator.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 799EFBCF10483D9C003195B5 /* VMsvga2Allocator.cpp */; };
+		799EFBD010483D9C003195B5 /* VMsvga2Allocator.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 799EFBCF10483D9C003195B5 /* VMsvga2Allocator.cpp */; settings = {COMPILER_FLAGS = "-Wno-sign-compare"; }; };
 		799F594710319210000D2A71 /* SVGA3D.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 799F594610319210000D2A71 /* SVGA3D.cpp */; };
 		79B34F1B103324D500D1E214 /* BlitHelper.c in Sources */ = {isa = PBXBuildFile; fileRef = 79B34F1A103324D500D1E214 /* BlitHelper.c */; };
 		79B4ECAC102B2F7B003D1F8B /* VMsvga2Surface.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 7919BDE2102B204300E56229 /* VMsvga2Surface.cpp */; };
@@ -425,8 +425,8 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ARCHS = i386;
-				COMPATIBLE_PROJECT_VERSION = 1.1.0;
-				CURRENT_PROJECT_VERSION = 1.1.0;
+				COMPATIBLE_PROJECT_VERSION = 1.1.1;
+				CURRENT_PROJECT_VERSION = 1.1.1;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEPLOYMENT_POSTPROCESSING = YES;
 				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
@@ -475,8 +475,8 @@
 					i386,
 					x86_64,
 				);
-				COMPATIBLE_PROJECT_VERSION = 1.1.0;
-				CURRENT_PROJECT_VERSION = 1.1.0;
+				COMPATIBLE_PROJECT_VERSION = 1.1.1;
+				CURRENT_PROJECT_VERSION = 1.1.1;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEPLOYMENT_POSTPROCESSING = YES;
 				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;

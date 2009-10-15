@@ -175,6 +175,7 @@ public:
 	void lockAccel();
 	void unlockAccel();
 	bool Have3D() const { return bHaveSVGA3D != 0; }
+	bool reverseDMAReadSense() const;
 
 	/*
 	 * Video Support

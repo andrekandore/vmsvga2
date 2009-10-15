@@ -337,8 +337,9 @@ bool CLASS::start(IOService* provider)
 	}
 	m_svga = m_framebuffer->getDevice();
 	if (checkOptionAC(VMW_OPTION_AC_SVGA3D) && svga3d.Init(m_svga)) {
+		UInt32 hwv = svga3d.getHWVersion();
 		bHaveSVGA3D = true;
-		ACLog(1, "SVGA3D On\n");
+		ACLog(1, "SVGA3D On, 3D HWVersion == %u.%u\n", SVGA3D_MAJOR_HWVERSION(hwv), SVGA3D_MINOR_HWVERSION(hwv));
 	}
 	if (checkOptionAC(VMW_OPTION_AC_NO_YUV))
 		ACLog(1, "YUV Off\n");
@@ -958,6 +959,17 @@ void CLASS::lockAccel()
 void CLASS::unlockAccel()
 {
 	IOLockUnlock(m_iolock);
+}
+
+/*
+ * Note:
+ *   This is a somewhat artifical way to determine if we're
+ *   running on Workstation 7 and should reverse the sense of
+ *   SVGA3D_READ_HOST_VRAM.
+ */
+bool CLASS::reverseDMAReadSense() const
+{
+	return m_svga->getMaxGMRs() > 64U;
 }
 
 #pragma mark -
