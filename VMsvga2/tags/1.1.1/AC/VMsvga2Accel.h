@@ -55,6 +55,7 @@ private:
 #ifdef FB_NOTIFIER
 	IONotifier* m_fbNotifier;
 #endif
+	task_t m_updating_ga;
 
 	/*
 	 * Logging and Options
@@ -122,7 +123,7 @@ public:
 	/*
 	 * Methods for supporting VMsvga22DContext
 	 */
-	IOReturn useAccelUpdates(uintptr_t state);
+	IOReturn useAccelUpdates(uintptr_t state, task_t owningTask);
 	IOReturn RectCopy(struct IOBlitCopyRectangleStruct const* copyRects, size_t copyRectsSize);
 	IOReturn RectFill(uintptr_t color, struct IOBlitRectangleStruct const* rects, size_t rectsSize);
 	IOReturn UpdateFramebuffer(UInt32 const* rect);	// rect is an array of 4 UInt32 - x, y, width, height

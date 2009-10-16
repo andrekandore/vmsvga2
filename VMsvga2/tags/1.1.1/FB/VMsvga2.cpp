@@ -1129,4 +1129,5 @@ void CLASS::useAccelUpdates(bool state)
 		IOLockUnlock(m_iolock);
 	}
 	setProperty("VMwareSVGAAccelSynchronize", state);
+	LogPrintf(2, "Accelerator Assisted Updates: %s\n", state ? "On" : "Off");
 }

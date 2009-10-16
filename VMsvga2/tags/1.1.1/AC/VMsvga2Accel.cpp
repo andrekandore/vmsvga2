@@ -462,10 +462,13 @@ IOReturn CLASS::SyncToFence(UInt32 fence)
 #pragma mark SVGA FIFO Acceleration Methods for 2D Context
 #pragma mark -
 
-IOReturn CLASS::useAccelUpdates(uintptr_t state)
+IOReturn CLASS::useAccelUpdates(uintptr_t state, task_t owningTask)
 {
+	if (m_updating_ga != 0 && m_updating_ga != owningTask)
+		return kIOReturnSuccess;
 	if (!m_framebuffer)
 		return kIOReturnNoDevice;
+	m_updating_ga = (state != 0) ? owningTask : 0;
 	m_framebuffer->useAccelUpdates(state != 0);
 	return kIOReturnSuccess;
 }
