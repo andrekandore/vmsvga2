@@ -56,6 +56,11 @@
  *
  */
 
+/*
+ * Some of the code was adapted from AppleAC97AudioAMDCS5535.cpp and is subject
+ *   to the APSL Version 1.1, see http://www.opensource.apple.com/apsl
+ */
+
 #include <IOKit/pci/IOPCIDevice.h>
 #include <IOKit/IOLib.h>
 #include <IOKit/IOWorkLoop.h>
@@ -126,7 +131,7 @@ struct DMAEngineState
 {
 	IOOptionBits flags;						// offset 0
 	IOBufferMemoryDescriptor* sampleMemory;	// offset 4
-	void* sampleMemoryPhysAddr;				// offset 8
+	IOPhysicalAddress sampleMemoryPhysAddr;	// offset 8
 	bool interruptReady;					// offset 12
 	void* interruptTarget;					// offset 16
 	IOAC97DMAEngineAction interruptAction;	// offset 20
@@ -235,7 +240,10 @@ IOReturn CLASS::activateAudioConfiguration(IOAC97AudioConfig* config, void* targ
 		return kIOReturnBusy;
 	hwActivateConfiguration(config);	// Added
 	if (!dma->sampleMemory) {
-		dma->sampleMemory = IOBufferMemoryDescriptor::withOptions(kIOMemoryPhysicallyContiguous, 0x20000U, PAGE_SIZE);
+		dma->sampleMemory = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(kernel_task,
+																			 kIOMemoryPhysicallyContiguous,
+																			 0x20000ULL,
+																			 0xFFFFF000ULL);
 		if (!dma->sampleMemory)
 			return kIOReturnNoMemory;
 		if (dma->sampleMemory->prepare() != kIOReturnSuccess) {
@@ -246,7 +254,7 @@ IOReturn CLASS::activateAudioConfiguration(IOAC97AudioConfig* config, void* targ
 	}
 	bzero(dma->sampleMemory->getBytesNoCopy(), dma->sampleMemory->getCapacity());
 	if (!dma->sampleMemoryPhysAddr) {
-		dma->sampleMemoryPhysAddr = reinterpret_cast<void*>(dma->sampleMemory->getPhysicalSegment(0, &size));
+		dma->sampleMemoryPhysAddr = dma->sampleMemory->getPhysicalSegment(0, &size);
 	}
 	if (target && action) {
 		fInterruptSource->disable();
@@ -264,7 +272,7 @@ IOReturn CLASS::activateAudioConfiguration(IOAC97AudioConfig* config, void* targ
 	}
 	dma->flags |= kEngineActive;
 	eschan_prepare(ENGINE_TO_CHANNEL(engine),
-				   dma->sampleMemoryPhysAddr,
+				   static_cast<UInt32>(dma->sampleMemoryPhysAddr),
 				   0x20000U,
 				   0x4000U,
 				   FORMAT_STEREO | FORMAT_16BIT,
@@ -317,13 +325,18 @@ UInt32 CLASS::es_rd(int regno, int size)
 	switch (size) {
 		case 1:
 			return inb(fIOBase + regno);
-			break;
 		case 2:
 			return inw(fIOBase + regno);
-			break;
 		case 4:
+#ifdef __x86_64__
+			{
+				UInt32 data;
+				asm volatile ("inl %1, %0" : "=a" (data) : "d" (static_cast<UInt16>(fIOBase + regno)));
+				return data;
+			}
+#else
 			return inl(fIOBase + regno);
-			break;
+#endif
 		default:
 			return 0xFFFFFFFFU;
 	}
@@ -339,7 +352,11 @@ void CLASS::es_wr(int regno, UInt32 data, int size)
 			outw(fIOBase + regno, static_cast<UInt16>(data));
 			break;
 		case 4:
+#ifdef __x86_64__
+			asm volatile ("outl %1, %0" : : "d" (static_cast<UInt16>(fIOBase + regno)), "a" (data));
+#else
 			outl(fIOBase + regno, data);
+#endif
 			break;
 	}
 }
@@ -354,7 +371,7 @@ UInt32 CLASS::es1371_wait_src_ready()
 			return r;
 		IODelay(2);
 	}
-	IOLog("%s: wait src ready timeout 0x%x [0x%x]\n", getName(), ES1371_REG_SMPRATE, r);
+	IOLog("%s: wait src ready timeout 0x%x [0x%x]\n", getName(), ES1371_REG_SMPRATE, static_cast<unsigned>(r));
 	return 0;
 }
 
@@ -417,8 +434,8 @@ UInt CLASS::es1371_adc_rate(UInt rate, int channel)
 	if ((1 << n) & ((1 << 15) | (1 << 13) | (1 << 11) | (1 << 9)))
 		n--;
 	truncm = (21 * n - 1) | 1;
-	freq = ((48000UL << 15) / rate) * n;
-	result = (48000UL << 15) / (freq / n);
+	freq = ((48000U << 15) / rate) * n;
+	result = (48000U << 15) / (freq / n);
 	if (channel) {
 		if (rate >= 24000) {
 			if (truncm > 239)
@@ -620,7 +637,7 @@ int CLASS::es1371_rdcd(int addr)
 	return ((x & CODEC_PIDAT_MASK) >> CODEC_PIDAT_SHIFT);
 }
 
-UInt CLASS::eschan_prepare(int channel, void* snd_dbuf, UInt32 bufsz, UInt32 cnt, UInt format, UInt rate)
+UInt CLASS::eschan_prepare(int channel, UInt32 snd_dbuf, UInt32 bufsz, UInt32 cnt, UInt format, UInt rate)
 {
 	if (channel >= 0 && channel < 3)
 		fFrameCountCache[channel] = 0;
@@ -629,7 +646,7 @@ UInt CLASS::eschan_prepare(int channel, void* snd_dbuf, UInt32 bufsz, UInt32 cnt
 			ctrl &= ~CTRL_DAC1_EN;
 			es_wr(ES1370_REG_CONTROL, ctrl, 4);
 			es_wr(ES1370_REG_MEMPAGE, ES1370_REG_DAC1_FRAMEADR >> 8, 1);
-			es_wr(ES1370_REG_DAC1_FRAMEADR & 0xFFU, reinterpret_cast<UInt32>(snd_dbuf), 4);
+			es_wr(ES1370_REG_DAC1_FRAMEADR & 0xFFU, snd_dbuf, 4);
 			es_wr(ES1370_REG_DAC1_FRAMECNT & 0xFFU, (bufsz >> 2) - 1, 4);
 			es_wr(ES1370_REG_DAC1_SCOUNT, cnt - 1, 4);
 			sctrl &= ~SCTRL_P1FMT;
@@ -645,7 +662,7 @@ UInt CLASS::eschan_prepare(int channel, void* snd_dbuf, UInt32 bufsz, UInt32 cnt
 			ctrl &= ~CTRL_DAC2_EN;
 			es_wr(ES1370_REG_CONTROL, ctrl, 4);
 			es_wr(ES1370_REG_MEMPAGE, ES1370_REG_DAC2_FRAMEADR >> 8, 1);
-			es_wr(ES1370_REG_DAC2_FRAMEADR & 0xFFU, reinterpret_cast<UInt32>(snd_dbuf), 4);
+			es_wr(ES1370_REG_DAC2_FRAMEADR & 0xFFU, snd_dbuf, 4);
 			es_wr(ES1370_REG_DAC2_FRAMECNT & 0xFFU, (bufsz >> 2) - 1, 4);
 			es_wr(ES1370_REG_DAC2_SCOUNT, cnt - 1, 4);
 			sctrl &= ~SCTRL_P2FMT;
@@ -662,7 +679,7 @@ UInt CLASS::eschan_prepare(int channel, void* snd_dbuf, UInt32 bufsz, UInt32 cnt
 			ctrl &= ~CTRL_ADC_EN;
 			es_wr(ES1370_REG_CONTROL, ctrl, 4);
 			es_wr(ES1370_REG_MEMPAGE, ES1370_REG_ADC_FRAMEADR >> 8, 1);
-			es_wr(ES1370_REG_ADC_FRAMEADR & 0xFFU, reinterpret_cast<UInt32>(snd_dbuf), 4);
+			es_wr(ES1370_REG_ADC_FRAMEADR & 0xFFU, snd_dbuf, 4);
 			es_wr(ES1370_REG_ADC_FRAMECNT & 0xFFU, (bufsz >> 2) - 1, 4);
 			es_wr(ES1370_REG_ADC_SCOUNT, cnt - 1, 4);
 			sctrl &= ~SCTRL_R1FMT;
@@ -806,7 +823,7 @@ bool CLASS::start(IOService* provider)
 		return false;
 	fBusyOutputSlots = kIOAC97Slot_0 | kIOAC97Slot_1 | kIOAC97Slot_2;
 	outputSampleOffset = static_cast<UInt32>(-1);
-	if (PE_parse_boot_arg("es_oso", &boot_arg))
+	if (PE_parse_boot_argn("es_oso", &boot_arg, sizeof boot_arg))
 		outputSampleOffset = boot_arg;
 	fDMAState = static_cast<DMAEngineState*>(IOMalloc(DMA_STATES_SIZE));
 	if (!fDMAState) {

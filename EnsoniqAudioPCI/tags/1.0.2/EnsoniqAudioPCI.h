@@ -24,6 +24,9 @@
  *    Joachim Kuebart.
  * 4. Modifications may be freely made to this file if the above conditions
  *    are met.
+ *
+ * Some of the code was adapted from AppleAC97AudioAMDCS5535.h and is subject
+ *   to the APSL Version 1.1, see http://www.opensource.apple.com/apsl
  */
 
 #ifndef __ENSONIQ_AUDIOPCI_H__
@@ -70,7 +73,7 @@ private:
 	int es1371_init();
 	int es1371_wrcd(int addr, UInt32 data);
 	int es1371_rdcd(int addr);
-	UInt eschan_prepare(int channel, void* snd_dbuf, UInt32 bufsz, UInt32 cnt, UInt format, UInt rate);
+	UInt eschan_prepare(int channel, UInt32 snd_dbuf, UInt32 bufsz, UInt32 cnt, UInt format, UInt rate);
 	int eschan_trigger(int channel, int go);
 	IOByteCount eschan_getptr(int channel);
 	IOByteCount eschan_getSampleCounter(int channel);
