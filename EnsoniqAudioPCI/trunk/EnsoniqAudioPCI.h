@@ -61,7 +61,6 @@ private:
 	IOByteCount fFrameCountCache[3];
 	thread_call_t fEngineThreadCall;
 	IOAudioEngine* fEnginePCMOut;
-	UInt32 outputSampleOffset;
 
 	UInt32 es_rd(int regno, int size);
 	void es_wr(int regno, UInt32 data, int size);
@@ -85,6 +84,7 @@ private:
 	static void engineThreadCall(thread_call_param_t param0, thread_call_param_t param1);
 	static IOReturn engineAction(OSObject* target, void* arg0, void* arg1, void* arg2, void* arg3);
 	bool configureProvider(IOService* provider);
+	void processBootOptions();
 	void resetACLink(IOOptionBits type) { es1371_init(); }
 	IOItemCount attachCodecDevices();
 	void publishCodecDevices();

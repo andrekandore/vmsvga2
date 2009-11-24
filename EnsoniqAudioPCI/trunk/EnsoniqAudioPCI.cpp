@@ -68,6 +68,7 @@
 #include <pexpert/i386/protos.h>
 #include <IOAC97CodecDevice.h>
 #include <IOKit/audio/IOAudioEngine.h>
+#include <IOKit/audio/IOAudioDefines.h>
 #include "EnsoniqAudioPCI.h"
 #include "es137x.h"
 #include "es137x_xtra.h"
@@ -262,11 +263,8 @@ IOReturn CLASS::activateAudioConfiguration(IOAC97AudioConfig* config, void* targ
 		dma->interruptTarget = target;
 		dma->interruptAction = action;
 		dma->interruptParam = param;
-		if (engine == kDMAEnginePCMOut) {
+		if (engine == kDMAEnginePCMOut)
 			fEnginePCMOut = OSDynamicCast(IOAudioEngine, static_cast<OSObject*>(target));	// just to be safe
-			if (fEnginePCMOut != 0 && outputSampleOffset != static_cast<UInt32>(-1))
-				fEnginePCMOut->setOutputSampleOffset(outputSampleOffset);
-		}
 		fInterruptSource->enable();
 		dma->flags |= kEngineInterrupt;
 	}
@@ -815,16 +813,12 @@ bool CLASS::init(OSDictionary* dictionary)
 
 bool CLASS::start(IOService* provider)
 {
-	UInt32 boot_arg;
-
 	if (!provider)
 		return false;
 	if (!super::start(provider))
 		return false;
 	fBusyOutputSlots = kIOAC97Slot_0 | kIOAC97Slot_1 | kIOAC97Slot_2;
-	outputSampleOffset = static_cast<UInt32>(-1);
-	if (PE_parse_boot_argn("es_oso", &boot_arg, sizeof boot_arg))
-		outputSampleOffset = boot_arg;
+	processBootOptions();
 	fDMAState = static_cast<DMAEngineState*>(IOMalloc(DMA_STATES_SIZE));
 	if (!fDMAState) {
 		super::stop(provider);
@@ -1045,6 +1039,28 @@ bool CLASS::configureProvider(IOService* provider)
 	if (fPCI->hasPCIPowerManagement(kPCIPMCPMESupportFromD3Cold))
 		fPCI->enablePCIPowerManagement(kPCIPMCSPowerStateD3);
 	return true;
+}
+
+void CLASS::processBootOptions()
+{
+	UInt32 boot_arg;
+
+	if (PE_parse_boot_argn("es_oso", &boot_arg, sizeof boot_arg))
+		setProperty(kIOAudioEngineSampleOffsetKey, static_cast<UInt64>(boot_arg), 32U);
+	if (PE_parse_boot_argn("es_iso", &boot_arg, sizeof boot_arg))
+		setProperty(kIOAudioEngineInputSampleOffsetKey, static_cast<UInt64>(boot_arg), 32U);
+	if (PE_parse_boot_argn("es_osl", &boot_arg, sizeof boot_arg))
+		setProperty(kIOAudioEngineOutputSampleLatencyKey, static_cast<UInt64>(boot_arg), 32U);
+	if (PE_parse_boot_argn("es_isl", &boot_arg, sizeof boot_arg))
+		setProperty(kIOAudioEngineInputSampleLatencyKey, static_cast<UInt64>(boot_arg), 32U);
+	if (PE_parse_boot_argn("es_mco", &boot_arg, sizeof boot_arg))
+		setProperty("IOAudioEngineMixClipOverhead", static_cast<UInt64>(boot_arg), 32U);
+	if (PE_parse_boot_argn("-es_unstable", &boot_arg, sizeof boot_arg))
+		setProperty(kIOAudioEngineClockIsStableKey, false);
+	if (PE_parse_boot_argn("es_cabfs", &boot_arg, sizeof boot_arg))
+		setProperty("IOAudioEngineCoreAudioBufferFrameSize", static_cast<UInt64>(boot_arg), 32U);
+	if (PE_parse_boot_argn("-es_debug", &boot_arg, sizeof boot_arg))
+		setProperty("IOAudioEngineDebug", true);
 }
 
 IOItemCount CLASS::attachCodecDevices()
