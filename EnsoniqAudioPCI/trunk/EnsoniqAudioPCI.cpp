@@ -69,6 +69,7 @@
 #include <IOAC97CodecDevice.h>
 #include <IOKit/audio/IOAudioEngine.h>
 #include <IOKit/audio/IOAudioDefines.h>
+#include <IOKit/IODeviceTreeSupport.h>
 #include "EnsoniqAudioPCI.h"
 #include "es137x.h"
 #include "es137x_xtra.h"
@@ -85,6 +86,8 @@
 #define CLASS EnsoniqAudioPCI
 #define super IOAC97Controller
 OSDefineMetaClassAndStructors(EnsoniqAudioPCI, IOAC97Controller);
+
+extern OSSymbol const* gIODTNameKey;
 
 #pragma mark -
 #pragma mark Power States
@@ -1026,6 +1029,9 @@ IOReturn CLASS::engineAction(OSObject* target, void* arg0, void* arg1, void* arg
 
 bool CLASS::configureProvider(IOService* provider)
 {
+	OSString* s;
+	OSData* d;
+
 	fPCI = OSDynamicCast(IOPCIDevice, provider);
 	if (!fPCI)
 		return false;
@@ -1038,6 +1044,15 @@ bool CLASS::configureProvider(IOService* provider)
 	fIOBase &= ~1;
 	if (fPCI->hasPCIPowerManagement(kPCIPMCPMESupportFromD3Cold))
 		fPCI->enablePCIPowerManagement(kPCIPMCSPowerStateD3);
+	s = OSDynamicCast(OSString, getProperty(kIOAudioEngineDescriptionKey));
+	if (s) {
+		fPCI->setProperty(gIODTNameKey, s);
+		d = OSData::withBytes(s->getCStringNoCopy(), s->getLength() + 1);
+		if (d) {
+			fPCI->setProperty(gIODTModelKey, d);
+			d->release();
+		}
+	}
 	return true;
 }
 
