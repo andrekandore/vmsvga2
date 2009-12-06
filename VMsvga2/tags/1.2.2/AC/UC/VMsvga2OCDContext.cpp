@@ -173,7 +173,7 @@ IOReturn CLASS::FreeEvent()
 	return kIOReturnUnsupported;
 }
 
-IOReturn CLASS::GetHandleIndex(io_user_scalar_t*, io_user_scalar_t*)
+IOReturn CLASS::GetHandleIndex(UInt32*, UInt32*)
 {
 	return kIOReturnUnsupported;
 }

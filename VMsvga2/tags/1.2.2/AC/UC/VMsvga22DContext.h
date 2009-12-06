@@ -87,12 +87,12 @@ public:
 	 * IONV2DContext
 	 */
 	IOReturn set_surface(uintptr_t surface_id, eIOContextModeBits options, void* output_struct, size_t* output_struct_size);
-	IOReturn get_config(io_user_scalar_t* config_1, io_user_scalar_t* config_2);
+	IOReturn get_config(UInt32* config_1, UInt32* config_2);
 	IOReturn get_surface_info1(uintptr_t, eIOContextModeBits, void *, size_t*);
-	IOReturn swap_surface(uintptr_t options, io_user_scalar_t* swapFlags);
+	IOReturn swap_surface(uintptr_t options, UInt32* swapFlags);
 	IOReturn scale_surface(uintptr_t options, uintptr_t width, uintptr_t height);
 	IOReturn lock_memory(uintptr_t options, UInt64* struct_out, size_t* struct_out_size);
-	IOReturn unlock_memory(uintptr_t options, io_user_scalar_t* swapFlags);
+	IOReturn unlock_memory(uintptr_t options, UInt32* swapFlags);
 	IOReturn finish(uintptr_t options);
 	IOReturn declare_image(UInt64 const*, UInt64*, size_t, size_t*);
 	IOReturn create_image(uintptr_t, uintptr_t, UInt64*, size_t*);

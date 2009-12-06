@@ -315,7 +315,7 @@ IOReturn CLASS::set_surface(uintptr_t surface_id, eIOContextModeBits options, vo
 	return surface_client->context_set_surface(vmware_pixel_format, apple_pixel_format);
 }
 
-IOReturn CLASS::get_config(io_user_scalar_t* config_1, io_user_scalar_t* config_2)
+IOReturn CLASS::get_config(UInt32* config_1, UInt32* config_2)
 {
 	if (!config_1 || !config_2)
 		return kIOReturnBadArgument;
@@ -324,7 +324,7 @@ IOReturn CLASS::get_config(io_user_scalar_t* config_1, io_user_scalar_t* config_
 	 * TBD: transfer m_provider->getOptionsGA() as well
 	 */
 	if (m_provider)
-		*config_2 = static_cast<io_user_scalar_t>(m_provider->getLogLevelGA());
+		*config_2 = static_cast<UInt32>(m_provider->getLogLevelGA());
 	else
 		*config_2 = 0;
 	return kIOReturnSuccess;
@@ -335,7 +335,7 @@ IOReturn CLASS::get_surface_info1(uintptr_t, eIOContextModeBits, void *, size_t*
 	return kIOReturnUnsupported;
 }
 
-IOReturn CLASS::swap_surface(uintptr_t options, io_user_scalar_t* swapFlags)
+IOReturn CLASS::swap_surface(uintptr_t options, UInt32* swapFlags)
 {
 	if (!bTargetIsCGSSurface) {
 		TDLog(2, "%s: called with non-surface destination - unsupported\n", __FUNCTION__);
@@ -373,7 +373,7 @@ IOReturn CLASS::lock_memory(uintptr_t options, UInt64* struct_out, size_t* struc
 	return surface_client->context_lock_memory(m_owning_task, &struct_out[0], &struct_out[1]);
 }
 
-IOReturn CLASS::unlock_memory(uintptr_t options, io_user_scalar_t* swapFlags)
+IOReturn CLASS::unlock_memory(uintptr_t options, UInt32* swapFlags)
 {
 	if (!bTargetIsCGSSurface) {
 		TDLog(2, "%s: called with non-surface destination - unsupported\n", __FUNCTION__);
