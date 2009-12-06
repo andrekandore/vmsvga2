@@ -246,7 +246,7 @@ IOReturn CLASS::activateAudioConfiguration(IOAC97AudioConfig* config, void* targ
 	if (!dma->sampleMemory) {
 		dma->sampleMemory = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(kernel_task,
 																			 kIOMemoryPhysicallyContiguous,
-																			 0x20000ULL,
+																			 static_cast<mach_vm_size_t>(fBufferNumPages) << PAGE_SHIFT,
 																			 0xFFFFF000ULL);
 		if (!dma->sampleMemory)
 			return kIOReturnNoMemory;
@@ -274,12 +274,12 @@ IOReturn CLASS::activateAudioConfiguration(IOAC97AudioConfig* config, void* targ
 	dma->flags |= kEngineActive;
 	eschan_prepare(ENGINE_TO_CHANNEL(engine),
 				   static_cast<UInt32>(dma->sampleMemoryPhysAddr),
-				   0x20000U,
-				   0x4000U,
+				   fBufferNumPages << PAGE_SHIFT,
+				   fBufferNumPages << (PAGE_SHIFT - 3),
 				   FORMAT_STEREO | FORMAT_16BIT,
 				   /* kIOAC97SampleRate48K */ config->getSampleRate());		// Added
 	config->setDMABufferMemory(dma->sampleMemory);
-	config->setDMABufferCount(32);
+	config->setDMABufferCount(fBufferNumPages);
 	config->setDMABufferSize(PAGE_SIZE);
 	r = super::activateAudioConfiguration(config, target, action, param);
 	if (r != kIOReturnSuccess)
@@ -811,6 +811,7 @@ bool CLASS::init(OSDictionary* dictionary)
 	fBusyOutputSlots = 0;
 	ctrl = 0;
 	sctrl = 0;
+	fBufferNumPages = 32U;
 	return true;
 }
 
@@ -1076,6 +1077,10 @@ void CLASS::processBootOptions()
 		setProperty("IOAudioEngineCoreAudioBufferFrameSize", static_cast<UInt64>(boot_arg), 32U);
 	if (PE_parse_boot_argn("-es_debug", &boot_arg, sizeof boot_arg))
 		setProperty("IOAudioEngineDebug", true);
+	if (PE_parse_boot_argn("es_bm", &boot_arg, sizeof boot_arg))
+		if (1U <= boot_arg && boot_arg <= 64U)
+			fBufferNumPages = boot_arg;
+	setProperty("EnsoniqAudioPCIBufferNumPages", static_cast<UInt64>(fBufferNumPages), 32U);
 }
 
 IOItemCount CLASS::attachCodecDevices()

@@ -61,6 +61,7 @@ private:
 	IOByteCount fFrameCountCache[3];
 	thread_call_t fEngineThreadCall;
 	IOAudioEngine* fEnginePCMOut;
+	UInt32 fBufferNumPages;
 
 	UInt32 es_rd(int regno, int size);
 	void es_wr(int regno, UInt32 data, int size);
