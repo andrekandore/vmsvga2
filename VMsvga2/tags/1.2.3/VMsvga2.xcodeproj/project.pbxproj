@@ -12,7 +12,6 @@
 		7909DB0010827DF000CFBDBF /* VMsvga2DVDContext.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 7909DAFD10827DF000CFBDBF /* VMsvga2DVDContext.cpp */; };
 		7909DB0110827DF000CFBDBF /* VMsvga2OCDContext.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 7909DAFE10827DF000CFBDBF /* VMsvga2OCDContext.cpp */; };
 		790CE2501084E41B004D109E /* VLog.c in Sources */ = {isa = PBXBuildFile; fileRef = 790CE24F1084E41B004D109E /* VLog.c */; };
-		79189F981038633A0065B61F /* send.s in Sources */ = {isa = PBXBuildFile; fileRef = 79BD1DBB1005132C00D12B9A /* send.s */; };
 		7919BDE1102B203500E56229 /* VMsvga2Accel.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 7919BDE0102B203500E56229 /* VMsvga2Accel.cpp */; };
 		792AA6B70FFF858500B0B5B1 /* VMsvga2Client.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 792AA6B50FFF858500B0B5B1 /* VMsvga2Client.cpp */; };
 		79726007102F07820030052A /* VMsvga2GA.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 79726006102F07820030052A /* VMsvga2GA.cpp */; };
@@ -28,7 +27,10 @@
 		E503A17D10838E1700D1649D /* VMsvga22DContext.cpp in Sources */ = {isa = PBXBuildFile; fileRef = E503A17A10838E1700D1649D /* VMsvga22DContext.cpp */; };
 		E52B47D210B5B4C0002470B4 /* CoreFoundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = E52B47CA10B5B4B5002470B4 /* CoreFoundation.framework */; };
 		E52B47D410B5B4CA002470B4 /* IOKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = E52B47CC10B5B4B5002470B4 /* IOKit.framework */; };
+		E555EF1F10CD33CD001B6433 /* SendString.c in Sources */ = {isa = PBXBuildFile; fileRef = 7987F8851037020E003B52A2 /* SendString.c */; settings = {COMPILER_FLAGS = "-mdynamic-no-pic"; }; };
 		E577F63810A089750047C956 /* SVGAScreen.cpp in Sources */ = {isa = PBXBuildFile; fileRef = E577F63710A089750047C956 /* SVGAScreen.cpp */; };
+		E59CA8C810CD3586004727A0 /* VLog.c in Sources */ = {isa = PBXBuildFile; fileRef = 790CE24F1084E41B004D109E /* VLog.c */; };
+		E5F856F410D14232007CE57B /* VLog.c in Sources */ = {isa = PBXBuildFile; fileRef = 790CE24F1084E41B004D109E /* VLog.c */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -86,8 +88,8 @@
 		E52B43CA10B5B37F002470B4 /* Generic.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Generic.xcconfig; sourceTree = "<group>"; };
 		E52B47CA10B5B4B5002470B4 /* CoreFoundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreFoundation.framework; path = System/Library/Frameworks/CoreFoundation.framework; sourceTree = SDKROOT; };
 		E52B47CC10B5B4B5002470B4 /* IOKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = IOKit.framework; path = System/Library/Frameworks/IOKit.framework; sourceTree = SDKROOT; };
-		E577F63610A089750047C956 /* SVGAScreen.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = SVGAScreen.h; sourceTree = "<group>"; };
-		E577F63710A089750047C956 /* SVGAScreen.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = SVGAScreen.cpp; sourceTree = "<group>"; };
+		E577F63610A089750047C956 /* SVGAScreen.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = SVGAScreen.h; sourceTree = "<group>"; };
+		E577F63710A089750047C956 /* SVGAScreen.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = SVGAScreen.cpp; sourceTree = "<group>"; };
 		E5993C7F10A058070021B17F /* svga3d_caps.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = svga3d_caps.h; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -122,10 +124,10 @@
 			isa = PBXGroup;
 			children = (
 				E52B43CA10B5B37F002470B4 /* Generic.xcconfig */,
-				79C4C54E102F037100EF589E /* GA */,
 				7919BDC9102B1EC900E56229 /* AC */,
-				79C556E6102B1D0D006408E2 /* vminclude */,
 				7991DE6D102B19D00042347F /* FB */,
+				79C4C54E102F037100EF589E /* GA */,
+				79C556E6102B1D0D006408E2 /* vminclude */,
 				79C556E1102B1C42006408E2 /* Resources */,
 				19C28FB6FE9D52B211CA2CBB /* Products */,
 			);
@@ -268,9 +270,9 @@
 		79C556E1102B1C42006408E2 /* Resources */ = {
 			isa = PBXGroup;
 			children = (
-				79C4C55D102F043700EF589E /* Info-GA.plist */,
 				7919BDE6102B207300E56229 /* Info-AC.plist */,
 				32D94FCF0562CBF700B6AF17 /* Info-FB.plist */,
+				79C4C55D102F043700EF589E /* Info-GA.plist */,
 			);
 			name = Resources;
 			sourceTree = "<group>";
@@ -376,7 +378,14 @@
 			isa = PBXProject;
 			buildConfigurationList = 1DEB91DD08733DB10010E9CD /* Build configuration list for PBXProject "VMsvga2" */;
 			compatibilityVersion = "Xcode 3.1";
+			developmentRegion = English;
 			hasScannedForEncodings = 1;
+			knownRegions = (
+				English,
+				Japanese,
+				French,
+				German,
+			);
 			mainGroup = 089C166AFE841209C02AAC07 /* VMsvga2 */;
 			projectDirPath = "";
 			projectRoot = "";
@@ -432,6 +441,7 @@
 				792AA6B70FFF858500B0B5B1 /* VMsvga2Client.cpp in Sources */,
 				79BD1DBC1005132C00D12B9A /* send.s in Sources */,
 				79D6E26B1008D086005D1591 /* modes.cpp in Sources */,
+				E5F856F410D14232007CE57B /* VLog.c in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -460,7 +470,8 @@
 			files = (
 				79726007102F07820030052A /* VMsvga2GA.cpp in Sources */,
 				79B34F1B103324D500D1E214 /* BlitHelper.c in Sources */,
-				79189F981038633A0065B61F /* send.s in Sources */,
+				E555EF1F10CD33CD001B6433 /* SendString.c in Sources */,
+				E59CA8C810CD3586004727A0 /* VLog.c in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -470,9 +481,14 @@
 		1DEB91DB08733DB10010E9CD /* ReleaseLeo */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"LOGGING_LEVEL=1",
+					VLOG_LOCAL,
+				);
 				INFOPLIST_FILE = "Info-FB.plist";
 				MODULE_NAME = net.osx86.driver.VMsvga2;
 				PRODUCT_NAME = VMsvga2;
+				STRIP_STYLE = "non-global";
 				WRAPPER_EXTENSION = kext;
 			};
 			name = ReleaseLeo;
@@ -482,8 +498,8 @@
 			baseConfigurationReference = E52B43CA10B5B37F002470B4 /* Generic.xcconfig */;
 			buildSettings = {
 				ARCHS = i386;
-				CURRENT_PROJECT_VERSION = 1.2.2;
-				DYLIB_COMPATIBILITY_VERSION = 1.2.2;
+				CURRENT_PROJECT_VERSION = 1.2.3;
+				DYLIB_COMPATIBILITY_VERSION = 1.2.3;
 				INSTALL_PATH = "$(SYSTEM_LIBRARY_DIR)/Extensions";
 				MODULE_VERSION = "$(CURRENT_PROJECT_VERSION)";
 				SDKROOT = macosx10.5;
@@ -501,6 +517,7 @@
 				INFOPLIST_FILE = "Info-AC.plist";
 				MODULE_NAME = net.osx86.driver.VMsvga2Accel;
 				PRODUCT_NAME = VMsvga2Accel;
+				STRIP_STYLE = "non-global";
 				WARNING_CFLAGS = "-Wno-format";
 				WRAPPER_EXTENSION = kext;
 			};
@@ -522,11 +539,11 @@
 			baseConfigurationReference = E52B43CA10B5B37F002470B4 /* Generic.xcconfig */;
 			buildSettings = {
 				ARCHS = (
-					i386,
 					x86_64,
+					i386,
 				);
-				CURRENT_PROJECT_VERSION = 1.2.2;
-				DYLIB_COMPATIBILITY_VERSION = 1.2.2;
+				CURRENT_PROJECT_VERSION = 1.2.3;
+				DYLIB_COMPATIBILITY_VERSION = 1.2.3;
 				INSTALL_PATH = "$(SYSTEM_LIBRARY_DIR)/Extensions";
 				MODULE_VERSION = "$(CURRENT_PROJECT_VERSION)";
 				SDKROOT = macosx10.6;
@@ -537,9 +554,14 @@
 		E512D9AD1077F654002194CB /* ReleaseSnowLeo */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"LOGGING_LEVEL=1",
+					VLOG_LOCAL,
+				);
 				INFOPLIST_FILE = "Info-FB.plist";
 				MODULE_NAME = net.osx86.driver.VMsvga2;
 				PRODUCT_NAME = VMsvga2;
+				STRIP_STYLE = "non-global";
 				WRAPPER_EXTENSION = kext;
 			};
 			name = ReleaseSnowLeo;
@@ -554,6 +576,7 @@
 				INFOPLIST_FILE = "Info-AC.plist";
 				MODULE_NAME = net.osx86.driver.VMsvga2Accel;
 				PRODUCT_NAME = VMsvga2Accel;
+				STRIP_STYLE = "non-global";
 				WARNING_CFLAGS = "-Wno-format";
 				WRAPPER_EXTENSION = kext;
 			};

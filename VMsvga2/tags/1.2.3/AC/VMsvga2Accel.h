@@ -268,6 +268,7 @@ public:
 	bool Have3D() const { return bHaveSVGA3D != 0; }
 	bool HaveScreen() const { return bHaveScreenObject != 0; }
 	bool HaveFrontBuffer() const { return bHaveScreenObject != 0 || bHaveSVGA3D != 0; }
+	UInt32 getVRAMSize() const;
 
 	/*
 	 * Video Support

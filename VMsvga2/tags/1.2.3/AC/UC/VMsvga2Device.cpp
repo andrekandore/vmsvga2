@@ -173,37 +173,32 @@ IOReturn CLASS::create_shared()
 	return kIOReturnSuccess;
 }
 
-IOReturn CLASS::get_config(io_user_scalar_t* c1, io_user_scalar_t* c2, io_user_scalar_t* c3, io_user_scalar_t* c4, io_user_scalar_t* c5)
+IOReturn CLASS::get_config(UInt32* c1, UInt32* c2, UInt32* c3, UInt32* c4, UInt32* c5)
 {
-	DVLog(2, "%s(out1, out2, out3, out4, out5)\n", __FUNCTION__);
-	if (c1)
-		*c1 = 0;
-	if (c2)
-		*c2 = 0;
-	if (c3)
-		*c3 = 128 * 1024 * 1024;	// TBD: VRAM size
-	if (c4)
-		*c4 = 128 * 1024 * 1024;	// TBD: VRAM size
-	if (c5)
-		*c5 = 0x4055;
+	UInt32 const vram_size = m_provider->getVRAMSize();
+
+	*c1 = 0;
+	*c2 = 0;
+	*c3 = vram_size;
+	*c4 = vram_size;
+	*c5 = 0;
+	DVLog(2, "%s(*%u, *%u, *%u, *%u, *0x%x)\n", __FUNCTION__, *c1, *c2, *c3, *c4, *c5);
 	return kIOReturnSuccess;
 }
 
-IOReturn CLASS::get_surface_info(uintptr_t c1, io_user_scalar_t* c2, io_user_scalar_t* c3, io_user_scalar_t* c4)
+IOReturn CLASS::get_surface_info(uintptr_t c1, UInt32* c2, UInt32* c3, UInt32* c4)
 {
-	DVLog(2, "%s(%lu, out2, out3, out4)\n", __FUNCTION__, c1);
 	*c2 = 0x4061;
 	*c3 = 0x4062;
 	*c4 = 0x4063;
+	DVLog(2, "%s(%lu, *%u, *%u, *%u)\n", __FUNCTION__, c1, *c2, *c3, *c4);
 	return kIOReturnSuccess;
 }
 
-IOReturn CLASS::get_name(char* out_name, size_t* struct_out_size)
+IOReturn CLASS::get_name(char* name_out, size_t* name_out_size)
 {
-	DVLog(2, "%s(%p, %lu)\n", __FUNCTION__, out_name, *struct_out_size);
-	if (!out_name || !struct_out_size)
-		return kIOReturnBadArgument;
-	strlcpy(out_name, "VMsvga2", *struct_out_size);
+	DVLog(2, "%s(%p, %lu)\n", __FUNCTION__, name_out, *name_out_size);
+	strlcpy(name_out, "VMsvga2", *name_out_size);
 	return kIOReturnSuccess;
 }
 
@@ -213,10 +208,13 @@ IOReturn CLASS::wait_for_stamp(uintptr_t c1)
 	return kIOReturnSuccess;
 }
 
-IOReturn CLASS::new_texture(struct VendorNewTextureDataRec const* in_struct, struct sIONewTextureReturnData* out_struct, size_t struct_in_size, size_t* struct_out_size)
+IOReturn CLASS::new_texture(struct VendorNewTextureDataRec const* struct_in,
+							struct sIONewTextureReturnData* struct_out,
+							size_t struct_in_size,
+							size_t* struct_out_size)
 {
-	DVLog(2, "%s(%p, %p, %lu, %lu)\n", __FUNCTION__, in_struct, out_struct, struct_in_size, *struct_out_size);
-	bzero(out_struct, *struct_out_size);
+	DVLog(2, "%s(%p, %p, %lu, %lu)\n", __FUNCTION__, struct_in, struct_out, struct_in_size, *struct_out_size);
+	bzero(struct_out, *struct_out_size);
 	return kIOReturnSuccess;
 }
 
@@ -226,16 +224,16 @@ IOReturn CLASS::delete_texture(uintptr_t c1)
 	return kIOReturnSuccess;
 }
 
-IOReturn CLASS::page_off_texture(struct sIODevicePageoffTexture const* in_struct, size_t struct_in_size)
+IOReturn CLASS::page_off_texture(struct sIODevicePageoffTexture const* struct_in, size_t struct_in_size)
 {
-	DVLog(2, "%s(%p, %lu)\n", __FUNCTION__, in_struct, struct_in_size);
+	DVLog(2, "%s(%p, %lu)\n", __FUNCTION__, struct_in, struct_in_size);
 	return kIOReturnSuccess;
 }
 
-IOReturn CLASS::get_channel_memory(struct sIODeviceChannelMemoryData* out_struct, size_t* struct_out_size)
+IOReturn CLASS::get_channel_memory(struct sIODeviceChannelMemoryData* struct_out, size_t* struct_out_size)
 {
-	DVLog(2, "%s(%p, %lu)\n", __FUNCTION__, out_struct, *struct_out_size);
-	memset(out_struct, 0x55U, *struct_out_size);
+	DVLog(2, "%s(%p, %lu)\n", __FUNCTION__, struct_out, *struct_out_size);
+	memset(struct_out, 0x55U, *struct_out_size);
 	return kIOReturnSuccess;
 }
 
@@ -243,35 +241,44 @@ IOReturn CLASS::get_channel_memory(struct sIODeviceChannelMemoryData* out_struct
 #pragma mark NVDevice Methods
 #pragma mark -
 
-IOReturn CLASS::kernel_printf(char const* str, size_t struct_in_size)
+IOReturn CLASS::kernel_printf(char const* str, size_t str_size)
 {
-	DVLog(2, "%s: %s\n", __FUNCTION__, str);	// TBD: limit str by struct_in_size
+	DVLog(2, "%s: %s\n", __FUNCTION__, str);	// TBD: limit str by str_size
 	return kIOReturnSuccess;
 }
 
-IOReturn CLASS::nv_rm_config_get(UInt32 const* in_struct, UInt32* out_struct, size_t struct_in_size, size_t* struct_out_size)
+IOReturn CLASS::nv_rm_config_get(UInt32 const* struct_in,
+								 UInt32* struct_out,
+								 size_t struct_in_size,
+								 size_t* struct_out_size)
 {
-	DVLog(2, "%s(%p, %p, %lu, %lu)\n", __FUNCTION__, in_struct, out_struct, struct_in_size, *struct_out_size);
+	DVLog(2, "%s(%p, %p, %lu, %lu)\n", __FUNCTION__, struct_in, struct_out, struct_in_size, *struct_out_size);
 	if (*struct_out_size < struct_in_size)
 		struct_in_size = *struct_out_size;
-	memcpy(out_struct, in_struct, struct_in_size);
+	memcpy(struct_out, struct_in, struct_in_size);
 	return kIOReturnSuccess;
 }
 
-IOReturn CLASS::nv_rm_config_get_ex(UInt32 const* in_struct, UInt32* out_struct, size_t struct_in_size, size_t* struct_out_size)
+IOReturn CLASS::nv_rm_config_get_ex(UInt32 const* struct_in,
+									UInt32* struct_out,
+									size_t struct_in_size,
+									size_t* struct_out_size)
 {
-	DVLog(2, "%s(%p, %p, %lu, %lu)\n", __FUNCTION__, in_struct, out_struct, struct_in_size, *struct_out_size);
+	DVLog(2, "%s(%p, %p, %lu, %lu)\n", __FUNCTION__, struct_in, struct_out, struct_in_size, *struct_out_size);
 	if (*struct_out_size < struct_in_size)
 		struct_in_size = *struct_out_size;
-	memcpy(out_struct, in_struct, struct_in_size);
+	memcpy(struct_out, struct_in, struct_in_size);
 	return kIOReturnSuccess;
 }
 
-IOReturn CLASS::nv_rm_control(UInt32 const* in_struct, UInt32* out_struct, size_t struct_in_size, size_t* struct_out_size)
+IOReturn CLASS::nv_rm_control(UInt32 const* struct_in,
+							  UInt32* struct_out,
+							  size_t struct_in_size,
+							  size_t* struct_out_size)
 {
-	DVLog(2, "%s(%p, %p, %lu, %lu)\n", __FUNCTION__, in_struct, out_struct, struct_in_size, *struct_out_size);
+	DVLog(2, "%s(%p, %p, %lu, %lu)\n", __FUNCTION__, struct_in, struct_out, struct_in_size, *struct_out_size);
 	if (*struct_out_size < struct_in_size)
 		struct_in_size = *struct_out_size;
-	memcpy(out_struct, in_struct, struct_in_size);
+	memcpy(struct_out, struct_in, struct_in_size);
 	return kIOReturnSuccess;
 }

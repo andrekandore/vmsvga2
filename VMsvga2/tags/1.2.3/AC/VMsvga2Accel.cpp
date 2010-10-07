@@ -264,6 +264,8 @@ void CLASS::processOptions()
 		vmw_options_ac |= VMW_OPTION_AC_DIRECT_BLIT;
 	if (PE_parse_boot_argn("-vmw_no_screen_object", &boot_arg, sizeof boot_arg))
 		vmw_options_ac |= VMW_OPTION_AC_NO_SCREEN_OBJECT;
+	if (PE_parse_boot_argn("-vmw_qe", &boot_arg, sizeof boot_arg))
+		vmw_options_ac |= VMW_OPTION_AC_QE;
 	setProperty("VMwareSVGAAccelOptions", static_cast<UInt64>(vmw_options_ac), 32U);
 	if (PE_parse_boot_argn("vmw_options_ga", &boot_arg, sizeof boot_arg)) {
 		m_options_ga = boot_arg;
@@ -452,7 +454,10 @@ bool CLASS::start(IOService* provider)
 		m_framebuffer->setProperty(kIOAccelRevisionKey, static_cast<UInt64>(kCurrentGraphicsInterfaceRevision), 32U);
 	}
 	setProperty(kIOAccelRevisionKey, static_cast<UInt64>(kCurrentGraphicsInterfaceRevision), 32U);
-	setProperty("AccelCaps", 3ULL, 32U);
+#if 0
+	if (checkOptionAC(VMW_OPTION_AC_QE))
+		setProperty("AccelCaps", 3ULL, 32U);
+#endif
 #ifdef FB_NOTIFIER
 	m_fbNotifier = m_framebuffer->addFramebufferNotification(OSMemberFunctionCast(IOFramebufferNotificationHandler, this, &CLASS::fbNotificationHandler), this, 0);
 	if (!m_fbNotifier)
@@ -468,7 +473,8 @@ bool CLASS::start(IOService* provider)
 	 *   GeForce8xxxGLDriver
 	 */
 #if 0
-	setProperty("IOGLBundleName", "AppleIntelGMA950GLDriver");
+	if (checkOptionAC(VMW_OPTION_AC_GL_CONTEXT))
+		setProperty("IOGLBundleName", "VMsvga2GLDriver");
 #endif
 	/*
 	 * Stupid bug in AppleVA attempts to CFRelease a NULL pointer
@@ -1508,6 +1514,15 @@ void CLASS::lockAccel()
 void CLASS::unlockAccel()
 {
 	IOLockUnlock(m_iolock);
+}
+
+UInt32 CLASS::getVRAMSize() const
+{
+	if (m_svga)
+		return m_svga->getVRAMSize();
+	if (m_bar1)
+		return static_cast<UInt32>(m_bar1->getLength());
+	return 134217728U;
 }
 
 #pragma mark -
