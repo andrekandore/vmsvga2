@@ -125,7 +125,14 @@
 			isa = PBXProject;
 			buildConfigurationList = 1DEB91DD08733DB10010E9CD /* Build configuration list for PBXProject "VMMouse" */;
 			compatibilityVersion = "Xcode 3.1";
+			developmentRegion = English;
 			hasScannedForEncodings = 1;
+			knownRegions = (
+				English,
+				Japanese,
+				French,
+				German,
+			);
 			mainGroup = 089C166AFE841209C02AAC07 /* VMMouse */;
 			projectDirPath = "";
 			projectRoot = "";
@@ -169,23 +176,28 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin XCBuildConfiguration section */
-		1DEB91DB08733DB10010E9CD /* Release */ = {
+		1DEB91DB08733DB10010E9CD /* ReleaseLeo */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				INFOPLIST_FILE = Info.plist;
 				MODULE_NAME = net.osx86.driver.VMMouse;
 				PRODUCT_NAME = VMMouse;
+				STRIP_STYLE = "non-global";
 				WRAPPER_EXTENSION = kext;
 			};
-			name = Release;
+			name = ReleaseLeo;
 		};
-		1DEB91DF08733DB10010E9CD /* Release */ = {
+		1DEB91DF08733DB10010E9CD /* ReleaseLeo */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
 				ARCHS = i386;
-				CURRENT_PROJECT_VERSION = 1.2.1;
+				CURRENT_PROJECT_VERSION = 1.2.2;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEPLOYMENT_POSTPROCESSING = YES;
+				GCC_ENABLE_CPP_EXCEPTIONS = NO;
+				GCC_ENABLE_CPP_RTTI = NO;
+				GCC_ENABLE_OBJC_EXCEPTIONS = NO;
 				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
 				GCC_WARN_ABOUT_RETURN_TYPE = YES;
 				GCC_WARN_SIGN_COMPARE = YES;
@@ -199,18 +211,22 @@
 				SDKROOT = macosx10.5;
 				STRIPFLAGS = "-R no_export.txt";
 			};
-			name = Release;
+			name = ReleaseLeo;
 		};
-		E58BB3691077F07400983EC3 /* Release_SL */ = {
+		E58BB3691077F07400983EC3 /* ReleaseSnowLeo */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
 				ARCHS = (
-					i386,
 					x86_64,
+					i386,
 				);
-				CURRENT_PROJECT_VERSION = 1.2.1;
+				CURRENT_PROJECT_VERSION = 1.2.2;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEPLOYMENT_POSTPROCESSING = YES;
+				GCC_ENABLE_CPP_EXCEPTIONS = NO;
+				GCC_ENABLE_CPP_RTTI = NO;
+				GCC_ENABLE_OBJC_EXCEPTIONS = NO;
 				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
 				GCC_WARN_ABOUT_RETURN_TYPE = YES;
 				GCC_WARN_SIGN_COMPARE = YES;
@@ -224,17 +240,18 @@
 				SDKROOT = macosx10.6;
 				STRIPFLAGS = "-R no_export.txt";
 			};
-			name = Release_SL;
+			name = ReleaseSnowLeo;
 		};
-		E58BB36A1077F07400983EC3 /* Release_SL */ = {
+		E58BB36A1077F07400983EC3 /* ReleaseSnowLeo */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				INFOPLIST_FILE = Info.plist;
 				MODULE_NAME = net.osx86.driver.VMMouse;
 				PRODUCT_NAME = VMMouse;
+				STRIP_STYLE = "non-global";
 				WRAPPER_EXTENSION = kext;
 			};
-			name = Release_SL;
+			name = ReleaseSnowLeo;
 		};
 /* End XCBuildConfiguration section */
 
@@ -242,20 +259,20 @@
 		1DEB91D908733DB10010E9CD /* Build configuration list for PBXNativeTarget "VMMouse" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				1DEB91DB08733DB10010E9CD /* Release */,
-				E58BB36A1077F07400983EC3 /* Release_SL */,
+				1DEB91DB08733DB10010E9CD /* ReleaseLeo */,
+				E58BB36A1077F07400983EC3 /* ReleaseSnowLeo */,
 			);
 			defaultConfigurationIsVisible = 0;
-			defaultConfigurationName = Release;
+			defaultConfigurationName = ReleaseSnowLeo;
 		};
 		1DEB91DD08733DB10010E9CD /* Build configuration list for PBXProject "VMMouse" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				1DEB91DF08733DB10010E9CD /* Release */,
-				E58BB3691077F07400983EC3 /* Release_SL */,
+				1DEB91DF08733DB10010E9CD /* ReleaseLeo */,
+				E58BB3691077F07400983EC3 /* ReleaseSnowLeo */,
 			);
 			defaultConfigurationIsVisible = 0;
-			defaultConfigurationName = Release;
+			defaultConfigurationName = ReleaseSnowLeo;
 		};
 /* End XCConfigurationList section */
 	};
