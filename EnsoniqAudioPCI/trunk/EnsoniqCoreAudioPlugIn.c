@@ -2,6 +2,8 @@
 #include <CoreAudio/AudioDriverPlugIn.h>
 #include <IOKit/IOKitLib.h>
 
+static __attribute__((used)) char const copyright[] = "Copyright 2009-2010 Zenith432";
+
 OSStatus AudioDriverPlugInOpen(AudioDriverPlugInHostInfo* inHostInfo)
 {
 	AudioObjectPropertyAddress addr;

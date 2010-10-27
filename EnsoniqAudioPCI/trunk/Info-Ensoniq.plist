@@ -38,6 +38,8 @@
 			<string>${COREAUDIO_PLUGIN_PATH}</string>
 		</dict>
 	</dict>
+	<key>NSHumanReadableCopyright</key>
+	<string>${COPYRIGHT_NOTICE}</string>
 	<key>OSBundleCompatibleVersion</key>
 	<string>${DYLIB_COMPATIBILITY_VERSION}</string>
 	<key>OSBundleLibraries</key>
@@ -48,15 +50,11 @@
 		<string>1.1</string>
 		<key>com.apple.iokit.IOAudioFamily</key>
 		<string>1.1fc9</string>
-		<key>com.apple.kpi.bsd</key>
-		<string>8.0.0</string>
  		<key>com.apple.kpi.iokit</key>
 		<string>8.0.0</string>
 		<key>com.apple.kpi.libkern</key>
 		<string>8.0.0</string>
 		<key>com.apple.kpi.mach</key>
-		<string>8.0.0</string>
-		<key>com.apple.kpi.unsupported</key>
 		<string>8.0.0</string>
 	</dict>
 </dict>

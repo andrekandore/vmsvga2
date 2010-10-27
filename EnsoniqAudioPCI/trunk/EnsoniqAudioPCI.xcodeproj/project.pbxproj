@@ -6,6 +6,21 @@
 	objectVersion = 45;
 	objects = {
 
+/* Begin PBXAggregateTarget section */
+		E590DE2512785D6900C85463 /* All */ = {
+			isa = PBXAggregateTarget;
+			buildConfigurationList = E590DE2C12785D9200C85463 /* Build configuration list for PBXAggregateTarget "All" */;
+			buildPhases = (
+			);
+			dependencies = (
+				E590DE2912785D6F00C85463 /* PBXTargetDependency */,
+				E590DE2B12785D7400C85463 /* PBXTargetDependency */,
+			);
+			name = All;
+			productName = All;
+		};
+/* End PBXAggregateTarget section */
+
 /* Begin PBXBuildFile section */
 		32D94FCA0562CBF700B6AF17 /* EnsoniqAudioPCI.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 1A224C3FFF42367911CA2CB7 /* EnsoniqAudioPCI.cpp */; settings = {ATTRIBUTES = (); }; };
 		E5C437AA10B4247600B96130 /* CoreAudio.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = E5EECD8610B41FDD002D6C27 /* CoreAudio.framework */; };
@@ -13,6 +28,23 @@
 		E5F61BA510B46AB3004153F5 /* IOKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = E5F617AF10B46A96004153F5 /* IOKit.framework */; };
 		E5F61BBB10B46E55004153F5 /* CoreFoundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = E5F61BBA10B46E55004153F5 /* CoreFoundation.framework */; };
 /* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		E590DE2812785D6F00C85463 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 089C1669FE841209C02AAC07 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 32D94FC30562CBF700B6AF17;
+			remoteInfo = EnsoniqAudioPCI;
+		};
+		E590DE2A12785D7400C85463 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 089C1669FE841209C02AAC07 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = E5BD4A9810B41E7800CA7404;
+			remoteInfo = EnsoniqCoreAudioPlugIn;
+		};
+/* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
 		1A224C3EFF42367911CA2CB7 /* EnsoniqAudioPCI.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = EnsoniqAudioPCI.h; sourceTree = "<group>"; };
@@ -182,6 +214,7 @@
 			targets = (
 				32D94FC30562CBF700B6AF17 /* EnsoniqAudioPCI */,
 				E5BD4A9810B41E7800CA7404 /* EnsoniqCoreAudioPlugIn */,
+				E590DE2512785D6900C85463 /* All */,
 			);
 		};
 /* End PBXProject section */
@@ -232,18 +265,29 @@
 		};
 /* End PBXSourcesBuildPhase section */
 
+/* Begin PBXTargetDependency section */
+		E590DE2912785D6F00C85463 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 32D94FC30562CBF700B6AF17 /* EnsoniqAudioPCI */;
+			targetProxy = E590DE2812785D6F00C85463 /* PBXContainerItemProxy */;
+		};
+		E590DE2B12785D7400C85463 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = E5BD4A9810B41E7800CA7404 /* EnsoniqCoreAudioPlugIn */;
+			targetProxy = E590DE2A12785D7400C85463 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
 /* Begin XCBuildConfiguration section */
 		1DEB91DB08733DB10010E9CD /* ReleaseLeo */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				COREAUDIO_PLUGIN_PATH = AppleAC97Audio.kext/Contents/PlugIns/EnsoniqCoreAudioPlugIn.bundle;
-				DYLIB_COMPATIBILITY_VERSION = 1.0.0;
 				ENGINE_DESCRIPTION = "VMware VMaudio (VMAUDIO)";
 				HEADER_SEARCH_PATHS = IOAC97Family;
 				INFOPLIST_FILE = "Info-Ensoniq.plist";
 				MODULE_NAME = net.osx86.driver.EnsoniqAudioPCI;
 				PRODUCT_NAME = EnsoniqAudioPCI;
-				STRIP_STYLE = "non-global";
 				WRAPPER_EXTENSION = kext;
 			};
 			name = ReleaseLeo;
@@ -253,10 +297,27 @@
 			baseConfigurationReference = E522395D10B4276C0085C244 /* Generic.xcconfig */;
 			buildSettings = {
 				ARCHS = i386;
+				COPYRIGHT_NOTICE = "Copyright 2009-2010 Zenith432";
 				CURRENT_PROJECT_VERSION = 1.0.3;
+				DYLIB_COMPATIBILITY_VERSION = 1.0.0;
+				DYLIB_CURRENT_VERSION = "$(CURRENT_PROJECT_VERSION)";
 				INSTALL_PATH = "$(SYSTEM_LIBRARY_DIR)/Extensions/AppleAC97Audio.kext/Contents/PlugIns";
 				MODULE_VERSION = "$(CURRENT_PROJECT_VERSION)";
 				SDKROOT = macosx10.5;
+			};
+			name = ReleaseLeo;
+		};
+		E590DE2612785D6900C85463 /* ReleaseSnowLeo */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				PRODUCT_NAME = All;
+			};
+			name = ReleaseSnowLeo;
+		};
+		E590DE2712785D6900C85463 /* ReleaseLeo */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				PRODUCT_NAME = All;
 			};
 			name = ReleaseLeo;
 		};
@@ -268,7 +329,10 @@
 					x86_64,
 					i386,
 				);
+				COPYRIGHT_NOTICE = "Copyright 2009-2010 Zenith432";
 				CURRENT_PROJECT_VERSION = 1.0.3;
+				DYLIB_COMPATIBILITY_VERSION = 1.0.0;
+				DYLIB_CURRENT_VERSION = "$(CURRENT_PROJECT_VERSION)";
 				INSTALL_PATH = "$(SYSTEM_LIBRARY_DIR)/Extensions/AppleAC97Audio.kext/Contents/PlugIns";
 				MODULE_VERSION = "$(CURRENT_PROJECT_VERSION)";
 				SDKROOT = macosx10.6;
@@ -279,7 +343,6 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				COREAUDIO_PLUGIN_PATH = AppleAC97Audio.kext/Contents/PlugIns/EnsoniqCoreAudioPlugIn.bundle;
-				DYLIB_COMPATIBILITY_VERSION = 1.0.0;
 				ENGINE_DESCRIPTION = "VMware VMaudio (VMAUDIO)";
 				HEADER_SEARCH_PATHS = IOAC97Family;
 				INFOPLIST_FILE = "Info-Ensoniq.plist";
@@ -293,11 +356,17 @@
 		E5BD4A9C10B41E7800CA7404 /* ReleaseLeo */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ARCHS = (
+					x86_64,
+					i386,
+				);
 				GCC_PREPROCESSOR_DEFINITIONS = "HAL_Build=1";
 				INFOPLIST_FILE = "Info-PlugIn.plist";
 				MODULE_NAME = net.osx86.audio.EnsoniqCoreAudioPlugIn;
 				OTHER_CFLAGS = "-fconstant-cfstrings";
 				PRODUCT_NAME = EnsoniqCoreAudioPlugIn;
+				VERSIONING_SYSTEM = "apple-generic";
+				VERSION_INFO_EXPORT_DECL = "__attribute__((visibility(\"hidden\")))";
 			};
 			name = ReleaseLeo;
 		};
@@ -309,6 +378,8 @@
 				MODULE_NAME = net.osx86.audio.EnsoniqCoreAudioPlugIn;
 				OTHER_CFLAGS = "-fconstant-cfstrings";
 				PRODUCT_NAME = EnsoniqCoreAudioPlugIn;
+				VERSIONING_SYSTEM = "apple-generic";
+				VERSION_INFO_EXPORT_DECL = "__attribute__((visibility(\"hidden\")))";
 			};
 			name = ReleaseSnowLeo;
 		};
@@ -318,8 +389,8 @@
 		1DEB91D908733DB10010E9CD /* Build configuration list for PBXNativeTarget "EnsoniqAudioPCI" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				1DEB91DB08733DB10010E9CD /* ReleaseLeo */,
 				E592A1F7109CCE1800DB5373 /* ReleaseSnowLeo */,
+				1DEB91DB08733DB10010E9CD /* ReleaseLeo */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = ReleaseSnowLeo;
@@ -327,8 +398,17 @@
 		1DEB91DD08733DB10010E9CD /* Build configuration list for PBXProject "EnsoniqAudioPCI" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				1DEB91DF08733DB10010E9CD /* ReleaseLeo */,
 				E592A1F6109CCE1800DB5373 /* ReleaseSnowLeo */,
+				1DEB91DF08733DB10010E9CD /* ReleaseLeo */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = ReleaseSnowLeo;
+		};
+		E590DE2C12785D9200C85463 /* Build configuration list for PBXAggregateTarget "All" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				E590DE2612785D6900C85463 /* ReleaseSnowLeo */,
+				E590DE2712785D6900C85463 /* ReleaseLeo */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = ReleaseSnowLeo;
@@ -336,8 +416,8 @@
 		E5BD4A9E10B41E7800CA7404 /* Build configuration list for PBXNativeTarget "EnsoniqCoreAudioPlugIn" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				E5BD4A9C10B41E7800CA7404 /* ReleaseLeo */,
 				E5BD4A9D10B41E7800CA7404 /* ReleaseSnowLeo */,
+				E5BD4A9C10B41E7800CA7404 /* ReleaseLeo */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = ReleaseSnowLeo;

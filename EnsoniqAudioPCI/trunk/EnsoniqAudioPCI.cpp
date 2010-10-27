@@ -89,6 +89,8 @@ OSDefineMetaClassAndStructors(EnsoniqAudioPCI, IOAC97Controller);
 
 extern OSSymbol const* gIODTNameKey;
 
+static __attribute__((used)) char const copyright[] = "Copyright 2009-2010 Zenith432";
+
 #pragma mark -
 #pragma mark Power States
 #pragma mark -
@@ -321,6 +323,7 @@ void CLASS::deactivateAudioConfiguration(IOAC97AudioConfig* config)
 #pragma mark Methods from FreeBSD es137x driver
 #pragma mark -
 
+__attribute__((visibility("hidden")))
 UInt32 CLASS::es_rd(int regno, int size)
 {
 	switch (size) {
@@ -343,6 +346,7 @@ UInt32 CLASS::es_rd(int regno, int size)
 	}
 }
 
+__attribute__((visibility("hidden")))
 void CLASS::es_wr(int regno, UInt32 data, int size)
 {
 	switch (size) {
@@ -362,6 +366,7 @@ void CLASS::es_wr(int regno, UInt32 data, int size)
 	}
 }
 
+__attribute__((visibility("hidden")))
 UInt32 CLASS::es1371_wait_src_ready()
 {
 	UInt32 t, r;
@@ -376,6 +381,7 @@ UInt32 CLASS::es1371_wait_src_ready()
 	return 0;
 }
 
+__attribute__((visibility("hidden")))
 void CLASS::es1371_src_write(UInt16 reg, UInt16 data)
 {
 	UInt32 r;
@@ -386,6 +392,7 @@ void CLASS::es1371_src_write(UInt16 reg, UInt16 data)
 	es_wr(ES1371_REG_SMPRATE, r | ES1371_SRC_RAM_WE, 4);
 }
 
+__attribute__((visibility("hidden")))
 UInt CLASS::es1371_src_read(UInt16 reg)
 {
 	UInt32 r;
@@ -397,6 +404,7 @@ UInt CLASS::es1371_src_read(UInt16 reg)
 	return (ES1371_SRC_RAM_DATAI(es1371_wait_src_ready()));
 }
 
+__attribute__((visibility("hidden")))
 UInt CLASS::es1371_dac_rate(UInt rate, int channel)
 {
 	UInt freq, r, result, dac, dis;
@@ -423,6 +431,7 @@ UInt CLASS::es1371_dac_rate(UInt rate, int channel)
 	return (result);
 }
 
+__attribute__((visibility("hidden")))
 UInt CLASS::es1371_adc_rate(UInt rate, int channel)
 {
 	UInt n, truncm, freq, result;
@@ -460,6 +469,7 @@ UInt CLASS::es1371_adc_rate(UInt rate, int channel)
 	return (result);
 }
 
+__attribute__((visibility("hidden")))
 int CLASS::es1371_init()
 {
 	UInt32 cssr;
@@ -559,6 +569,7 @@ int CLASS::es1371_init()
 	return (0);
 }
 
+__attribute__((visibility("hidden")))
 int CLASS::es1371_wrcd(int addr, UInt32 data)
 {
 	UInt32 t, x, orig;
@@ -595,6 +606,7 @@ int CLASS::es1371_wrcd(int addr, UInt32 data)
 	return (0);
 }
 
+__attribute__((visibility("hidden")))
 int CLASS::es1371_rdcd(int addr)
 {
 	UInt32 t, x, orig;
@@ -638,6 +650,7 @@ int CLASS::es1371_rdcd(int addr)
 	return ((x & CODEC_PIDAT_MASK) >> CODEC_PIDAT_SHIFT);
 }
 
+__attribute__((visibility("hidden")))
 UInt CLASS::eschan_prepare(int channel, UInt32 snd_dbuf, UInt32 bufsz, UInt32 cnt, UInt format, UInt rate)
 {
 	if (channel >= 0 && channel < 3)
@@ -696,6 +709,7 @@ UInt CLASS::eschan_prepare(int channel, UInt32 snd_dbuf, UInt32 bufsz, UInt32 cn
 	return 0;
 }
 
+__attribute__((visibility("hidden")))
 int CLASS::eschan_trigger(int channel, int go)
 {
 	UInt32 flag;
@@ -723,6 +737,7 @@ int CLASS::eschan_trigger(int channel, int go)
 	return 0;
 }
 
+__attribute__((visibility("hidden")))
 IOByteCount CLASS::eschan_getptr(int channel)
 {
 	UInt32 reg, cnt;
@@ -746,6 +761,7 @@ IOByteCount CLASS::eschan_getptr(int channel)
 	return (cnt & 0xFFFF0000U) >> 14;
 }
 
+__attribute__((visibility("hidden")))
 IOByteCount CLASS::eschan_getSampleCounter(int channel)
 {
 	UInt32 reg, r;
@@ -767,6 +783,7 @@ IOByteCount CLASS::eschan_getSampleCounter(int channel)
 	return ((r & 0xFFFFU) << 2) - ((r & 0xFFFF0000U) >> 14);
 }
 
+__attribute__((visibility("hidden")))
 UInt32 CLASS::es_intr()
 {
 	UInt32 intsrc, sctrl_;
@@ -944,6 +961,7 @@ IOReturn CLASS::setPowerState(unsigned long powerStateOrdinal, IOService* whatDe
 #pragma mark Private Methods
 #pragma mark -
 
+__attribute__((visibility("hidden")))
 void CLASS::handleSetPowerState(thread_call_param_t param0, thread_call_param_t param1)
 {
 	CLASS* self = static_cast<CLASS*>(param0);
@@ -963,6 +981,7 @@ void CLASS::handleSetPowerState(thread_call_param_t param0, thread_call_param_t 
 	self->release();
 }
 
+__attribute__((visibility("hidden")))
 bool CLASS::interruptFilter(OSObject* owner, IOFilterInterruptEventSource* source)
 {
 	CLASS* self = static_cast<CLASS*>(owner);
@@ -1001,10 +1020,12 @@ bool CLASS::interruptFilter(OSObject* owner, IOFilterInterruptEventSource* sourc
 	return false;
 }
 
+__attribute__((visibility("hidden")))
 void CLASS::interruptOccurred(OSObject* owner, IOInterruptEventSource* source, int count)
 {
 }
 
+__attribute__((visibility("hidden")))
 void CLASS::engineThreadCall(thread_call_param_t param0, thread_call_param_t param1)
 {
 	CLASS* me = static_cast<CLASS*>(param0);
@@ -1018,6 +1039,7 @@ void CLASS::engineThreadCall(thread_call_param_t param0, thread_call_param_t par
 	wl->runAction(engineAction, me->fEnginePCMOut, 0, 0, 0, 0);
 }
 
+__attribute__((visibility("hidden")))
 IOReturn CLASS::engineAction(OSObject* target, void* arg0, void* arg1, void* arg2, void* arg3)
 {
 	IOAudioEngine* engine = static_cast<IOAudioEngine*>(target);
@@ -1028,6 +1050,7 @@ IOReturn CLASS::engineAction(OSObject* target, void* arg0, void* arg1, void* arg
 	return kIOReturnSuccess;
 }
 
+__attribute__((visibility("hidden")))
 bool CLASS::configureProvider(IOService* provider)
 {
 	OSString* s;
@@ -1057,6 +1080,7 @@ bool CLASS::configureProvider(IOService* provider)
 	return true;
 }
 
+__attribute__((visibility("hidden")))
 void CLASS::processBootOptions()
 {
 	UInt32 boot_arg;
@@ -1083,6 +1107,7 @@ void CLASS::processBootOptions()
 	setProperty("EnsoniqAudioPCIBufferNumPages", static_cast<UInt64>(fBufferNumPages), 32U);
 }
 
+__attribute__((visibility("hidden")))
 IOItemCount CLASS::attachCodecDevices()
 {
 	IOAC97CodecDevice* codec = createCodecDevice(0);
@@ -1096,6 +1121,7 @@ IOItemCount CLASS::attachCodecDevices()
 	return 1;
 }
 
+__attribute__((visibility("hidden")))
 void CLASS::publishCodecDevices()
 {
 	for (int i = kIOAC97MaxCodecCount - 1; i >= 0; --i)
@@ -1103,11 +1129,13 @@ void CLASS::publishCodecDevices()
 			fCodecs[i]->registerService();
 }
 
+__attribute__((visibility("hidden")))
 IOAC97CodecDevice* CLASS::createCodecDevice(IOAC97CodecID codecID)
 {
 	return IOAC97CodecDevice::codec(this, codecID);
 }
 
+__attribute__((visibility("hidden")))
 bool CLASS::selectDMAEngineForConfiguration(IOAC97AudioConfig* config)
 {
 	config->setDMAEngineID(kDMAEngineInvalid);
@@ -1128,6 +1156,7 @@ bool CLASS::selectDMAEngineForConfiguration(IOAC97AudioConfig* config)
 	return true;
 }
 
+__attribute__((visibility("hidden")))
 bool CLASS::selectSlotMapsForConfiguration(IOAC97AudioConfig* config)
 {
 	IOAC97DMAEngineID engine;
@@ -1165,11 +1194,13 @@ bool CLASS::selectSlotMapsForConfiguration(IOAC97AudioConfig* config)
 	return false;
 }
 
+__attribute__((visibility("hidden")))
 bool CLASS::waitCodecReady(IOAC97CodecID codecID)
 {
 	return es1371_wait_src_ready() != 0;
 }
 
+__attribute__((visibility("hidden")))
 bool CLASS::hwActivateConfiguration(IOAC97AudioConfig const* config)
 {
 	if (config->getDMADataDirection() == kIOAC97DMADataDirectionOutput)
@@ -1177,6 +1208,7 @@ bool CLASS::hwActivateConfiguration(IOAC97AudioConfig const* config)
 	return true;
 }
 
+__attribute__((visibility("hidden")))
 void CLASS::hwDeactivateConfiguration(IOAC97AudioConfig const* config)
 {
 	if (config->getDMADataDirection() == kIOAC97DMADataDirectionOutput)
