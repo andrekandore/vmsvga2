@@ -34,8 +34,10 @@
 			<string>IOPCIDevice</string>
 			<key>IOAudioEngineDescription</key>
 			<string>${ENGINE_DESCRIPTION}</string>
+#ifdef LINK_PLUGIN
 			<key>IOAudioEngineCoreAudioPlugIn</key>
 			<string>${COREAUDIO_PLUGIN_PATH}</string>
+#endif
 		</dict>
 	</dict>
 	<key>NSHumanReadableCopyright</key>

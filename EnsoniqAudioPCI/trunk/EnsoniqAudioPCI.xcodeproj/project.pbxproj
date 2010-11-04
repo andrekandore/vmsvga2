@@ -63,13 +63,6 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
-		32D94FCB0562CBF700B6AF17 /* Frameworks */ = {
-			isa = PBXFrameworksBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
 		E5BD4A9710B41E7800CA7404 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -145,26 +138,12 @@
 		};
 /* End PBXGroup section */
 
-/* Begin PBXHeadersBuildPhase section */
-		32D94FC50562CBF700B6AF17 /* Headers */ = {
-			isa = PBXHeadersBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-/* End PBXHeadersBuildPhase section */
-
 /* Begin PBXNativeTarget section */
 		32D94FC30562CBF700B6AF17 /* EnsoniqAudioPCI */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 1DEB91D908733DB10010E9CD /* Build configuration list for PBXNativeTarget "EnsoniqAudioPCI" */;
 			buildPhases = (
-				32D94FC50562CBF700B6AF17 /* Headers */,
-				32D94FC70562CBF700B6AF17 /* Resources */,
 				32D94FC90562CBF700B6AF17 /* Sources */,
-				32D94FCB0562CBF700B6AF17 /* Frameworks */,
-				32D94FCC0562CBF700B6AF17 /* Rez */,
 			);
 			buildRules = (
 			);
@@ -180,7 +159,6 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = E5BD4A9E10B41E7800CA7404 /* Build configuration list for PBXNativeTarget "EnsoniqCoreAudioPlugIn" */;
 			buildPhases = (
-				E5BD4A9510B41E7800CA7404 /* Resources */,
 				E5BD4A9610B41E7800CA7404 /* Sources */,
 				E5BD4A9710B41E7800CA7404 /* Frameworks */,
 			);
@@ -218,33 +196,6 @@
 			);
 		};
 /* End PBXProject section */
-
-/* Begin PBXResourcesBuildPhase section */
-		32D94FC70562CBF700B6AF17 /* Resources */ = {
-			isa = PBXResourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-		E5BD4A9510B41E7800CA7404 /* Resources */ = {
-			isa = PBXResourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-/* End PBXResourcesBuildPhase section */
-
-/* Begin PBXRezBuildPhase section */
-		32D94FCC0562CBF700B6AF17 /* Rez */ = {
-			isa = PBXRezBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-/* End PBXRezBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		32D94FC90562CBF700B6AF17 /* Sources */ = {
@@ -284,8 +235,10 @@
 			buildSettings = {
 				COREAUDIO_PLUGIN_PATH = AppleAC97Audio.kext/Contents/PlugIns/EnsoniqCoreAudioPlugIn.bundle;
 				ENGINE_DESCRIPTION = "VMware VMaudio (VMAUDIO)";
+				GCC_PREPROCESSOR_DEFINITIONS = FAST_ERASE;
 				HEADER_SEARCH_PATHS = IOAC97Family;
 				INFOPLIST_FILE = "Info-Ensoniq.plist";
+				INFOPLIST_PREPROCESS = YES;
 				MODULE_NAME = net.osx86.driver.EnsoniqAudioPCI;
 				PRODUCT_NAME = EnsoniqAudioPCI;
 				WRAPPER_EXTENSION = kext;
@@ -344,8 +297,10 @@
 			buildSettings = {
 				COREAUDIO_PLUGIN_PATH = AppleAC97Audio.kext/Contents/PlugIns/EnsoniqCoreAudioPlugIn.bundle;
 				ENGINE_DESCRIPTION = "VMware VMaudio (VMAUDIO)";
+				GCC_PREPROCESSOR_DEFINITIONS = FAST_ERASE;
 				HEADER_SEARCH_PATHS = IOAC97Family;
 				INFOPLIST_FILE = "Info-Ensoniq.plist";
+				INFOPLIST_PREPROCESS = YES;
 				MODULE_NAME = net.osx86.driver.EnsoniqAudioPCI;
 				PRODUCT_NAME = EnsoniqAudioPCI;
 				STRIP_STYLE = "non-global";
