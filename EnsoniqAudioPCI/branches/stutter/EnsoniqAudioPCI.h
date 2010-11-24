@@ -58,9 +58,14 @@ private:
 	UInt ctrl;											// offset 0x88
 	UInt sctrl;											// offset 0x8C end
 
+	int fVMwareBugs;
+	UInt fStartPhase;					// Only used for DAC1 & DAC2
 	UInt fFrameCountCache[3];
+	UInt fStartingFrameCount[3];		// Only used for DAC1 & DAC2
+	UInt fDispatchPoint[3];
 	IOAudioEngine* fEnginePCMOut;
 	UInt fBufferNumPages;
+	SInt8 fPartitionShift;
 
 	UInt es_rd(int regno, int size);
 	void es_wr(int regno, UInt data, int size);
@@ -78,6 +83,7 @@ private:
 	UInt eschan_getptr_and_cache(int channel);
 	UInt eschan_getSampleCounter(int channel);
 	UInt es_intr();
+	void eschan_load_starting_ptr(int channel);
 
 	static void handleSetPowerState(thread_call_param_t param0, thread_call_param_t param1);
 	static bool interruptFilter(OSObject* owner, IOFilterInterruptEventSource* source);

@@ -150,6 +150,17 @@ static int const gDMAEngineDir[2] = { kIOAC97DMADataDirectionOutput, kIOAC97DMAD
 #pragma mark Overridden Methods from IOAC97Controller
 #pragma mark -
 
+#define BDOOR_MAGIC 0x564D5868U
+#define BDOOR_PORT 0x5658U
+#define BDOOR_CMD_GETVERSION 10
+
+static int vmware_checkpresent(void)
+{
+	unsigned eax = BDOOR_MAGIC, ebx = ~BDOOR_MAGIC, ecx = BDOOR_CMD_GETVERSION, edx = BDOOR_PORT, esi = 0, edi = 0;
+	__asm__ volatile ("in %%dx, %0": "+a" (eax), "+b" (ebx), "+c" (ecx), "+d" (edx), "+S" (esi), "+D" (edi));
+	return ebx == BDOOR_MAGIC;
+}
+
 static bool checkDMAEngineID(IOAC97DMAEngineID engine)
 {
 #if 0
@@ -199,7 +210,9 @@ void CLASS::stopDMAEngine(IOAC97DMAEngineID engine)
 
 IOByteCount CLASS::getDMAEngineHardwarePointer(IOAC97DMAEngineID engine)
 {
-	return fFrameCountCache[ENGINE_TO_CHANNEL(engine)];
+	if (fVMwareBugs)
+		return fFrameCountCache[ENGINE_TO_CHANNEL(engine)];
+	return eschan_getptr(ENGINE_TO_CHANNEL(engine));
 }
 
 IOReturn CLASS::codecRead(IOAC97CodecID codec, IOAC97CodecOffset offset, IOAC97CodecWord* word)
@@ -277,7 +290,7 @@ IOReturn CLASS::activateAudioConfiguration(IOAC97AudioConfig* config, void* targ
 	eschan_prepare(ENGINE_TO_CHANNEL(engine),
 				   static_cast<UInt>(dma->sampleMemoryPhysAddr),
 				   fBufferNumPages << PAGE_SHIFT,
-				   fBufferNumPages << (PAGE_SHIFT - 3),
+				   fBufferNumPages << (PAGE_SHIFT - 2 - fPartitionShift),
 				   FORMAT_STEREO | FORMAT_16BIT,
 				   /* kIOAC97SampleRate48K */ config->getSampleRate());		// Added
 	config->setDMABufferMemory(dma->sampleMemory);
@@ -653,15 +666,27 @@ int CLASS::es1371_rdcd(int addr)
 __attribute__((visibility("hidden")))
 UInt CLASS::eschan_prepare(int channel, UInt snd_dbuf, UInt bufsz, UInt cnt, UInt format, UInt rate)
 {
-	if (channel >= 0 && channel < 3)
+	UInt bufcnt, startptr, dispatchptr;
+
+	bufcnt = bufsz >> 2;
+	startptr = (bufcnt - 1) & 0xFFFFU;
+	dispatchptr = 0;
+	if (fVMwareBugs && channel != ES_ADC) {
+		startptr |= (bufcnt - (bufcnt >> 1)) << 16;
+		dispatchptr = bufsz - bufcnt;
+	}
+	if (channel >= 0 && channel < 3) {
 		fFrameCountCache[channel] = 0;
+		fStartingFrameCount[channel] = startptr;
+		fDispatchPoint[channel] = dispatchptr;
+	}
 	switch (channel) {
 		case ES_DAC1:
 			ctrl &= ~CTRL_DAC1_EN;
 			es_wr(ES1370_REG_CONTROL, ctrl, 4);
 			es_wr(ES1370_REG_MEMPAGE, ES1370_REG_DAC1_FRAMEADR >> 8, 1);
 			es_wr(ES1370_REG_DAC1_FRAMEADR & 0xFFU, snd_dbuf, 4);
-			es_wr(ES1370_REG_DAC1_FRAMECNT & 0xFFU, (bufsz >> 2) - 1, 4);
+			es_wr(ES1370_REG_DAC1_FRAMECNT & 0xFFU, startptr, 4);
 			es_wr(ES1370_REG_DAC1_SCOUNT, cnt - 1, 4);
 			sctrl &= ~SCTRL_P1FMT;
 			if (format & FORMAT_16BIT)
@@ -677,7 +702,7 @@ UInt CLASS::eschan_prepare(int channel, UInt snd_dbuf, UInt bufsz, UInt cnt, UIn
 			es_wr(ES1370_REG_CONTROL, ctrl, 4);
 			es_wr(ES1370_REG_MEMPAGE, ES1370_REG_DAC2_FRAMEADR >> 8, 1);
 			es_wr(ES1370_REG_DAC2_FRAMEADR & 0xFFU, snd_dbuf, 4);
-			es_wr(ES1370_REG_DAC2_FRAMECNT & 0xFFU, (bufsz >> 2) - 1, 4);
+			es_wr(ES1370_REG_DAC2_FRAMECNT & 0xFFU, startptr, 4);
 			es_wr(ES1370_REG_DAC2_SCOUNT, cnt - 1, 4);
 			sctrl &= ~SCTRL_P2FMT;
 			if (format & FORMAT_16BIT)
@@ -694,7 +719,7 @@ UInt CLASS::eschan_prepare(int channel, UInt snd_dbuf, UInt bufsz, UInt cnt, UIn
 			es_wr(ES1370_REG_CONTROL, ctrl, 4);
 			es_wr(ES1370_REG_MEMPAGE, ES1370_REG_ADC_FRAMEADR >> 8, 1);
 			es_wr(ES1370_REG_ADC_FRAMEADR & 0xFFU, snd_dbuf, 4);
-			es_wr(ES1370_REG_ADC_FRAMECNT & 0xFFU, (bufsz >> 2) - 1, 4);
+			es_wr(ES1370_REG_ADC_FRAMECNT & 0xFFU, startptr, 4);
 			es_wr(ES1370_REG_ADC_SCOUNT, cnt - 1, 4);
 			sctrl &= ~SCTRL_R1FMT;
 			if (format & FORMAT_16BIT)
@@ -732,8 +757,12 @@ int CLASS::eschan_trigger(int channel, int go)
 		ctrl |= flag;
 	else
 		ctrl &= ~flag;
-	if (go == 2)
+	if (go == 2) {
 		fFrameCountCache[channel] = 0;
+		if (fVMwareBugs && channel != ES_ADC)
+			fStartPhase |= 1U << channel;
+		eschan_load_starting_ptr(channel);
+	}
 	es_wr(ES1370_REG_CONTROL, ctrl, 4);
 	if (go != 2)
 		fFrameCountCache[channel] = 0;
@@ -767,6 +796,8 @@ UInt CLASS::eschan_getptr_and_cache(int channel)
 {
 	UInt ptr = eschan_getptr(channel);
 
+	if (fStartPhase & (1U << channel))
+		return ptr;
 	fFrameCountCache[channel] = ptr;
 	return ptr;
 }
@@ -816,6 +847,28 @@ UInt CLASS::es_intr()
 	return intsrc & (STAT_ADC | STAT_DAC2 | STAT_DAC1);
 }
 
+__attribute__((visibility("hidden")))
+void CLASS::eschan_load_starting_ptr(int channel)
+{
+	UInt reg;
+
+	switch (channel) {
+		case ES_DAC1:
+			reg = ES1370_REG_DAC1_FRAMECNT;
+			break;
+		case ES_DAC2:
+			reg = ES1370_REG_DAC2_FRAMECNT;
+			break;
+		case ES_ADC:
+			reg = ES1370_REG_ADC_FRAMECNT;
+			break;
+		default:
+			return;
+	}
+	es_wr(ES1370_REG_MEMPAGE, reg >> 8, 1);
+	es_wr(reg & 0xFFU, fStartingFrameCount[channel], 4);
+}
+
 #pragma mark -
 #pragma mark Overridden Methods from IOService
 #pragma mark -
@@ -838,6 +891,7 @@ bool CLASS::init(OSDictionary* dictionary)
 	fBusyOutputSlots = 0;
 	ctrl = 0;
 	sctrl = 0;
+	fVMwareBugs = 1;
 	fBufferNumPages = 32U;
 	return true;
 }
@@ -849,6 +903,7 @@ bool CLASS::start(IOService* provider)
 	if (!super::start(provider))
 		return false;
 	fBusyOutputSlots = kIOAC97Slot_0 | kIOAC97Slot_1 | kIOAC97Slot_2;
+	fVMwareBugs = vmware_checkpresent();
 	processBootOptions();
 	fDMAState = static_cast<DMAEngineState*>(IOMalloc(DMA_STATES_SIZE));
 	if (!fDMAState) {
@@ -993,15 +1048,42 @@ bool CLASS::interruptFilter(OSObject* owner, IOFilterInterruptEventSource* sourc
 #endif
 
 	r = self->es_intr();
+	if (!r)
+		return false;
+	if (!self->fVMwareBugs)
+		goto dispatch;
 #ifdef FAST_ERASE
 	bDACIntr = ((r & (STAT_DAC2 | STAT_DAC1)) != 0);
 #endif
-	if ((r & STAT_DAC2) && self->eschan_getptr_and_cache(ES_DAC2))
-		r &= ~STAT_DAC2;
-	if ((r & STAT_DAC1) && self->eschan_getptr_and_cache(ES_DAC1))
-		r &= ~STAT_DAC1;
+	if (r & STAT_DAC2) {
+		UInt ptr = self->eschan_getptr(ES_DAC2);
+		if (self->fStartPhase & (1U << ES_DAC2)) {
+			r &= ~STAT_DAC2;
+			if (!ptr)
+				self->fStartPhase &= ~(1 << ES_DAC2);
+		} else {
+			if (ptr != self->fDispatchPoint[ES_DAC2])
+				r &= ~STAT_DAC2;
+			self->fFrameCountCache[ES_DAC2] = ptr;
+		}
+	}
+	if (r & STAT_DAC1) {
+		UInt ptr = self->eschan_getptr(ES_DAC1);
+		if (self->fStartPhase & (1U << ES_DAC1)) {
+			r &= ~STAT_DAC1;
+			if (!ptr)
+				self->fStartPhase &= ~(1 << ES_DAC1);
+		} else {
+			if (ptr != self->fDispatchPoint[ES_DAC1])
+				r &= ~STAT_DAC1;
+			self->fFrameCountCache[ES_DAC1] = ptr;
+		}
+	}
 	if ((r & STAT_ADC) && self->eschan_getptr_and_cache(ES_ADC))
 		r &= ~STAT_ADC;
+	if (!r)
+		goto skip_adc;
+dispatch:
 	dma = &self->fDMAState[kDMAEnginePCMOut];
 #ifdef FAST_ERASE
 	if (!dma->interruptReady)
@@ -1020,6 +1102,7 @@ bool CLASS::interruptFilter(OSObject* owner, IOFilterInterruptEventSource* sourc
 		(static_cast<IOAudioEngine*>(dma->interruptTarget)->numActiveUserClients == 0 */) {
 		dma->interruptAction(dma->interruptTarget, dma->interruptParam);
 	}
+skip_adc:
 #ifdef FAST_ERASE
 	if (bDACIntr &&
 		self->fEnginePCMOut != 0)
@@ -1112,6 +1195,32 @@ void CLASS::processBootOptions()
 		if (1U <= boot_arg && boot_arg <= 64U)
 			fBufferNumPages = boot_arg;
 	setProperty("EnsoniqAudioPCIBufferNumPages", static_cast<UInt64>(fBufferNumPages), 32U);
+	if (fVMwareBugs) {
+		/*
+		 * During testing it was found that
+		 * On OS 10.6 using 8 parts/buffer reduces the probability of CoreAudio overloads.
+		 * On OS 10.5 using 8 parts/buffer does not reduce the probability of overloads,
+		 *   and also makes them less pleasant to the ear.
+		 *
+		 * So the default is 4 ppb on Leopard and 8 ppb on SnowLeopard.
+		 *   --zenith432 Nov 22 2010
+		 */
+#if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ >= 1060
+		fPartitionShift = 3;
+#else
+		fPartitionShift = 2;
+#endif
+		if (PE_parse_boot_argn("es_bp", &boot_arg, sizeof boot_arg))
+			switch (boot_arg) {
+				case 4:
+					fPartitionShift = 2;
+					break;
+				case 8:
+					fPartitionShift = 3;
+					break;
+			}
+	}
+	setProperty("EnsoniqAudioPCIBufferNumPartitions", 1ULL << fPartitionShift, 32U);
 }
 
 __attribute__((visibility("hidden")))
