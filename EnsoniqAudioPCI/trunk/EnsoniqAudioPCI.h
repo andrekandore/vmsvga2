@@ -55,35 +55,36 @@ private:
 	thread_call_t fSetPowerStateThreadCall;				// offset 0x70
 	IOAC97CodecDevice* fCodecs[kIOAC97MaxCodecCount];	// offset 0x74, 0x78, 0x7C, 0x80
 	IOOptionBits fBusyOutputSlots;						// offset 0x84
-	UInt32 ctrl;										// offset 0x88
-	UInt32 sctrl;										// offset 0x8C end
+	UInt ctrl;											// offset 0x88
+	UInt sctrl;											// offset 0x8C end
 
-	IOByteCount fFrameCountCache[3];
-	thread_call_t fEngineThreadCall;
+	UInt fFrameCountCache[3];
 	IOAudioEngine* fEnginePCMOut;
-	UInt32 fBufferNumPages;
+	UInt fBufferNumPages;
 
-	UInt32 es_rd(int regno, int size);
-	void es_wr(int regno, UInt32 data, int size);
-	UInt32 es1371_wait_src_ready();
+	UInt es_rd(int regno, int size);
+	void es_wr(int regno, UInt data, int size);
+	UInt es1371_wait_src_ready();
 	void es1371_src_write(UInt16 reg, UInt16 data);
 	UInt es1371_src_read(UInt16 reg);
 	UInt es1371_dac_rate(UInt rate, int channel);
 	UInt es1371_adc_rate(UInt rate, int channel);
 	int es1371_init();
-	int es1371_wrcd(int addr, UInt32 data);
+	int es1371_wrcd(int addr, UInt data);
 	int es1371_rdcd(int addr);
-	UInt eschan_prepare(int channel, UInt32 snd_dbuf, UInt32 bufsz, UInt32 cnt, UInt format, UInt rate);
+	UInt eschan_prepare(int channel, UInt snd_dbuf, UInt bufsz, UInt cnt, UInt format, UInt rate);
 	int eschan_trigger(int channel, int go);
-	IOByteCount eschan_getptr(int channel);
-	IOByteCount eschan_getSampleCounter(int channel);
-	UInt32 es_intr();
+	UInt eschan_getptr(int channel);
+	UInt eschan_getptr_and_cache(int channel);
+	UInt eschan_getSampleCounter(int channel);
+	UInt es_intr();
 
 	static void handleSetPowerState(thread_call_param_t param0, thread_call_param_t param1);
 	static bool interruptFilter(OSObject* owner, IOFilterInterruptEventSource* source);
 	static void interruptOccurred(OSObject* owner, IOInterruptEventSource* source, int count);
-	static void engineThreadCall(thread_call_param_t param0, thread_call_param_t param1);
+#ifdef FAST_ERASE
 	static IOReturn engineAction(OSObject* target, void* arg0, void* arg1, void* arg2, void* arg3);
+#endif
 	bool configureProvider(IOService* provider);
 	void processBootOptions();
 	void resetACLink(IOOptionBits type) { es1371_init(); }

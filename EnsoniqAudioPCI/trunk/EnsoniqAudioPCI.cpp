@@ -214,7 +214,7 @@ IOReturn CLASS::codecWrite(IOAC97CodecID codec, IOAC97CodecOffset offset, IOAC97
 {
 	if (codec > 1 || offset >= kCodecRegisterCount)
 		return kIOReturnBadArgument;
-	es1371_wrcd(static_cast<int>(offset), static_cast<UInt32>(word));
+	es1371_wrcd(static_cast<int>(offset), word);
 	return kIOReturnSuccess;
 }
 
@@ -249,7 +249,7 @@ IOReturn CLASS::activateAudioConfiguration(IOAC97AudioConfig* config, void* targ
 		dma->sampleMemory = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(kernel_task,
 																			 kIOMemoryPhysicallyContiguous,
 																			 static_cast<mach_vm_size_t>(fBufferNumPages) << PAGE_SHIFT,
-																			 0xFFFFF000ULL);
+																			 0xFFFFFFFFULL & -PAGE_SIZE);
 		if (!dma->sampleMemory)
 			return kIOReturnNoMemory;
 		if (dma->sampleMemory->prepare() != kIOReturnSuccess) {
@@ -275,7 +275,7 @@ IOReturn CLASS::activateAudioConfiguration(IOAC97AudioConfig* config, void* targ
 	}
 	dma->flags |= kEngineActive;
 	eschan_prepare(ENGINE_TO_CHANNEL(engine),
-				   static_cast<UInt32>(dma->sampleMemoryPhysAddr),
+				   static_cast<UInt>(dma->sampleMemoryPhysAddr),
 				   fBufferNumPages << PAGE_SHIFT,
 				   fBufferNumPages << (PAGE_SHIFT - 3),
 				   FORMAT_STEREO | FORMAT_16BIT,
@@ -324,7 +324,7 @@ void CLASS::deactivateAudioConfiguration(IOAC97AudioConfig* config)
 #pragma mark -
 
 __attribute__((visibility("hidden")))
-UInt32 CLASS::es_rd(int regno, int size)
+UInt CLASS::es_rd(int regno, int size)
 {
 	switch (size) {
 		case 1:
@@ -334,8 +334,8 @@ UInt32 CLASS::es_rd(int regno, int size)
 		case 4:
 #ifdef __x86_64__
 			{
-				UInt32 data;
-				asm volatile ("inl %1, %0" : "=a" (data) : "d" (static_cast<UInt16>(fIOBase + regno)));
+				UInt data;
+				__asm__ ("inl %1, %0" : "=a" (data) : "d" (static_cast<UInt16>(fIOBase + regno)));
 				return data;
 			}
 #else
@@ -347,7 +347,7 @@ UInt32 CLASS::es_rd(int regno, int size)
 }
 
 __attribute__((visibility("hidden")))
-void CLASS::es_wr(int regno, UInt32 data, int size)
+void CLASS::es_wr(int regno, UInt data, int size)
 {
 	switch (size) {
 		case 1:
@@ -358,7 +358,7 @@ void CLASS::es_wr(int regno, UInt32 data, int size)
 			break;
 		case 4:
 #ifdef __x86_64__
-			asm volatile ("outl %1, %0" : : "d" (static_cast<UInt16>(fIOBase + regno)), "a" (data));
+			__asm__ volatile ("outl %1, %0" : : "d" (static_cast<UInt16>(fIOBase + regno)), "a" (data));
 #else
 			outl(fIOBase + regno, data);
 #endif
@@ -367,9 +367,9 @@ void CLASS::es_wr(int regno, UInt32 data, int size)
 }
 
 __attribute__((visibility("hidden")))
-UInt32 CLASS::es1371_wait_src_ready()
+UInt CLASS::es1371_wait_src_ready()
 {
-	UInt32 t, r;
+	UInt t, r;
 
 	for (t = 0; t < 4096U; ++t) {
 		if (!((r = es_rd(ES1371_REG_SMPRATE, 4)) &
@@ -377,14 +377,14 @@ UInt32 CLASS::es1371_wait_src_ready()
 			return r;
 		IODelay(2);
 	}
-	IOLog("%s: wait src ready timeout 0x%x [0x%x]\n", getName(), ES1371_REG_SMPRATE, static_cast<unsigned>(r));
+	IOLog("%s: wait src ready timeout 0x%x [0x%x]\n", getName(), ES1371_REG_SMPRATE, r);
 	return 0;
 }
 
 __attribute__((visibility("hidden")))
 void CLASS::es1371_src_write(UInt16 reg, UInt16 data)
 {
-	UInt32 r;
+	UInt r;
 
 	r = es1371_wait_src_ready() & (ES1371_DIS_SRC | ES1371_DIS_P1 |
 								   ES1371_DIS_P2 | ES1371_DIS_R1);
@@ -395,7 +395,7 @@ void CLASS::es1371_src_write(UInt16 reg, UInt16 data)
 __attribute__((visibility("hidden")))
 UInt CLASS::es1371_src_read(UInt16 reg)
 {
-	UInt32 r;
+	UInt r;
 
 	r = es1371_wait_src_ready() & (ES1371_DIS_SRC | ES1371_DIS_P1 |
 								   ES1371_DIS_P2 | ES1371_DIS_R1);
@@ -472,9 +472,9 @@ UInt CLASS::es1371_adc_rate(UInt rate, int channel)
 __attribute__((visibility("hidden")))
 int CLASS::es1371_init()
 {
-	UInt32 cssr;
+	UInt cssr;
 #if 0
-	UInt32 devid, revid, subdev;
+	UInt devid, revid, subdev;
 #endif
 	int idx;
 
@@ -570,9 +570,9 @@ int CLASS::es1371_init()
 }
 
 __attribute__((visibility("hidden")))
-int CLASS::es1371_wrcd(int addr, UInt32 data)
+int CLASS::es1371_wrcd(int addr, UInt data)
 {
-	UInt32 t, x, orig;
+	UInt t, x, orig;
 
 	for (t = 0; t < 4096U; ++t) {
 		if (!(es_rd(ES1371_REG_CODEC, 4) & CODEC_WIP))		// Note: bugfix
@@ -609,7 +609,7 @@ int CLASS::es1371_wrcd(int addr, UInt32 data)
 __attribute__((visibility("hidden")))
 int CLASS::es1371_rdcd(int addr)
 {
-	UInt32 t, x, orig;
+	UInt t, x, orig;
 
 	for (t = 0; t < 4096U; ++t) {
 		if (!(es_rd(ES1371_REG_CODEC, 4) & CODEC_WIP))
@@ -651,7 +651,7 @@ int CLASS::es1371_rdcd(int addr)
 }
 
 __attribute__((visibility("hidden")))
-UInt CLASS::eschan_prepare(int channel, UInt32 snd_dbuf, UInt32 bufsz, UInt32 cnt, UInt format, UInt rate)
+UInt CLASS::eschan_prepare(int channel, UInt snd_dbuf, UInt bufsz, UInt cnt, UInt format, UInt rate)
 {
 	if (channel >= 0 && channel < 3)
 		fFrameCountCache[channel] = 0;
@@ -712,7 +712,7 @@ UInt CLASS::eschan_prepare(int channel, UInt32 snd_dbuf, UInt32 bufsz, UInt32 cn
 __attribute__((visibility("hidden")))
 int CLASS::eschan_trigger(int channel, int go)
 {
-	UInt32 flag;
+	UInt flag;
 
 	switch (channel) {
 		case ES_DAC1:
@@ -732,15 +732,18 @@ int CLASS::eschan_trigger(int channel, int go)
 		ctrl |= flag;
 	else
 		ctrl &= ~flag;
+	if (go == 2)
+		fFrameCountCache[channel] = 0;
 	es_wr(ES1370_REG_CONTROL, ctrl, 4);
-	fFrameCountCache[channel] = 0;
+	if (go != 2)
+		fFrameCountCache[channel] = 0;
 	return 0;
 }
 
 __attribute__((visibility("hidden")))
-IOByteCount CLASS::eschan_getptr(int channel)
+UInt CLASS::eschan_getptr(int channel)
 {
-	UInt32 reg, cnt;
+	UInt reg;
 
 	switch (channel) {
 		case ES_DAC1:
@@ -755,16 +758,23 @@ IOByteCount CLASS::eschan_getptr(int channel)
 		default:
 			return 0;
 	}
-	es_wr(ES1370_REG_MEMPAGE, reg >> 8, 4);
-	cnt = es_rd(reg & 0xFFU, 4);
-	fFrameCountCache[channel] = (cnt & 0xFFFF0000U) >> 14;
-	return (cnt & 0xFFFF0000U) >> 14;
+	es_wr(ES1370_REG_MEMPAGE, reg >> 8, 1);
+	return (es_rd(reg & 0xFFU, 4) & 0xFFFF0000U) >> 14;
 }
 
 __attribute__((visibility("hidden")))
-IOByteCount CLASS::eschan_getSampleCounter(int channel)
+UInt CLASS::eschan_getptr_and_cache(int channel)
 {
-	UInt32 reg, r;
+	UInt ptr = eschan_getptr(channel);
+
+	fFrameCountCache[channel] = ptr;
+	return ptr;
+}
+
+__attribute__((visibility("hidden")))
+UInt CLASS::eschan_getSampleCounter(int channel)
+{
+	UInt reg, r;
 
 	switch (channel) {
 		case ES_DAC1:
@@ -784,9 +794,9 @@ IOByteCount CLASS::eschan_getSampleCounter(int channel)
 }
 
 __attribute__((visibility("hidden")))
-UInt32 CLASS::es_intr()
+UInt CLASS::es_intr()
 {
-	UInt32 intsrc, sctrl_;
+	UInt intsrc, sctrl_;
 
 	intsrc = es_rd(ES1370_REG_STATUS, 4);
 	if (!(intsrc & STAT_INTR))
@@ -824,7 +834,7 @@ bool CLASS::init(OSDictionary* dictionary)
 	fDMAState = 0;
 	fIOBase = 0;
 	fSetPowerStateThreadCall = 0;
-	memset(&fCodecs[0], 0, sizeof(fCodecs));
+	bzero(&fCodecs[0], sizeof fCodecs);
 	fBusyOutputSlots = 0;
 	ctrl = 0;
 	sctrl = 0;
@@ -845,18 +855,13 @@ bool CLASS::start(IOService* provider)
 		super::stop(provider);
 		return false;
 	}
-	memset(fDMAState, 0, DMA_STATES_SIZE);
+	bzero(fDMAState, DMA_STATES_SIZE);
 	fSetPowerStateThreadCall = thread_call_allocate(handleSetPowerState, this);
 	if (!fSetPowerStateThreadCall) {
 		super::stop(provider);
 		return false;
 	}
 	fEnginePCMOut = 0;
-	fEngineThreadCall = thread_call_allocate(engineThreadCall, this);
-	if (!fEngineThreadCall) {
-		super::stop(provider);
-		return false;
-	}
 	fWorkLoop = IOWorkLoop::workLoop();
 	if (!fWorkLoop) {
 		super::stop(provider);
@@ -918,7 +923,7 @@ void CLASS::free()
 			dma->sampleMemory->complete();
 			dma->sampleMemory->release();
 		}
-		memset(fDMAState, 0, DMA_STATES_SIZE);
+		bzero(fDMAState, DMA_STATES_SIZE);
 		IOFree(fDMAState, DMA_STATES_SIZE);
 		fDMAState = 0;
 	}
@@ -927,10 +932,6 @@ void CLASS::free()
 			fCodecs[i]->release();
 			fCodecs[i] = 0;
 		}
-	if (fEngineThreadCall) {
-		thread_call_free(fEngineThreadCall);
-		fEngineThreadCall = 0;
-	}
 	if (fSetPowerStateThreadCall) {
 		thread_call_free(fSetPowerStateThreadCall);
 		fSetPowerStateThreadCall = 0;
@@ -986,20 +987,26 @@ bool CLASS::interruptFilter(OSObject* owner, IOFilterInterruptEventSource* sourc
 {
 	CLASS* self = static_cast<CLASS*>(owner);
 	DMAEngineState* dma;
-	UInt32 r;
-	bool bDACIntr;
+	UInt r;
+#ifdef FAST_ERASE
+	bool bDACIntr = false;
+#endif
 
 	r = self->es_intr();
+#ifdef FAST_ERASE
 	bDACIntr = ((r & (STAT_DAC2 | STAT_DAC1)) != 0);
-	if ((r & STAT_DAC2) && self->eschan_getptr(ES_DAC2))
+#endif
+	if ((r & STAT_DAC2) && self->eschan_getptr_and_cache(ES_DAC2))
 		r &= ~STAT_DAC2;
-	if ((r & STAT_DAC1) && self->eschan_getptr(ES_DAC1))
+	if ((r & STAT_DAC1) && self->eschan_getptr_and_cache(ES_DAC1))
 		r &= ~STAT_DAC1;
-	if ((r & STAT_ADC) && self->eschan_getptr(ES_ADC))
+	if ((r & STAT_ADC) && self->eschan_getptr_and_cache(ES_ADC))
 		r &= ~STAT_ADC;
 	dma = &self->fDMAState[kDMAEnginePCMOut];
+#ifdef FAST_ERASE
 	if (!dma->interruptReady)
 		bDACIntr = false;
+#endif
 	if (dma->interruptReady &&
 		(r & (STAT_DAC2 | STAT_DAC1)) != 0 /* &&
 		dma->interruptTarget != 0 &&
@@ -1013,22 +1020,19 @@ bool CLASS::interruptFilter(OSObject* owner, IOFilterInterruptEventSource* sourc
 		(static_cast<IOAudioEngine*>(dma->interruptTarget)->numActiveUserClients == 0 */) {
 		dma->interruptAction(dma->interruptTarget, dma->interruptParam);
 	}
+#ifdef FAST_ERASE
 	if (bDACIntr &&
-		self->fEnginePCMOut != 0 &&
-		self->fEngineThreadCall != 0)
-		thread_call_enter(self->fEngineThreadCall);
+		self->fEnginePCMOut != 0)
+		return true;
+#endif
 	return false;
 }
 
 __attribute__((visibility("hidden")))
 void CLASS::interruptOccurred(OSObject* owner, IOInterruptEventSource* source, int count)
 {
-}
-
-__attribute__((visibility("hidden")))
-void CLASS::engineThreadCall(thread_call_param_t param0, thread_call_param_t param1)
-{
-	CLASS* me = static_cast<CLASS*>(param0);
+#ifdef FAST_ERASE
+	CLASS* me = static_cast<CLASS*>(owner);
 	IOWorkLoop* wl;
 
 	if (!me || !me->fEnginePCMOut)
@@ -1037,8 +1041,10 @@ void CLASS::engineThreadCall(thread_call_param_t param0, thread_call_param_t par
 	if (!wl)
 		return;
 	wl->runAction(engineAction, me->fEnginePCMOut, 0, 0, 0, 0);
+#endif /* FAST_ERASE */
 }
 
+#ifdef FAST_ERASE
 __attribute__((visibility("hidden")))
 IOReturn CLASS::engineAction(OSObject* target, void* arg0, void* arg1, void* arg2, void* arg3)
 {
@@ -1049,6 +1055,7 @@ IOReturn CLASS::engineAction(OSObject* target, void* arg0, void* arg1, void* arg
 	}
 	return kIOReturnSuccess;
 }
+#endif /* FAST_ERASE */
 
 __attribute__((visibility("hidden")))
 bool CLASS::configureProvider(IOService* provider)
@@ -1083,7 +1090,7 @@ bool CLASS::configureProvider(IOService* provider)
 __attribute__((visibility("hidden")))
 void CLASS::processBootOptions()
 {
-	UInt32 boot_arg;
+	UInt boot_arg;
 
 	if (PE_parse_boot_argn("es_oso", &boot_arg, sizeof boot_arg))
 		setProperty(kIOAudioEngineSampleOffsetKey, static_cast<UInt64>(boot_arg), 32U);
@@ -1095,8 +1102,8 @@ void CLASS::processBootOptions()
 		setProperty(kIOAudioEngineInputSampleLatencyKey, static_cast<UInt64>(boot_arg), 32U);
 	if (PE_parse_boot_argn("es_mco", &boot_arg, sizeof boot_arg))
 		setProperty("IOAudioEngineMixClipOverhead", static_cast<UInt64>(boot_arg), 32U);
-	if (PE_parse_boot_argn("-es_unstable", &boot_arg, sizeof boot_arg))
-		setProperty(kIOAudioEngineClockIsStableKey, false);
+	if (PE_parse_boot_argn("es_stable", &boot_arg, sizeof boot_arg))
+		setProperty(kIOAudioEngineClockIsStableKey, boot_arg ? true : false);
 	if (PE_parse_boot_argn("es_cabfs", &boot_arg, sizeof boot_arg))
 		setProperty("IOAudioEngineCoreAudioBufferFrameSize", static_cast<UInt64>(boot_arg), 32U);
 	if (PE_parse_boot_argn("-es_debug", &boot_arg, sizeof boot_arg))
