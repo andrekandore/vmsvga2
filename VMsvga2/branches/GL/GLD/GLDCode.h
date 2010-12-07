@@ -47,6 +47,14 @@ void SubmitPacketsToken(gld_context_t*, int);
 void glrReleaseVendShrPipeProg(gld_shared_t* shared, void* arg1);
 void glrDeleteCachedProgram(gld_pipeline_program_t* pp, void* arg1);
 void glrDeleteSysPipelineProgram(gld_shared_t* shared, gld_pipeline_program_t* pp);
+GLDReturn glrValidatePixelFormat(PixelFormat* pixel_format);
+void glrKillClient(kern_return_t kr);
+uint32_t xlateColorMode(uint32_t colorMode);
+void glrSetWindowModeBits(uint32_t* wmb, PixelFormat* pixel_format);
+void glrInitializeHardwareState(gld_context_t* context, PixelFormat* pixel_format);
+void glrSetConfigData(gld_context_t* context, void* arg3, PixelFormat* pixel_format);
+uint32_t glrGLIAlphaGE(int alpha_bits);
+char const* glrGetString(display_info_t* dinfo, int string_code);
 
 #ifdef __cplusplus
 }

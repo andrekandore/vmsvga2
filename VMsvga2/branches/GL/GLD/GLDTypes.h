@@ -100,9 +100,10 @@ typedef struct _RendererInfo
 
 typedef struct _PixelFormat
 {
-	uint32_t	rendererID;		// offset 0x10 (Note: upper byte is something else, probably a display mask)
+	void* pad;
+	uint32_t rendererID;		// offset (4, 8) (Note: upper byte is something else, probably a display mask)
 
-	// DWORD of bit flags at offset 0x14
+	// DWORD of bit flags at offset (8, 0xC)
 	unsigned bWindow:1;			// can run in windowed mode
 	unsigned bFullScreen:1;		// can run fullscreen
 	unsigned bOffScreen:1;		// can render to offscreen client memory
@@ -121,25 +122,72 @@ typedef struct _PixelFormat
 	unsigned pFragProc:1;		// Fragment Proc capable
 	unsigned pAcceleratedCompute:1;	// supports compute acceleration
 
-	uint32_t bufferModes;		// offset 0x18, see Buffer modes in CGLTypes.h
-	uint32_t colorModes;		// offset 0x1C, see Color and accumulation buffer formats in CGLTypes.h
-	uint32_t accumModes;		// offset 0x20, see Color and accumulation buffer formats in CGLTypes.h
-	uint32_t depthModes;		// offset 0x24, see Depth and stencil buffer depths in CGLTypes.h
-	uint32_t stencilModes;		// offset 0x28, see Depth and stencil buffer depths in CGLTypes.h
-	uint16_t unknown1;			// offset 0x2C
-	uint16_t auxBuffers;		// offset 0x2E, number of aux buffers
-	uint16_t sampleBuffers;		// offset 0x30, number of multi sample buffers
-	uint16_t samples;			// offset 0x32, number of samples per multi sample buffer
-	uint32_t sampleModes;		// offset 0x34, see Sampling modes in CGLTypes.h
-	uint8_t sampleAlpha;		// offset 0x38, request alpha filtering
-	uint32_t displayMask;		// offset 0x3C
-	// end point 0x40
+	uint32_t bufferModes;		// offset 0x10, see Buffer modes in CGLTypes.h
+	uint32_t colorModes;		// offset 0x14, see Color and accumulation buffer formats in CGLTypes.h
+	uint32_t accumModes;		// offset 0x18, see Color and accumulation buffer formats in CGLTypes.h
+	uint32_t depthModes;		// offset 0x1C, see Depth and stencil buffer depths in CGLTypes.h
+	uint32_t stencilModes;		// offset 0x20, see Depth and stencil buffer depths in CGLTypes.h
+	uint16_t unknown1;			// offset 0x24
+	int16_t auxBuffers;			// offset 0x26, number of aux buffers
+	int16_t sampleBuffers;		// offset 0x28, number of multi sample buffers
+	int16_t samples;			// offset 0x2A, number of samples per multi sample buffer
+	uint32_t sampleModes;		// offset 0x2C, see Sampling modes in CGLTypes.h
+	uint8_t sampleAlpha;		// offset 0x30, request alpha filtering
+	uint32_t displayMask;		// offset 0x34
+	// end point 0x38
 } PixelFormat;
 
 typedef struct _gld_context_t {
-	// FIXME: huge struct (0x14A0 in 64-bits)
-	uint32_t reserved;
-	io_connect_t context_obj;
+	uint32_t display_num;			// (  0,   0)
+	io_connect_t context_obj;		// (  4,   4)
+	uint8_t	flags1[4];				// (  8,   8)
+	struct _gld_shared_t* shared;	// (  C,  10)
+	void* arg4;						// ( 10,  18)
+	void* arg3;						// ( 14,  20)
+	void* arg5;						// ( 18,  28)
+	uint8_t flags2[2];				// ( 1C,  30)
+	uint32_t config0;				// ( 20,  34)
+	uint32_t config2;				// ( 24,  38)
+	void* f0[2];					// ( 28,  40)
+	uint32_t f1[2];					// ( 30,  50)
+	void* f2;						// ( 38,  58)
+	uint32_t f3[18];				// ( 3C,  60)
+	uint8_t f4[8];					// ( 84,  A8)
+	void* f5;						// ( 8C,  B0)
+	uint32_t f6;					// ( 90,  B8)
+	void* f7[2];					// ( 94,  C0)
+	uint32_t f8[2];					// ( 9C,  D0)
+	uint64_t f9[3];					// ( A4,  D8)
+	uint32_t f10;					// ( BC,  F0)
+	uint32_t f11;					// ( C0,  F4)
+	void* f12[2];					// ( C4,  F8)
+#ifndef __LP64__
+	uint32_t reserved1[2];			// ( CC, 108)
+#endif
+	void* ptr_pack[16];				// ( D4, 108)
+	void* f13[4];					// (114, 188)
+	uint32_t f14[8];				// (124, 1A8)
+	void* f15[3];					// (144, 1C8)
+	void* command_buffer_ptr;		// (150, 1E0)
+	size_t command_buffer_size;		// (154, 1E8)
+	void* mem1_addr;				// (158, 1F0)
+	size_t mem1_size;				// (15c, 1F8)
+	void* pad_addr;					// (160, 200)
+	uint32_t pad_size;				// (164, 208)
+	void* mem2_addr;				// (168, 210)
+	size_t mem2_size;				// (16C, 218)
+	void* mem2_local;				// (170, 220)
+	void* f20;						// (174, 228)
+	uint32_t f21;					// (178, 230)
+	void* f22;						// (17C, 238)
+	uint32_t f23;					// (180, 240)
+	void* f24;						// (184, 248)
+	void* f25;						// (188, 250)
+	void* f26[3];					// (18C, 258)
+	void* gpdd;						// (198, 270)
+	void* reserved2[21];			// (19C, 278)
+	uint32_t reserved3[1120];		// (1F0, 320)
+									// (1370, 14A0)
 } gld_context_t;
 
 typedef struct _gld_shared_t {
@@ -147,8 +195,8 @@ typedef struct _gld_shared_t {
 	pthread_mutex_t mutex;   // (4,    8)
 	long arg2;               // (30,  48)
 	display_info_t* dinfo;   // (34,  50)
-	uint8_t f0;              // (38,  58)
-	uint32_t f1;             // (3C,  5C)
+	uint8_t needs_locking;   // (38,  58)
+	uint32_t num_contexts;   // (3C,  5C)
 	uint32_t config0;        // (40,  60)
 	uint32_t f2;             // (44,  64)
 	void* f3;                // (48,  68)
@@ -230,6 +278,13 @@ typedef struct _libglimage_t {
 	void* glg_processor_default_data;
 	void (*glgTerminateProcessor)(void*);
 } libglimage_t;
+
+typedef struct _sIOGLGetCommandBuffer {
+	uint32_t len0;
+	uint32_t len1;
+	mach_vm_address_t addr0;
+	mach_vm_address_t addr1;
+} sIOGLGetCommandBuffer;
 
 #ifdef __cplusplus
 }

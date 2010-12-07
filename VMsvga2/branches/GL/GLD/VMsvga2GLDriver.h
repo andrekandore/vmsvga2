@@ -49,7 +49,7 @@ GLDReturn gldDestroyPixelFormat(PixelFormat* pixel_format);
 GLDReturn gldCreateShared(gld_shared_t** struct_out, uint32_t GLDisplayMask, long arg2);
 GLDReturn gldDestroyShared(gld_shared_t* shared);
 GLDReturn gldCreateContext(gld_context_t** struct_out,
-						   void* arg1,
+						   PixelFormat* pixel_format,
 						   gld_shared_t* shared,
 						   void* arg3,
 						   void* arg4,
@@ -60,7 +60,7 @@ GLDReturn gldAttachDrawable(gld_context_t* context, int surface_type, void* arg2
 GLDReturn gldInitDispatch(void* arg0, void* arg1, void* arg2);
 GLDReturn gldUpdateDispatch(void* arg0, void* arg1, void* arg2);
 char const* gldGetString(uint32_t GLDisplayMask, int string_code);
-void gldGetError(void* arg0);
+GLDReturn gldGetError(gld_context_t* context);
 GLDReturn gldSetInteger(gld_context_t* context, int arg1, void* arg2);
 GLDReturn gldGetInteger(gld_context_t* context, int arg1, void* arg2);
 void gldFlush(gld_context_t* context);

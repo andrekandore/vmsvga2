@@ -30,6 +30,7 @@
 #include <string.h>
 #include <IOKit/IOKitLib.h>
 #include <OpenGL/CGLTypes.h>
+#include <OpenGL/gl.h>
 #include "EntryPointNames.h"
 #include "GLDTypes.h"
 #include "GLDCode.h"
@@ -51,8 +52,8 @@ kern_return_t glrPopulateDevice(io_connect_t connect, display_info_t* dinfo)
 	 *   "Intel %s OpenGL Engine" (%s == model)
 	 *   "Intel %s Compute Engine" (%s == model)
 	 */
-	strcpy(dinfo->engine1, "VMsvga2 OpenGL Engine");
-	strcpy(dinfo->engine2, "VMsvga2 Compute Engine");
+	strcpy(dinfo->engine1, "VMware SVGA II OpenGL Engine");
+	strcpy(dinfo->engine2, "VMware SVGA II Compute Engine");
 	return ERR_SUCCESS;
 }
 
@@ -105,6 +106,26 @@ uint32_t glrGLIColorsGE(uint32_t num)
 	if (num > 0U)
 		return 0x3FFFFFFCU;	/* hmm... */
 	return 0xBFFFFFFCU;		/* double hmm... */
+}
+
+__attribute__((visibility("hidden")))
+uint32_t glrGLIAlphaGE(int alpha_bits)
+{
+	if (alpha_bits > 16)
+		return 0x8000000U;
+	if (alpha_bits > 12)
+		return 0xA800000U;
+	if (alpha_bits > 8)
+		return 0xAA00000U;
+	if (alpha_bits > 4)
+		return 0xAA9A928U;
+	if (alpha_bits > 2)
+		return 0xAA9A9A8U;
+	if (alpha_bits > 1)
+		return 0xAADA9A8U;
+	if (alpha_bits > 0)
+		return 0xAADADA8U;
+	return 0xFFFFFFFFU;
 }
 
 static
@@ -233,4 +254,106 @@ void glrDeleteSysPipelineProgram(gld_shared_t* shared, gld_pipeline_program_t* p
 		pp->f0.f = 0;
 	}
 #endif
+}
+
+__attribute__((visibility("hidden")))
+GLDReturn glrValidatePixelFormat(PixelFormat* pixel_format)
+{
+	// FIXME
+	return kCGLNoError;
+}
+
+__attribute__((visibility("hidden")))
+void glrKillClient(kern_return_t kr)
+{
+	// FIXME
+}
+
+__attribute__((visibility("hidden")))
+uint32_t xlateColorMode(uint32_t colorMode)
+{
+	if (colorMode & 0xFFFFFCU) {
+		if (colorMode & 0x3FC0U)
+			return 3U;
+		if (colorMode & 0xFC000U)
+			return 4U;
+		if (colorMode & 0x3F00000U)
+			return 11U;
+		return 0;
+	}
+	if (colorMode & 0x3F000000U) {
+		if (colorMode & 0x3F00000U)
+			return 12U;
+		if (colorMode & 0xC000000U)
+			return 13U;
+	}
+	return 0;
+}
+
+__attribute__((visibility("hidden")))
+void glrSetWindowModeBits(uint32_t* wmb, PixelFormat* pixel_format)
+{
+	uint32_t mb = *wmb;
+	switch (pixel_format->depthModes) {
+		case kCGL0Bit:
+			break;
+		case kCGL16Bit:
+			mb |= 0x1000000U;
+			break;
+		case kCGL32Bit:
+			mb |= 0x2000000U;
+			break;
+		default:
+			mb |= 0x3000000U;
+			break;
+	}
+	if (pixel_format->sampleBuffers > 0 &&
+		pixel_format->samples == 4)
+		mb |= 0x4000000U;
+	*wmb = mb;
+}
+
+__attribute__((visibility("hidden")))
+void glrInitializeHardwareState(gld_context_t* context, PixelFormat* pixel_format)
+{
+	// FIXME
+}
+
+__attribute__((visibility("hidden")))
+void glrSetConfigData(gld_context_t* context, void* arg3, PixelFormat* pixel_format)
+{
+	// FIXME
+}
+
+__attribute__((visibility("hidden")))
+char const* glrGetString(display_info_t* dinfo, int string_code)
+{
+	switch (string_code) {
+		case GL_VENDOR:
+			return "Zenith432"; /* "Intel Inc." */
+		case GL_RENDERER:
+			return &dinfo->engine1[0];
+		case GL_VERSION:
+#if 0
+			if (dinfo->config[0] & 0x100000U)
+				return "2.1 APPLE-1.6.24";
+			if (dinfo->config[0] & 0x80000U)
+				return "2.0 APPLE-1.6.24";
+#endif
+			return "1.4 APPLE-1.6.24";
+		case GL_EXTENSIONS:
+			break;
+		case GL_VENDOR + 4:
+#if 0
+			if (dinfo->config[0] & 0x100000U)
+				return "IntelHDGraphicsGLDriver";
+			if (dinfo->config[0] & 0x80000U)
+				return "Intel965GLDriver";
+			return "Intel915GLDriver";
+#endif
+			return "VMsvga2GLDriver";
+		case GL_VENDOR + 5:
+			return &dinfo->engine2[0];
+	}
+	return 0;
 }

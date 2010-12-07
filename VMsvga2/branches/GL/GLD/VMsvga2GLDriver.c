@@ -304,140 +304,152 @@ GLDReturn gldGetRendererInfo(void* struct_out, uint32_t GLDisplayMask)
 static
 GLDReturn gldChoosePixelFormatInternal(PixelFormat** struct_out, int const* attributes)
 {
-	uint32_t displayMask;	// var_164
-	uint32_t r14d, var_130, var_178, var_174, var_168, var_160, var_148, var_13c, var_138, var_12c;
+	uint32_t displayMask /* var_164 */,
+		buffer_modes /* var_130 */,
+		flags /* r14d */,
+		color_mask /* var_168 */,
+		sample_alpha /* var_160 */,
+		sample_mode /* var_148 */,
+		stencil_mode /* var_13c */,
+		depth_mode /* var_138 */,
+		alpha_trimmed_color_mask /* var_12c */;
 	int const* pAttr;
-	int attr, r15d, r13d, esi, var_16c, r12d;
-	uint16_t var_142, var_140, var_13e;
+	int attr,
+		color_bits /* r15d */,
+		depth_bits /* r13d */,
+		stencil_bits /* esi */,
+		accum_bits /* var_16c */,
+		alpha_bits /* r12d */,
+		min_policy /* var_174 */,
+		max_policy /* var_178 */;
+	int16_t sample_buffers /* var_140 */,
+			spermsb /* var_142 */,
+			aux_buffers /* var_13e */;
 
 	// struct_out -->var_188
 	// attributes -->rbx
 	*struct_out = 0;
 	if (getenv("GL_REJECT_HW"))
-		return 0;
+		return kCGLNoError;
 	displayMask = glr_io_data.displayMask;
 	pAttr = attributes;	// rdx
-	var_178 = 0;
-	var_174 = 0;
-	r15d = 0;
-	r13d = 0;
-	esi = 0;
-	var_16c = 0;
-	r12d = 0;
-	var_168 = 0xFFFFFCU; /* All colors thru kCGLRGBA16161616Bit */
-	var_160 = 0;
-	var_148 = 0;
-	var_142 = 0;
-	var_140 = 0;
-	var_13e = 0;
-	var_130 = 0;
-	r14d = 0x500U;
-	while ((attr = *pAttr)) {
-		++pAttr;
+	max_policy = 0;
+	min_policy = 0;
+	color_bits = 0;
+	depth_bits = 0;
+	stencil_bits = 0;
+	accum_bits = 0;
+	alpha_bits = 0;
+	color_mask = 0xFFFFFCU; /* All colors thru kCGLRGBA16161616Bit */
+	sample_alpha = 0;
+	sample_mode = 0;
+	spermsb = 0;
+	sample_buffers = 0;
+	aux_buffers = 0;
+	buffer_modes = 0;
+	flags = 0x500U;	/* bAccelerated, bCompliant */
+	while ((attr = *pAttr++)) {
 		switch (attr) {
 			case 4:
 				break;
 			case kCGLPFADoubleBuffer:
-				var_130 |= 8;
+				buffer_modes |= kCGLDoubleBufferBit;
 				break;
 			case kCGLPFAStereo:
-				var_130 |= 2;
+				buffer_modes |= kCGLStereoscopicBit;
 				break;
 			case kCGLPFAAuxBuffers:
-				attr = *pAttr;
+				attr = *pAttr++;
 				if (attr < 0)
 					return kCGLBadValue;
-				++pAttr;
-				var_13e = (uint16_t) attr;
+				aux_buffers = (int16_t) attr;
 				break;
 			case kCGLPFAColorSize:
 				attr = *pAttr++;
 				if (attr < 0)
 					return kCGLBadValue;
-				if (r15d < attr)
-					r15d = attr;
+				if (attr > color_bits)
+					color_bits = attr;
 				break;
 			case kCGLPFAAlphaSize:
 				attr = *pAttr++;
 				if (attr < 0)
 					return kCGLBadValue;
-				if (r12d < attr)
-					r12d = attr;
+				if (attr > alpha_bits)
+					alpha_bits = attr;
 				break;
 			case kCGLPFADepthSize:
 				attr = *pAttr++;
 				if (attr < 0)
 					return kCGLBadValue;
-				if (r13d < attr)
-					r13d = attr;
+				if (attr > depth_bits)
+					depth_bits = attr;
 				break;
 			case kCGLPFAStencilSize:
 				attr = *pAttr++;
 				if (attr < 0)
 					return kCGLBadValue;
-				if (esi < attr)
-					esi = attr;
+				if (attr > stencil_bits)
+					stencil_bits = attr;
 				break;
 			case kCGLPFAAccumSize:
 				attr = *pAttr++;
 				if (attr < 0)
 					return kCGLBadValue;
-				if (var_16c < attr)
-					var_16c = attr;
+				if (attr > accum_bits)
+					accum_bits = attr;
 				break;
 			case kCGLPFAMinimumPolicy:
-				var_174 = 1;
+				min_policy = 1;
 				break;
 			case kCGLPFAMaximumPolicy:
-				var_178 = 1;
+				max_policy = 1;
 				break;
 			case kCGLPFAOffScreen:
-				r14d |= 4;
+				flags |= 4U; /* bOffScreen */
 				break;
 			case kCGLPFAFullScreen:
-				r14d |= 2;
+				flags |= 2U; /* bFullScreen */
 				break;
 			case kCGLPFASampleBuffers:
-				attr = *pAttr;
+				attr = *pAttr++;
 				if (attr < 0)
 					return kCGLBadValue;
-				++pAttr;
-				var_140 = (uint16_t) attr;
+				sample_buffers = (int16_t) attr;
 				break;
 			case kCGLPFASamples:
-				attr = *pAttr;
+				attr = *pAttr++;
 				if (attr < 0)
 					return kCGLBadValue;
-				++pAttr;
-				var_142 = (uint16_t) attr;
+				spermsb = (int16_t) attr;
 				break;
 			case kCGLPFAAuxDepthStencil:
-				r14d |= 0x800U;
+				flags |= 0x800U; /* bAuxDepthStencil */
 				break;
 			case kCGLPFAColorFloat:
-				var_168 = 0x3F000000U; /* kCGLRGBFloat64Bit thru kCGLRGBAFloat256Bit */
+				color_mask = 0x3F000000U; /* kCGLRGBFloat64Bit thru kCGLRGBAFloat256Bit */
 				break;
 			case kCGLPFAMultisample:
-				var_148 = 2;
+				sample_mode = kCGLMultisampleBit;
 				break;
 			case kCGLPFASupersample:
-				var_148 = 1;
+				sample_mode = kCGLSupersampleBit;
 				break;
 			case kCGLPFASampleAlpha:
-				var_160 = 1;
+				sample_alpha = 1;
 				break;
 			case kCGLPFABackingStore:
-				r14d |= 8;
+				flags |= 8U; /* bBackingStore */
 				break;
 			case kCGLPFAWindow:
-				r14d |= 1;
+				flags |= 1U; /* bWindow */
 				break;
 			case kCGLPFADisplayMask:
 				attr = *pAttr++;
 				displayMask &= (uint32_t) attr;
 				break;
 			case kCGLPFAPBuffer:
-				r14d |= 0x2000U;
+				flags |= 0x2000U; /* bPBuffer */
 				break;
 			default:
 				return kCGLBadAttribute;
@@ -445,28 +457,15 @@ GLDReturn gldChoosePixelFormatInternal(PixelFormat** struct_out, int const* attr
 		if ((pAttr - attributes) >= 49)
 			return kCGLBadAttribute;
 	}
-	var_13c = glrGLIBitsGE(esi) & 0x3FFFFU;
-	var_138 = glrGLIBitsGE(r13d) & 0x3FFFFU;
-	if (r15d <= 32 && r12d <= 8)
-		var_168 &= 0xFF0FFFFFU; /* remove kCGLRGB121212Bit thru kCGLRGBA16161616Bit */
-	var_12c = 0;
-	if (r12d <= 32) {
-		uint32_t tmp = glrGLIColorsGE(r15d);
-		tmp &= 0x3FFFFFFCU;
-		tmp &= var_168;
-#if 0
-		// FIXME: crazy_func
-		if (r12d <= 16) {
-			if (r12d <= 12) {
-				if (r12d <= 8) {
-				} else
-					tmp &= 0xAA00000U;
-			} else
-				tmp &= 0xA800000U;
-		} else
-			tmp &= 0x8000000U;
-#endif
-		var_12c = crazy_func(tmp);
+	stencil_mode = glrGLIBitsGE(stencil_bits) & 0x3FFFFU;
+	depth_mode = glrGLIBitsGE(depth_bits) & 0x3FFFFU;
+	if (color_bits <= 32 && alpha_bits <= 8)
+		color_mask &= 0xFF0FFFFFU; /* remove kCGLRGB121212Bit thru kCGLRGBA16161616Bit */
+	alpha_trimmed_color_mask = 0;
+	if (alpha_bits <= 32) {
+		alpha_trimmed_color_mask = glrGLIColorsGE(color_bits) & 0x3FFFFFFCU;
+		alpha_trimmed_color_mask &= color_mask;
+		alpha_trimmed_color_mask &= glrGLIAlphaGE(alpha_bits);
 	}
 	// FIXME: continues 0x69EE-0x6F74
 }
@@ -555,8 +554,8 @@ GLDReturn gldCreateShared(gld_shared_t** struct_out, uint32_t GLDisplayMask, lon
 			p->obj = connect;
 			p->config0 = glr_io_data.dinfo[i].config[0];
 			pthread_mutex_init(&p->mutex, NULL);
-			p->f0 = 0;
-			p->f1 = 1;
+			p->needs_locking = 0;
+			p->num_contexts = 1;
 			p->f2 = 0;
 			p->f3 = 0;
 			p->f4 = 0;
@@ -598,8 +597,223 @@ GLDReturn gldDestroyShared(gld_shared_t* shared)
 	return kCGLNoError;
 }
 
+GLDReturn gldCreateContextInternal(gld_context_t** struct_out,
+						   PixelFormat* pixel_format,
+						   gld_shared_t* shared,
+						   void* arg3,
+						   void* arg4,
+						   void* arg5)
+{
+	uint64_t input;
+	sIOGLGetCommandBuffer outputStruct;
+	display_info_t* dinfo;
+	gld_context_t* context;
+	GLDReturn rc;
+	kern_return_t kr;
+	uint32_t disp_num;
+	size_t outputStructCnt;
+
+	GLDLog(2, "%s(struct_out, %p, %p, %p, %p, %p)\n", __FUNCTION__, pixel_format, shared, arg3, arg4, arg5);
+
+	*struct_out = 0;
+	rc = glrValidatePixelFormat(pixel_format);
+	if (rc != kCGLNoError)
+		return rc;
+	dinfo = shared->dinfo;
+	if (!(dinfo->mask & pixel_format->displayMask) ||
+		(~(dinfo->mask) & pixel_format->displayMask))
+		return kCGLBadDisplay;
+	context = (gld_context_t*) malloc(sizeof *context);
+	GLDLog(2, "  %s: context @%p\n", __FUNCTION__, context);
+	for (disp_num = 0; disp_num != glr_io_data.lastDisplay; ++disp_num)
+		if (pixel_format->displayMask & (1U << disp_num))
+			break;
+	context->display_num = disp_num;
+	context->context_obj = 0;
+	kr = IOServiceOpen(glr_io_data.pServices[disp_num],
+					   mach_task_self(),
+					   1 /* GL Context User-Client */,
+					   &context->context_obj);
+	if (kr != ERR_SUCCESS) {
+		free(context);
+		return kCGLBadCodeModule;
+	}
+	context->command_buffer_ptr = 0;
+	input = 0;
+	outputStructCnt = sizeof outputStruct;
+	kr = IOConnectCallMethod(context->context_obj,
+							 kIOVMGLSubmitCommandBuffer,
+							 &input, 1,
+							 0, 0, 0, 0,
+							 &outputStruct, &outputStructCnt);
+	context->command_buffer_ptr = (void*) (uintptr_t) outputStruct.addr0;	// Note: truncation in 32-bits
+	context->command_buffer_size = outputStruct.len0;
+	if (kr != ERR_SUCCESS) {
+#if 0
+		glrKillClient(kr);
+#endif
+		IOServiceClose(context->context_obj);
+		free(context);
+		return kCGLBadCodeModule;
+	}
+	context->mem1_addr = 0;
+	kr = IOConnectMapMemory(context->context_obj,
+							1,
+							mach_task_self(),
+#ifdef __LP64__
+							(mach_vm_address_t*) &context->mem1_addr,
+							(mach_vm_size_t*) &context->mem1_size,
+#else
+							(vm_address_t*) &context->mem1_addr,
+							(vm_size_t*) &context->mem1_size,
+#endif
+							kIOMapAnywhere);
+	if (kr != ERR_SUCCESS) {
+		IOServiceClose(context->context_obj);
+		free(context);
+		return kCGLBadCodeModule;
+	}
+	context->mem2_addr = 0;
+	kr = IOConnectMapMemory(context->context_obj,
+							2,
+							mach_task_self(),
+#ifdef __LP64__
+							(mach_vm_address_t*) &context->mem2_addr,
+							(mach_vm_size_t*) &context->mem2_size,
+#else
+							(vm_address_t*) &context->mem2_addr,
+							(vm_size_t*) &context->mem2_size,
+#endif
+							kIOMapAnywhere);
+	if (kr != ERR_SUCCESS) {
+		IOServiceClose(context->context_obj);
+		free(context);
+		return kCGLBadCodeModule;
+	}
+	pthread_mutex_lock(&shared->mutex);
+	kr = IOConnectAddClient(context->context_obj, shared->obj);
+	if (kr != ERR_SUCCESS) {
+		pthread_mutex_unlock(&shared->mutex);
+		IOServiceClose(context->context_obj);
+		free(context);
+		return kCGLBadCodeModule;
+	}
+	++shared->num_contexts;
+	if (shared->num_contexts > 2)		// FIXME shouldn't this be > 1 ???
+		shared->needs_locking = 1;
+	pthread_mutex_unlock(&shared->mutex);
+	context->config0 = shared->config0;
+	context->config2 = dinfo->config[2];
+	context->mem2_local = malloc(context->mem2_size >> 5);
+	bzero(context->mem2_local, context->mem2_size >> 5);
+	context->f20 = 0;
+	context->f21 = 0;
+	context->f22 = 0;
+	context->f23 = 0;
+	context->f24 = 0;
+	context->flags1[0] = 0x40U;
+	bzero(&context->f26, sizeof context->f26);
+	context->gpdd = libglimage.glg_processor_default_data;
+	context->shared = shared;
+	context->arg4 = arg4;
+	context->arg5 = arg5;
+	context->arg3 = 0;
+	context->f0[0] = 0;
+	context->f0[1] = 0;
+	context->f1[1] = 0;
+	context->f1[0] = 0;
+	context->f2 = 0;
+	context->f3[3] = 0;
+	context->f3[4] = 0;
+	context->f3[5] = 0;
+	context->f3[6] = 0;
+	context->f3[7] = 25;
+	context->f3[8] = 50;
+	context->f3[1] = 0;
+	context->f3[2] = 0;
+	context->f3[9] = 0;
+	context->f3[10] = 0;
+	context->f4[7] = 0;
+	context->f3[11] = 0;
+	context->f3[12] = 0;
+	context->f3[13] = 0;
+	context->f3[14] = 0;
+	context->f4[4] = 0;
+	context->f4[2] = 0;
+	context->f4[6] = 0;
+	context->f4[5] = 0;
+	context->f4[3] = 0;
+	context->f5 = 0;
+	context->f6 = 0;
+	context->f4[0] = 0;
+	context->f25 = 0;
+	context->flags2[0] = 1;
+	context->flags1[3] = 0;
+	context->pad_size = 0;
+	context->pad_addr = 0;
+	context->f11 = 0;
+	context->f12[0] = 0;
+	context->flags1[2] = 0;
+	context->f10 = 3;
+	context->flags1[1] = (pixel_format->bufferModes & kCGLDoubleBufferBit) != 0;
+	if (pixel_format->bAuxDepthStencil)
+		context->f1[1] = 0x2000U;
+	if (pixel_format->bufferModes & kCGLDoubleBufferBit)
+		context->f1[1] |= 0x400U;
+	else if (!pixel_format->bFullScreen)
+		context->f1[1] |= 0x800U;
+	if (pixel_format->bufferModes & kCGLStereoscopicBit)
+		context->f1[1] |= 0x10U;
+	context->f1[1] |= xlateColorMode(pixel_format->colorModes);
+	if (pixel_format->depthModes == kCGL0Bit)
+		context->f1[1] |= 0x40U;
+	if (pixel_format->stencilModes == kCGL0Bit)
+		context->f1[1] |= 0x80U;
+	if (pixel_format->accumModes == kCGLARGB8888Bit)
+		context->f4[1] = 1;
+	else if (pixel_format->accumModes == kCGLRGBA16161616Bit)
+		context->f4[1] = 2;
+	else
+		context->f4[1] = 0;
+	if (pixel_format->auxBuffers == 1)
+		context->f1[1] |= 0x100U;
+	else if (pixel_format->auxBuffers == 2)
+		context->f1[1] |= 0x200U;
+	if (pixel_format->sampleBuffers > 0)
+		context->f1[1] |= 0x1000U;
+	context->flags2[1] = 0;
+	if (pixel_format->bBackingStore) {
+		context->f1[1] |= 0x800000U;
+		context->flags2[1] = 1;
+	}
+	glrSetWindowModeBits(&context->f1[1], pixel_format);
+	context->f1[0] = 0x4000U;
+	if (context->f1[1] & 0x40U)
+		context->f1[0] = 0x4100U;
+	if (context->f1[1] & 0x80000000U)
+		context->f1[0] | 0x400U;
+	if (context->f4[1])
+		context->f1[0] | 0x200U;
+	context->f8[0] = context->f1[1];
+	context->f8[1] = context->f1[0];
+	memcpy(&context->f9[0], &context->f3[3], 3 * sizeof(uint64_t));
+	context->f7[0] = 0;
+	context->f7[1] = 0;
+	bzero(&context->ptr_pack[0], sizeof context->ptr_pack);
+	bzero(&context->f13[0], sizeof context->f13);
+	bzero(&context->f14[0], sizeof context->f14);
+	glrInitializeHardwareState(context, pixel_format);
+	if (arg3) {
+		((uint32_t *) arg3)[29] = ((context->config0 & 2) ^ 2) + 1;
+		glrSetConfigData(context, arg3, pixel_format);
+		context->arg3 = arg3;
+	}
+	*struct_out = context;
+	return rc;
+}
+
 GLDReturn gldCreateContext(gld_context_t** struct_out,
-						   void* arg1,
+						   PixelFormat* pixel_format,
 						   gld_shared_t* shared,
 						   void* arg3,
 						   void* arg4,
@@ -608,10 +822,10 @@ GLDReturn gldCreateContext(gld_context_t** struct_out,
 	typeof(gldCreateContext) *addr;
 	GLDReturn rc;
 
-	GLDLog(2, "%s(struct_out, %p, %p, %p, %p, %p)\n", __FUNCTION__, arg1, shared, arg3, arg4, arg5);
+	GLDLog(2, "%s(struct_out, %p, %p, %p, %p, %p)\n", __FUNCTION__, pixel_format, shared, arg3, arg4, arg5);
 	addr = (typeof(addr)) bndl_ptrs[bndl_index][6];
 	if (addr) {
-		rc = addr(struct_out, arg1, shared, arg3, arg4, arg5);
+		rc = addr(struct_out, pixel_format, shared, arg3, arg4, arg5);
 		GLDLog(2, "  %s: returns %d, struct_out is %p\n", __FUNCTION__, rc, *struct_out);
 		return rc;
 	}
@@ -670,15 +884,14 @@ GLDReturn gldAttachDrawableInternal(gld_context_t* context, int surface_type, vo
 		if (!arg2)
 			return kCGLBadDrawable;
 		r12d = 0;
-		edx = get32(context, 0, 0x54);
+		edx = context->f1[1];;
 		rax = (uintptr_t) arg2 + 8;
 		var_e0 = rax;
 		// skipped 52A4-52DA
 		edx |= 32;
 		edx &= 0xFF80FFFF;
-		// FIXME: dword ptr context+0x54 = edx
-		// FIXME: byte ptr context+0xAB = r15d ^ 1
-		if 
+		context->f1[1] = edx;
+		context->f4[3] = (uint8_t) r15d ^ 1U;
 	}
 }
 #endif
@@ -721,40 +934,31 @@ GLDReturn gldUpdateDispatch(void* arg0, void* arg1, void* arg2)
 
 char const* gldGetString(uint32_t GLDisplayMask, int string_code)
 {
-	typeof(gldGetString) *addr;
 	char const* r = 0;
+	uint32_t i;
 
 	GLDLog(2, "%s(%#x, %#x)\n", __FUNCTION__, GLDisplayMask, string_code);
 
-	addr = (typeof(addr)) bndl_ptrs[bndl_index][12];
-	if (addr) {
-		r = addr(GLDisplayMask, string_code);
-		if (r)
-			GLDLog(2, "  %s returns %s\n", __FUNCTION__, r);
-	}
-	switch (string_code) {
-		case 0x1F00:
-			r = "Zenith432";
+	for (i = 0; i != glr_io_data.num_displays; ++i)
+		if (glr_io_data.dinfo[i].mask & GLDisplayMask) {
+			if ((~glr_io_data.dinfo[i].mask) & GLDisplayMask)
+				break;
+			r = glrGetString(&glr_io_data.dinfo[i], string_code);
 			break;
-		case 0x1F01:
-			r = "VMware SVGA II OpenGL Engine";
-			break;
-		case 0x1F04:
-			r = "VMsvga2GLDriver";
-			break;
-	}
+		}
+	GLDLog(2, "  %s returns %s\n", __FUNCTION__, r ? : "NULL");
 	return r;
 }
 
-void gldGetError(void* arg0)
+GLDReturn gldGetError(gld_context_t* context)
 {
-	typeof(gldGetError) *addr;
+	GLDReturn rc;
 
-	GLDLog(2, "%s(%p)\n", __FUNCTION__, arg0);
+	GLDLog(2, "%s(%p)\n", __FUNCTION__, context);
 
-	addr = (typeof(addr)) bndl_ptrs[bndl_index][13];
-	if (addr)
-		addr(arg0);
+	rc = (GLDReturn) context->f11;
+	context->f11 = kCGLNoError;
+	return rc;
 }
 
 GLDReturn gldSetInteger(gld_context_t* context, int arg1, void* arg2)
@@ -785,7 +989,7 @@ void gldFlush(gld_context_t* context)
 {
 	GLDLog(2, "%s(%p)\n", __FUNCTION__, context);
 
-	if (getp(context, 0x150, 0x1e0) + 32 < getp(context, 0x148, 0x1d0))
+	if ((uintptr_t) context->command_buffer_ptr + 32 < (uintptr_t) context->f15[1])
 		SubmitPacketsToken(context, 1);
 }
 
@@ -793,7 +997,7 @@ void gldFinish(gld_context_t* context)
 {
 	GLDLog(2, "%s(%p)\n", __FUNCTION__, context);
 
-	if (getp(context, 0x150, 0x1e0) + 32 < getp(context, 0x148, 0x1d0))
+	if ((uintptr_t) context->command_buffer_ptr + 32 < (uintptr_t) context->f15[1])
 		SubmitPacketsToken(context, 1);
 	IOConnectCallMethod(context->context_obj,
 						kIOVMGLFinish,
@@ -930,7 +1134,7 @@ GLDReturn gldModifyTexture(gld_shared_t* shared, gld_texture_t* texture, uint8_t
 	switch (w->type) {
 		case 6:
 		case 9:
-			if (shared->f0)
+			if (shared->needs_locking)
 				pthread_mutex_lock(&shared->mutex);
 			if (!OSAtomicAdd32(0xFFFF0000, &w->stamps[3])) {
 				input = (uint64_t) w->texture_id;
@@ -940,7 +1144,7 @@ GLDReturn gldModifyTexture(gld_shared_t* shared, gld_texture_t* texture, uint8_t
 									0, 0, 0, 0, 0, 0);
 			}
 			texture->waitable = 0;
-			if (shared->f0)
+			if (shared->needs_locking)
 				pthread_mutex_unlock(&shared->mutex);
 			break;
 	}
@@ -1089,7 +1293,7 @@ GLDReturn gldDestroyPipelineProgram(gld_shared_t* shared, gld_pipeline_program_t
 		glrReleaseVendShrPipeProg(shared, pp->f2[0]);
 		pp->f2[0] = 0;
 	}
-	if (shared->f0)
+	if (shared->needs_locking)
 		pthread_mutex_lock(&shared->mutex);
 	while (pp->f2[3])
 		glrDeleteCachedProgram(pp, pp->f2[1]);
@@ -1099,7 +1303,7 @@ GLDReturn gldDestroyPipelineProgram(gld_shared_t* shared, gld_pipeline_program_t
 		pp->next->prev = pp->prev;
 	if (pp->prev)
 		pp->prev->next = pp->next;
-	if (shared->f0)
+	if (shared->needs_locking)
 		pthread_mutex_unlock(&shared->mutex);
 	glrDeleteSysPipelineProgram(shared, pp);
 	free(pp);
@@ -1194,7 +1398,7 @@ GLDReturn gldDestroyFence(gld_context_t* context, gld_fence_t* fence)
 	GLDLog(2, "%s(%p, %p)\n", __FUNCTION__, context, fence);
 
 	uint32_t t = fence->f0 >> 5;
-	uintptr_t u = getp(context, 0x170, 0x220) + (((uintptr_t) t) << 2);
+	uintptr_t u = (uintptr_t) context->mem2_local + (((uintptr_t) t) << 2);
 	*(uint32_t*) u &= ~(1U << (fence->f0 & 0x1FU));
 	free(fence);
 	return kCGLNoError;
