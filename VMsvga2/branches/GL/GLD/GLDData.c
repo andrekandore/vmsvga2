@@ -33,29 +33,27 @@
 
 static __attribute__((used)) char const copyright[] = "Copyright 2009-2010 Zenith432";
 
-__attribute__((visibility("hidden")))
-char const BNDL1[] = "/System/Library/Extensions/AppleIntelGMA950GLDriver.bundle/Contents/MacOS/AppleIntelGMA950GLDriver";
-__attribute__((visibility("hidden")))
-char const BNDL2[] = "/System/Library/Frameworks/OpenGL.framework/Resources/GLRendererFloat.bundle/GLRendererFloat";
-__attribute__((visibility("hidden")))
-char const LIBGLIMAGE[] = "/System/Library/Frameworks/OpenGL.framework/Versions/A/Libraries/libGLImage.dylib";
+#pragma GCC visibility push(hidden)
 
-__attribute__((visibility("hidden")))
+char const BNDL1[] = "/System/Library/Extensions/AppleIntelGMA950GLDriver.bundle/Contents/MacOS/AppleIntelGMA950GLDriver";
+char const BNDL2[] = "/System/Library/Frameworks/OpenGL.framework/Resources/GLRendererFloat.bundle/GLRendererFloat";
+char const LIBGLIMAGE[] = "/System/Library/Frameworks/OpenGL.framework/Versions/A/Libraries/libGLImage.dylib";
+char const LIBGLPROGRAMMABILITY[] = "/System/Library/Frameworks/OpenGL.framework/Versions/A/Libraries/libGLProgrammability.dylib";
+
 void* bndl_handle[2];
 
-__attribute__((visibility("hidden")))
 GLD_GENERIC_FUNC bndl_ptrs[2][NUM_ENTRIES];
 
 #if LOGGING_LEVEL >= 1
-__attribute__((visibility("hidden")))
-int logLevel = 5;
+int logLevel = LOGGING_LEVEL;
 #endif
 
-__attribute__((visibility("hidden")))
 int bndl_index;
 
-__attribute__((visibility("hidden")))
 glr_io_data_t glr_io_data;
 
-__attribute__((visibility("hidden")))
 libglimage_t libglimage;
+
+libglprogrammability_t libglprogrammability;
+
+#pragma GCC visibility pop

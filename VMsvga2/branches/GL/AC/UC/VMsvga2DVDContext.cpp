@@ -105,7 +105,7 @@ bool CLASS::start(IOService* provider)
 
 bool CLASS::initWithTask(task_t owningTask, void* securityToken, UInt32 type)
 {
-	m_log_level = 1;
+	m_log_level = LOGGING_LEVEL;
 	if (!super::initWithTask(owningTask, securityToken, type))
 		return false;
 	m_owning_task = owningTask;

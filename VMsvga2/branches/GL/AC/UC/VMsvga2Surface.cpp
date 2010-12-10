@@ -44,9 +44,9 @@
 OSDefineMetaClassAndStructors(VMsvga2Surface, IOUserClient);
 
 #if LOGGING_LEVEL >= 1
-#define SFLog(log_level, fmt, ...) do { if (log_level <= m_log_level) VLog("IOSF: ", fmt, ##__VA_ARGS__); } while (false)
+#define SFLog(log_level, ...) do { if (log_level <= m_log_level) VLog("IOSF: ", ##__VA_ARGS__); } while (false)
 #else
-#define SFLog(log_level, fmt, ...)
+#define SFLog(log_level, ...)
 #endif
 
 #define FMT_D(x) static_cast<int>(x)
@@ -1191,6 +1191,9 @@ IOReturn CLASS::set_shape_backing(eIOAccelSurfaceShapeBits options,
 
 IOReturn CLASS::set_id_mode(uintptr_t wID, eIOAccelSurfaceModeBits modebits)
 {
+	if (wID != 1U)
+		m_log_level = imax(m_provider->getLogLevelGLD(), m_log_level); // temporarily elevate to GLD level
+
 	SFLog(2, "%s(0x%lx, 0x%x)\n", __FUNCTION__, wID, modebits);
 
 #ifdef TESTING
@@ -1241,6 +1244,7 @@ IOReturn CLASS::set_id_mode(uintptr_t wID, eIOAccelSurfaceModeBits modebits)
 			return kIOReturnUnsupported;
 	}
 	m_wID = static_cast<UInt32>(wID);
+	m_gl.original_mode_bits = modebits;
 	bHaveID = true;
 	return kIOReturnSuccess;
 }
@@ -1253,6 +1257,12 @@ IOReturn CLASS::set_scale(eIOAccelSurfaceScaleBits options, IOAccelSurfaceScalin
 		return kIOReturnBadArgument;
 	memcpy(&m_scale, scaling, sizeof *scaling);
 	calculateScaleParameters();
+	/*
+	 * Note: Added for GL
+	 */
+	m_gl.region_status[2] = static_cast<uint32_t>(m_scale.buffer.w);
+	m_gl.region_status[3] = static_cast<uint32_t>(m_scale.buffer.h);
+	memcpy(&m_gl.region_status[0], &m_gl.region_status[2], 2 * sizeof(uint32_t));
 	return kIOReturnSuccess;
 }
 
@@ -1479,8 +1489,34 @@ IOReturn CLASS::set_shape_backing_length_ext(eIOAccelSurfaceShapeBits options,
 	if ((options & expectedOptions) != expectedOptions)
 		return kIOReturnSuccess;
 #endif
-	if (!bVideoMode && isRegionEmpty(rgn))
+	/*
+	 * Note: Added for GL
+	 */
+	m_gl.region_status[2] = static_cast<uint32_t>(rgn->bounds.w);
+	m_gl.region_status[3] = static_cast<uint32_t>(rgn->bounds.h);
+	if (rgn->num_rects == 1U) {
+		m_gl.region_status[0] = static_cast<uint32_t>(rgn->rect[0].w);
+		m_gl.region_status[1] = static_cast<uint32_t>(rgn->rect[0].h);
+	} else
+		memcpy(&m_gl.region_status[0], &m_gl.region_status[2], 2 * sizeof(uint32_t));
+	if (!bVideoMode && isRegionEmpty(rgn)) {
+		/*
+		 * Note: Added for GL
+		 * TBD: check that this doesn't interfere with
+		 *   VideoMode (i.e. that's it's "true" here, so
+		 *   the scale is set via context_scale_surface)
+		 */
+		if (m_wID != 1U) {
+			m_scale.source.w = rgn->bounds.w;
+			m_scale.source.h = rgn->bounds.h;
+			m_scale.buffer.x = 0;
+			m_scale.buffer.y = 0;
+			m_scale.buffer.w = m_scale.source.w;
+			m_scale.buffer.h = m_scale.source.h;
+			calculateScaleParameters();
+		}
 		return kIOReturnSuccess;
+	}
 	if (!bHaveID)
 		return kIOReturnNotReady;
 	if (backing != 0) {
@@ -1638,15 +1674,16 @@ IOReturn CLASS::context_unlock_memory(UInt32* swapFlags)
  *   be possible to perform the whole blit in host VRAM only, which would make it
  *   more efficient.
  */
-IOReturn CLASS::context_copy_region(SInt32 destX,
-									SInt32 destY,
-									IOAccelDeviceRegion const* region,
-									size_t regionSize)
+IOReturn CLASS::copy_framebuffer_region_to_self(UInt framebufferIndex,
+												SInt destX,
+												SInt destY,
+												IOAccelDeviceRegion const* region,
+												size_t regionSize)
 {
 	IOReturn rc;
 	VMsvga2Accel::ExtraInfo extra;
 
-	SFLog(3, "%s(%d, %d, %p, %lu)\n", __FUNCTION__, FMT_D(destX), FMT_D(destY), region, regionSize);
+	SFLog(3, "%s(%u, %d, %d, %p, %lu)\n", __FUNCTION__, framebufferIndex, destX, destY, region, regionSize);
 
 	if (!region || regionSize < IOACCEL_SIZEOF_DEVICE_REGION(region))
 		return kIOReturnBadArgument;
@@ -1682,7 +1719,7 @@ IOReturn CLASS::context_copy_region(SInt32 destX,
 					   extra.dstDeltaX,
 					   extra.dstDeltaY);
 	if (bHaveScreenObject) {
-		rc = m_provider->blitFromScreen(m_framebufferIndex,
+		rc = m_provider->blitFromScreen(framebufferIndex,
 										region,
 										&extra,
 										&m_backing.last_DMA_fence);
@@ -1712,7 +1749,7 @@ IOReturn CLASS::context_copy_region(SInt32 destX,
 									  &extra,
 									  &m_backing.last_DMA_fence);
 	} else {
-		rc = m_provider->blitGFB(m_framebufferIndex,
+		rc = m_provider->blitGFB(framebufferIndex,
 								 region,
 								 &extra,
 								 m_backing.offset + m_backing.size,
@@ -1732,6 +1769,44 @@ finishup:
 	if (isClientBackingValid())
 		copy_to_client_backing();
 	return kIOReturnSuccess;
+}
+
+/*
+ * surface-to-framebuffer is not supported yet.  It's not difficult to do, but the
+ *   WindowsServer blits by using surface_flush() and QuickTime blits with SwapSurface,
+ *   so it's not really necessary.
+ */
+IOReturn CLASS::copy_self_region_to_framebuffer(UInt framebufferIndex,
+												SInt destX,
+												SInt destY,
+												IOAccelDeviceRegion const* region,
+												size_t regionSize)
+{
+	SFLog(1, "%s: Copy from surface(%#x) to framebuffer(%u) - faking\n", __FUNCTION__,
+		  FMT_U(m_wID), FMT_U(framebufferIndex));
+	if (!region || regionSize < IOACCEL_SIZEOF_DEVICE_REGION(region))
+		return kIOReturnBadArgument;
+	return kIOReturnSuccess /* return kIOReturnUnsupported */;
+}
+
+/*
+ * surface-to-surface copy is not supported yet.  Due to the way the code is designed,
+ *   this is really a pure guest-memory to guest-memory blit.  It can be done by two
+ *   steps via the host if desired.
+ */
+ IOReturn CLASS::copy_surface_region_to_self(class VMsvga2Surface* source_surface,
+											 SInt destX,
+											 SInt destY,
+											 IOAccelDeviceRegion const* region,
+											 size_t regionSize)
+{
+	if (!source_surface)
+		return kIOReturnBadArgument;
+	SFLog(1, "%s: Copy from surface(%#x) to surface(%#x) - faking\n", __FUNCTION__,
+		  FMT_U(source_surface->m_wID), FMT_U(m_wID));
+	if (!region || regionSize < IOACCEL_SIZEOF_DEVICE_REGION(region))
+		return kIOReturnBadArgument;
+	return kIOReturnSuccess /* return kIOReturnUnsupported */;
 }
 
 IOReturn CLASS::surface_video_off()
@@ -1774,6 +1849,17 @@ IOReturn CLASS::surface_flush_video(UInt32* swapFlags)
 			SFLog(3, "%s:   reg[%lu] == 0x%x\n", __FUNCTION__, i, reinterpret_cast<UInt const*>(&m_video.unit)[i]);
 #endif
 	return m_provider->VideoSetRegsInRange(m_video.stream_id, &m_video.unit, SVGA_VIDEO_ENABLED, SVGA_VIDEO_PITCH_3, &m_backing.last_DMA_fence);
+}
+
+#pragma mark -
+#pragma mark VMsvga2GLContext Support Methods
+#pragma mark -
+
+void CLASS::getBoundsForStatus(uint32_t* bounds) const
+{
+	if (!bounds)
+		return;
+	memcpy(bounds, &m_gl.region_status[0], 4 * sizeof(uint32_t));
 }
 
 #pragma mark -

@@ -28,6 +28,8 @@
 
 #include "EntryPointNames.h"
 
+#pragma GCC visibility push(hidden)
+
 char const* const entry_point_names[NUM_ENTRIES] =
 {
 /*
@@ -132,3 +134,5 @@ char const* const entry_point_names[NUM_ENTRIES] =
 "gldTestMemoryPluginData",
 "gldDestroyMemoryPluginData"
 };
+
+#pragma GCC visibility pop

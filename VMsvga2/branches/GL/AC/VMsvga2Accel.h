@@ -64,6 +64,7 @@ private:
 	 */
 	SInt32 m_log_level_ac;
 	SInt32 m_log_level_ga;
+	SInt m_log_level_gld;
 	UInt32 m_options_ga;
 
 	/*
@@ -275,6 +276,7 @@ public:
 	UInt32 getMasterSurfaceID() const { return m_master_surface_id; }
 	SInt32 getLogLevelAC() const { return m_log_level_ac; }
 	SInt32 getLogLevelGA() const { return m_log_level_ga; }
+	SInt getLogLevelGLD() const { return m_log_level_gld; }
 	UInt32 getOptionsGA() const { return m_options_ga; }
 	IOReturn getBlitBugResult() const { return m_blitbug_result; }
 	void cacheBlitBugResult(IOReturn r) { m_blitbug_result = r; }

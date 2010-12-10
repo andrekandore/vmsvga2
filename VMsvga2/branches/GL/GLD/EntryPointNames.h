@@ -35,7 +35,7 @@
 extern "C" {
 #endif
 
-extern char const* const entry_point_names[NUM_ENTRIES] __attribute__((visibility("hidden")));
+extern char const* const entry_point_names[NUM_ENTRIES];
 
 #ifdef __cplusplus
 }

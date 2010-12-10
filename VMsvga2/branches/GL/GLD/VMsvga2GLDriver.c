@@ -58,6 +58,38 @@
 	}
 
 #pragma mark -
+#pragma mark Work Left
+#pragma mark -
+
+/*
+ * Load libGLProgrammability
+ * Pass log_level_gld via get_config
+ * Complete autonomic version of gldChoosePixelFormat
+ * Complete support functions autonomic version of gldCreateContext; implement gldDestroyContext
+ * Complete autonomic version of gldSetInteger
+ * Complete autonomic version of gldAttachDrawable
+ * Complete autonomic version of SubmitPacketsToken
+ * Complete autonomic version of gldUnbindTexture
+ * Complete autonomic version of gldReclaimTexture
+ * Complete autonomic version of gldUnbindPipelineProgram, support funcs for gldDestroyPipelineProgram
+ *
+ * Later
+ *   Need autonomic:
+ *     gldGetRendererInfo, gldReclaimContext, gldInitDispatch, gldUpdateDispatch, gldGetInteger
+ *     gldTestObject, gldFinishObject, gldGenerateTexMipmaps, gldLoadTexture
+ *     gldGetTextureLevelInfo, gldGetTextureLevelImage, gldPageoffBuffer
+ *     gldGetMemoryPlugin, gldSetMemoryPlugin, gldTestMemoryPlugin, gldFlushMemoryPlugin, gldDestroyMemoryPlugin
+ *     gldUnbindFramebuffer, gldGetPipelineProgramInfo, gldModifyPipelineProgram, gldUnbindPipelineProgram
+ *     gldCreateFence, gldObjectPurgeable, gldObjectUnpurgeable
+ *
+ * Ugh
+ *   gldCopyTexSubImage, gldModifyTexSubImage
+ *
+ * Obsolete (10.6.2)
+ *   gldCreateTextureLevel, gldModifyTextureLevel, gldDestroyTextureLevel
+ */
+
+#pragma mark -
 #pragma mark Struct Accessors
 #pragma mark -
 
@@ -89,20 +121,20 @@ static
 void gldInitializeLibrarySelf(io_service_t const* pServices,
 							  uint8_t const* pServiceFlags,
 							  uint32_t GLDisplayMask,
-							  void const* arg3,
-							  void const* arg4);
+							  PIODataFlush,
+							  PIODataBindSurface);
 
 void gldInitializeLibrary(io_service_t const* pServices,
 						  uint8_t const* pServiceFlags,
 						  uint32_t GLDisplayMask,
-						  void const* arg3,
-						  void const* arg4)
+						  PIODataFlush IODataFlush,
+						  PIODataBindSurface IODataBindSurface)
 {
 	typeof(gldInitializeLibrary) *addr;
 	char const* bndl_names[] = { BNDL1, BNDL2 };
 	int i, j;
 
-	GLDLog(2, "%s(%p, %p, %#x, %p, %p)\n", __FUNCTION__, pServices, pServiceFlags, GLDisplayMask, arg3, arg4);
+	GLDLog(1, "%s(%p, %p, %#x, %p, %p)\n", __FUNCTION__, pServices, pServiceFlags, GLDisplayMask, IODataFlush, IODataBindSurface);
 
 	for (j = 0; j != 2; ++j) {
 		bndl_handle[j] = dlopen(bndl_names[j], 0);
@@ -112,7 +144,7 @@ void gldInitializeLibrary(io_service_t const* pServices,
 		if (addr) {
 			for (i = 0; i != NUM_ENTRIES; ++i)
 				bndl_ptrs[j][i] = (GLD_GENERIC_FUNC) dlsym(bndl_handle[j], entry_point_names[i]);
-			addr(pServices, pServiceFlags, GLDisplayMask, arg3, arg4);
+			addr(pServices, pServiceFlags, GLDisplayMask, IODataFlush, IODataBindSurface);
 		} else {
 			dlclose(bndl_handle[j]);
 			bndl_handle[j] = 0;
@@ -124,8 +156,8 @@ void gldInitializeLibrary(io_service_t const* pServices,
 	else
 		bndl_index = 1;
 
-	load_libGLImage(&libglimage);
-	gldInitializeLibrarySelf(pServices, pServiceFlags, GLDisplayMask, arg3, arg4);
+	load_libs();
+	gldInitializeLibrarySelf(pServices, pServiceFlags, GLDisplayMask, IODataFlush, IODataBindSurface);
 	// FIXME: find out how to signal an error
 }
 
@@ -133,8 +165,8 @@ static
 void gldInitializeLibrarySelf(io_service_t const* pServices,
 							  uint8_t const* pServiceFlags,
 							  uint32_t GLDisplayMask,
-							  void const* arg3,
-							  void const* arg4)
+							  PIODataFlush IODataFlush,
+							  PIODataBindSurface IODataBindSurface)
 {
 	uint32_t last_display, num_displays, display_num, outputCnt;
 	kern_return_t rc;
@@ -150,13 +182,13 @@ void gldInitializeLibrarySelf(io_service_t const* pServices,
 	glr_io_data.pServices = pServices;
 	glr_io_data.pServiceFlags = pServiceFlags;
 	glr_io_data.displayMask = GLDisplayMask;
-	glr_io_data.arg3 = arg3;
-	glr_io_data.arg4 = arg4;
+	glr_io_data.IODataFlush = IODataFlush;
+	glr_io_data.IODataBindSurface = IODataBindSurface;
 	last_display = 0;
 	num_displays = 0;
 	for (display_num = 0U; display_num != 32U; ++display_num) {
-		glr_io_data.arr1[display_num] = 0;
-		glr_io_data.arr2[display_num] = 0;
+		glr_io_data.surfaces[display_num] = 0;
+		glr_io_data.surface_refcount[display_num] = 0;
 		services[display_num] = 0;
 		masks[display_num] = 0;
 		if (GLDisplayMask & (1U << display_num)) {
@@ -170,7 +202,7 @@ void gldInitializeLibrarySelf(io_service_t const* pServices,
 	}
 	glr_io_data.lastDisplay = last_display;
 	dinfo = (display_info_t*) malloc(num_displays * sizeof *dinfo);
-	GLDLog(2, "  %s: display_info @%p\n", __FUNCTION__, dinfo);
+	GLDLog(1, "  %s: display_info @%p\n", __FUNCTION__, dinfo);
 	for (display_num = 0U; display_num != num_displays; ++display_num) {
 		connect = 0;
 		dinfo[display_num].service = services[display_num];
@@ -204,7 +236,10 @@ void gldInitializeLibrarySelf(io_service_t const* pServices,
 			break;
 		}
 		dinfo->config[0] = (uint32_t) output[0];
-		dinfo->config[1] = (uint32_t) output[1];
+#if LOGGING_LEVEL >= 1
+		logLevel = (int) (output[1] & 7U);
+#endif
+		dinfo->config[1] = ((uint32_t) output[1]) & ~7U;
 		dinfo->config[2] = (uint32_t) output[2];
 		dinfo->config[3] = (uint32_t) output[3];
 		dinfo->config[4] = (uint32_t) output[4];
@@ -226,21 +261,21 @@ void gldTerminateLibrary(void)
 	typeof(gldTerminateLibrary) *addr;
 	int j;
 
-	GLDLog(2, "%s()\n", __FUNCTION__);
+	GLDLog(1, "%s()\n", __FUNCTION__);
 
 	glr_io_data.pServices = 0;
 	glr_io_data.pServiceFlags = 0;
 	glr_io_data.displayMask = 0;
 	glr_io_data.lastDisplay = 0;
-	glr_io_data.arg3 = 0;
-	glr_io_data.arg4 = 0;
+	glr_io_data.IODataFlush = 0;
+	glr_io_data.IODataBindSurface = 0;
 	if (glr_io_data.dinfo) {
 		free(glr_io_data.dinfo);
 		glr_io_data.dinfo = 0;
 	}
 	glr_io_data.num_displays = 0;
 
-	unload_libGLImage(&libglimage);
+	unload_libs();
 	for (j = 0; j != 2; ++j) {
 		if (!bndl_handle[j])
 			continue;
@@ -597,6 +632,7 @@ GLDReturn gldDestroyShared(gld_shared_t* shared)
 	return kCGLNoError;
 }
 
+static
 GLDReturn gldCreateContextInternal(gld_context_t** struct_out,
 						   PixelFormat* pixel_format,
 						   gld_shared_t* shared,
@@ -646,8 +682,8 @@ GLDReturn gldCreateContextInternal(gld_context_t** struct_out,
 							 &input, 1,
 							 0, 0, 0, 0,
 							 &outputStruct, &outputStructCnt);
-	context->command_buffer_ptr = (void*) (uintptr_t) outputStruct.addr0;	// Note: truncation in 32-bits
-	context->command_buffer_size = outputStruct.len0;
+	context->command_buffer_ptr = (void*) (uintptr_t) outputStruct.addr[0];	// Note: truncation in 32-bits
+	context->command_buffer_size = outputStruct.len[0];
 	if (kr != ERR_SUCCESS) {
 #if 0
 		glrKillClient(kr);
@@ -703,7 +739,7 @@ GLDReturn gldCreateContextInternal(gld_context_t** struct_out,
 		shared->needs_locking = 1;
 	pthread_mutex_unlock(&shared->mutex);
 	context->config0 = shared->config0;
-	context->config2 = dinfo->config[2];
+	context->vramSize = dinfo->config[2];
 	context->mem2_local = malloc(context->mem2_size >> 5);
 	bzero(context->mem2_local, context->mem2_size >> 5);
 	context->f20 = 0;
@@ -720,9 +756,9 @@ GLDReturn gldCreateContextInternal(gld_context_t** struct_out,
 	context->arg3 = 0;
 	context->f0[0] = 0;
 	context->f0[1] = 0;
-	context->f1[1] = 0;
-	context->f1[0] = 0;
-	context->f2 = 0;
+	context->context_mode_bits = 0;
+	context->f1 = 0;
+	context->client_data = 0;
 	context->f3[3] = 0;
 	context->f3[4] = 0;
 	context->f3[5] = 0;
@@ -733,19 +769,19 @@ GLDReturn gldCreateContextInternal(gld_context_t** struct_out,
 	context->f3[2] = 0;
 	context->f3[9] = 0;
 	context->f3[10] = 0;
-	context->f4[7] = 0;
+	context->flags3[7] = 0;
 	context->f3[11] = 0;
 	context->f3[12] = 0;
 	context->f3[13] = 0;
 	context->f3[14] = 0;
-	context->f4[4] = 0;
-	context->f4[2] = 0;
-	context->f4[6] = 0;
-	context->f4[5] = 0;
-	context->f4[3] = 0;
+	context->flags3[4] = 0;
+	context->flags3[2] = 0;
+	context->flags3[6] = 0;
+	context->flags3[5] = 0;
+	context->flags3[3] = 0;
 	context->f5 = 0;
 	context->f6 = 0;
-	context->f4[0] = 0;
+	context->flags3[0] = 0;
 	context->f25 = 0;
 	context->flags2[0] = 1;
 	context->flags1[3] = 0;
@@ -757,45 +793,45 @@ GLDReturn gldCreateContextInternal(gld_context_t** struct_out,
 	context->f10 = 3;
 	context->flags1[1] = (pixel_format->bufferModes & kCGLDoubleBufferBit) != 0;
 	if (pixel_format->bAuxDepthStencil)
-		context->f1[1] = 0x2000U;
+		context->context_mode_bits = CGLCMB_AuxDepthStencil;
 	if (pixel_format->bufferModes & kCGLDoubleBufferBit)
-		context->f1[1] |= 0x400U;
+		context->context_mode_bits |= CGLCMB_DoubleBuffer;
 	else if (!pixel_format->bFullScreen)
-		context->f1[1] |= 0x800U;
+		context->context_mode_bits |= CGLCMB_FullScreen;
 	if (pixel_format->bufferModes & kCGLStereoscopicBit)
-		context->f1[1] |= 0x10U;
-	context->f1[1] |= xlateColorMode(pixel_format->colorModes);
+		context->context_mode_bits |= CGLCMB_Stereoscopic;
+	context->context_mode_bits |= xlateColorMode(pixel_format->colorModes);
 	if (pixel_format->depthModes == kCGL0Bit)
-		context->f1[1] |= 0x40U;
+		context->context_mode_bits |= CGLCMB_DepthMode0;
 	if (pixel_format->stencilModes == kCGL0Bit)
-		context->f1[1] |= 0x80U;
+		context->context_mode_bits |= CGLCMB_StencilMode0;
 	if (pixel_format->accumModes == kCGLARGB8888Bit)
-		context->f4[1] = 1;
+		context->flags3[1] = 1;
 	else if (pixel_format->accumModes == kCGLRGBA16161616Bit)
-		context->f4[1] = 2;
+		context->flags3[1] = 2;
 	else
-		context->f4[1] = 0;
+		context->flags3[1] = 0;
 	if (pixel_format->auxBuffers == 1)
-		context->f1[1] |= 0x100U;
+		context->context_mode_bits |= 0x100U;
 	else if (pixel_format->auxBuffers == 2)
-		context->f1[1] |= 0x200U;
+		context->context_mode_bits |= 0x200U;
 	if (pixel_format->sampleBuffers > 0)
-		context->f1[1] |= 0x1000U;
+		context->context_mode_bits |= CGLCMB_HaveSampleBuffers;
 	context->flags2[1] = 0;
 	if (pixel_format->bBackingStore) {
-		context->f1[1] |= 0x800000U;
+		context->context_mode_bits |= CGLCMB_BackingStore;
 		context->flags2[1] = 1;
 	}
-	glrSetWindowModeBits(&context->f1[1], pixel_format);
-	context->f1[0] = 0x4000U;
-	if (context->f1[1] & 0x40U)
-		context->f1[0] = 0x4100U;
-	if (context->f1[1] & 0x80000000U)
-		context->f1[0] | 0x400U;
-	if (context->f4[1])
-		context->f1[0] | 0x200U;
-	context->f8[0] = context->f1[1];
-	context->f8[1] = context->f1[0];
+	glrSetWindowModeBits(&context->context_mode_bits, pixel_format);
+	context->f1 = 0x4000U;
+	if (context->context_mode_bits & CGLCMB_DepthMode0)
+		context->f1 = 0x4100U;
+	if (context->context_mode_bits & 0x80000000U)
+		context->f1 | 0x400U;
+	if (context->flags3[1])
+		context->f1 | 0x200U;
+	context->f8[0] = context->context_mode_bits;
+	context->f8[1] = context->f1;
 	memcpy(&context->f9[0], &context->f3[3], 3 * sizeof(uint64_t));
 	context->f7[0] = 0;
 	context->f7[1] = 0;
@@ -863,48 +899,190 @@ GLDReturn gldDestroyContext(gld_context_t* context)
 	return -1;
 }
 
-#if 0
 static
-GLDReturn gldAttachDrawableInternal(gld_context_t* context, int surface_type, void* arg2, void* arg3)
+GLDReturn gldAttachDrawableInternal(gld_context_t* context, int surface_type, uint32_t const* client_data, uint32_t options)
 {
-	/*
-	 * The fudge consts are for 64-bit
-	 */
-	int r14b, r15b, r12d, edx;
-	uint32_t var_d0, var_cc;
-	uintptr_t rax, var_e0, var_e8, var_f0, var_f8, var_100, var_108;
+	GLDReturn rc = kCGLNoError;
+	int r12d;
+	uint32_t dr_options_hi /* var_d0 */, dr_options_lo /* var_cc */;
+	uint64_t input[4];	// at var_60
+	uint64_t output;	// at var_40
+	size_t outputStructCnt; // at var_38
+	kern_return_t kr;
+	sIOGLContextSetSurfaceData inputStruct; // at var_90
+	sIOGLContextGetConfigStatus outputStruct;  // at var_c0
 
+	// int var_d4 = surface_type
+	// r13 = client_data
 	if (!context)
 		return kCGLBadAddress;
-	r14b = (surface_type == 80);
-	r15b = (surface_type == 90);
-	var_d0 = 0; var_cc = 0;
-	if (r14b) {
-		// 528A
-		if (!arg2)
-			return kCGLBadDrawable;
-		r12d = 0;
-		edx = context->f1[1];;
-		rax = (uintptr_t) arg2 + 8;
-		var_e0 = rax;
-		// skipped 52A4-52DA
-		edx |= 32;
-		edx &= 0xFF80FFFF;
-		context->f1[1] = edx;
-		context->f4[3] = (uint8_t) r15d ^ 1U;
+	dr_options_hi = 0; dr_options_lo = 0;
+	switch (surface_type) {
+		case kCGLPFAPBuffer:
+			dr_options_hi = (options & 0xFF00U) >> 8;
+			dr_options_lo = options & 0xFFU;
+		case kCGLPFAWindow:
+			if (!client_data)
+				return kCGLBadDrawable;
+			r12d = 0;
+			// var_e0 = client_data + 2;	// points to surface_id
+			// var_e8 pts to inputStruct
+			// var_f0 pts to outputStructCnt
+			// var_f8 pts to outputStruct
+			// var_100 pts to output
+			// var_108 pts to input
+			context->context_mode_bits = (context->context_mode_bits | CGLCMB_Windowed) & 0xFF80FFFFU;
+			context->flags3[3] = (surface_type != kCGLPFAPBuffer);
+			if (surface_type == kCGLPFAWindow) {
+				/*
+				 * Note: IODataBindSurface is a client callback that
+				 *   creates a CGSSurface with the given surface_id
+				 */
+				if (glr_io_data.IODataBindSurface(client_data[0],
+												  client_data[1],
+												  &client_data[2],	// surface_id
+												  context->context_mode_bits & 0x7F803FU,
+												  glr_io_data.pServices[context->display_num]) != kCGLNoError)
+					goto cleanup_bd;
+			} else {
+				if (!client_data[2])
+					goto cleanup_bd;
+			}
+			inputStruct.surface_id = client_data[2];
+			inputStruct.context_mode_bits = context->context_mode_bits & 0xFF803FC0U;
+			if (r12d)
+				inputStruct.surface_mode = 0xFFFFFFFFU;
+			else
+				inputStruct.surface_mode = context->context_mode_bits & 15U;
+			inputStruct.dr_options_hi = dr_options_hi;
+			inputStruct.dr_options_lo = dr_options_lo;
+			inputStruct.volatile_state = context->flags3[7];
+			inputStruct.set_scale = context->flags3[5];
+			inputStruct.scale_options = context->f3[15];
+			inputStruct.scale_width = context->f3[16];
+			inputStruct.scale_height = context->f3[17];
+			outputStructCnt = sizeof outputStruct;
+			kr = IOConnectCallMethod(context->context_obj,
+									 kIOVMGLSetSurfaceGetConfigStatus,
+									 0, 0,
+									 &inputStruct, sizeof inputStruct,
+									 0, 0,
+									 &outputStruct, &outputStructCnt);
+			if (kr != ERR_SUCCESS) {
+				if (r12d)
+					goto cleanup_bd;
+				outputStructCnt = 3;
+				kr = IOConnectCallMethod(context->context_obj,
+										 kIOVMGLGetSurfaceInfo,
+										 &output, 1,
+										 0, 0,
+										 &input[0], (uint32_t*) &outputStructCnt,
+										 0, 0);
+				// TBD: 53F7
+			}
+			context->config0 = outputStruct.config[0];
+			context->vramSize = outputStruct.config[1];
+			// var_c4 = outputStruct.inner_width;
+			// var_c8 = outputStruct.inner_height;
+			// r12d   = outputStruct.outer_width;
+			// r15d   = outputStruct.outer_height;
+			// r14d   = outputStruct.status;
+			context->context_mode_bits =
+				(context->context_mode_bits & 0xFF80FFEFU) |
+				(outputStruct.surface_mode_bits & 0x7F0010U);
+			/*
+			 * Note: 0x10U is Stereo bit
+			 */
+			((uint8_t*) context->arg3)[46] = ((outputStruct.surface_mode_bits & 0x10U) != 0);
+			if (!glrSanitizeWindowModeBits(context->context_mode_bits))
+				return kCGLBadDrawable;
+			glrDrawableChanged(context);
+			if (outputStruct.status) {
+				if (context->client_data == client_data) {
+					if (context->f3[3] == outputStruct.inner_width &&
+						context->f3[4] == outputStruct.inner_height) {
+						rc = kCGLNoError;
+						goto skip_copy;
+					}
+					rc = 3;
+				} else
+					rc = 2;
+			} else
+				rc = kCGLBadAlloc;
+			context->f3[3]  = outputStruct.inner_width;
+			context->f3[4]  = outputStruct.inner_height;
+			context->f3[9]  = outputStruct.outer_width;
+			context->f3[10] = outputStruct.outer_height;
+		skip_copy:
+			if (context->flags3[1]) {
+				uint32_t bpp = context->flags3[1] == 1 ? 4U : 8U;
+				uint32_t w = (outputStruct.inner_width + 7U) & ~7U;
+				uint32_t total = w * outputStruct.inner_height * bpp;
+				if (context->f6 != total) {
+					if (context->f5)
+						free(context->f5);
+					context->f5 = malloc(total);
+					context->f6 = total;
+				}
+			}
+			glrReleaseDrawable(context);
+			context->client_data = (void*) client_data;
+			context->f3[0] = surface_type;
+			context->f3[1] = dr_options_hi;
+			context->f3[2] = dr_options_lo;
+			/*
+			 * Note: arg5 seems to be a pointer table
+			 */
+			if (!((uintptr_t const*) context->arg5)[139]) {
+				context->f8[0] = context->context_mode_bits;
+				memcpy(&context->f9[0], &context->f3[3], 3 * sizeof(uint64_t));
+				context->flags2[0] = context->flags3[3];
+				if (context->flags3[3])
+					((uint8_t*) context->arg3)[32] |= 2U;
+				else
+					((uint8_t*) context->arg3)[32] &= ~2U;
+			}
+			return rc;
+		case 54:
+			if (!client_data)
+				return kCGLBadDrawable;
+			/* TBD: 5582 */
+			break;
+		case 53:
+			goto cleanup_bd;
+		case 0:
+			if (client_data)
+				goto cleanup_bd;
+			else {
+				rc = 1;
+				goto cleanup;
+			}
+		default:
+			/* TBD: 5A8E */
+			break;
 	}
-}
-#endif
 
-GLDReturn gldAttachDrawable(gld_context_t* context, int surface_type, void* arg2, void* arg3)
+cleanup_bd:
+	rc = kCGLBadDrawable;
+cleanup:
+	glrReleaseDrawable(context);
+	bzero(&input[0], sizeof input);
+	IOConnectCallMethod(context->context_obj,
+						kIOVMGLSetSurface,
+						&input[0], 4,
+						0, 0, 0, 0, 0, 0);
+	return rc;
+}
+
+GLDReturn gldAttachDrawable(gld_context_t* context, int surface_type, uint32_t const* client_data, uint32_t options)
 {
 	typeof(gldAttachDrawable) *addr;
 
-	GLDLog(2, "%s(%p, %d, %p, %p)\n", __FUNCTION__, context, surface_type, arg2, arg3);
+	GLDLog(2, "%s(%p, %d, %p, %#x)\n", __FUNCTION__, context, surface_type, client_data, options);
 
 	addr = (typeof(addr)) bndl_ptrs[bndl_index][9];
 	if (addr)
-		return addr(context, surface_type, arg2, arg3);
+		return addr(context, surface_type, client_data, options);
 	return -1;
 }
 
@@ -1205,30 +1383,264 @@ void gldDestroyTexture(gld_shared_t* shared, gld_texture_t* texture)
 	free(texture);
 }
 
-GLD_DEFINE_GENERIC(gldCopyTexSubImage, 76)
-GLD_DEFINE_GENERIC(gldModifyTexSubImage, 77)
+/*
+ * It's a mad mad mad world
+ */
+GLDReturn gldCopyTexSubImage(void* arg0,
+							 void* arg1,
+							 int arg2,
+							 int arg3,
+							 int arg4,
+							 int arg5,
+							 int arg6,
+							 int arg7,
+							 int arg8,
+							 int arg9,
+							 int arg10)
+{
+	typeof(gldCopyTexSubImage) *addr;
+
+	GLDLog(2, "%s(%p, %p, %d, %d, %d, %d, %d, %d, %d, %d, %d)\n", __FUNCTION__,
+		   arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10);
+
+	addr = (typeof(addr)) bndl_ptrs[bndl_index][76];
+	if (addr)
+		return addr(arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10);
+	return -1;
+}
+
+GLDReturn gldModifyTexSubImage(void* arg0,
+							   void* arg1,
+							   int arg2,
+							   int arg3,
+							   int arg4,
+							   int arg5,
+							   int arg6,
+							   int arg7,
+							   int arg8,
+							   int arg9,
+							   int arg10,
+							   int arg11,
+							   int arg12,
+							   int arg13,
+							   int arg14)
+{
+	typeof(gldModifyTexSubImage) *addr;
+
+	GLDLog(2, "%s(%p, %p, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d)\n", __FUNCTION__,
+		   arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, arg11, arg12, arg13, arg14);
+
+	addr = (typeof(addr)) bndl_ptrs[bndl_index][77];
+	if (addr)
+		return addr(arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, arg11, arg12, arg13, arg14);
+	return -1;
+}
+
 GLD_DEFINE_GENERIC(gldCreateTextureLevel, 29)
-GLD_DEFINE_GENERIC(gldGetTextureLevelInfo, 30)
-GLD_DEFINE_GENERIC(gldGetTextureLevelImage, 31)
+
+GLDReturn gldGetTextureLevelInfo(void* arg0, void* arg1, void* arg2, int arg3, int arg4, void* arg5)
+{
+	typeof(gldGetTextureLevelInfo) *addr;
+
+	GLDLog(2, "%s(%p, %p, %p, %d, %d, %p)\n", __FUNCTION__, arg0, arg1, arg2, arg3, arg4, arg5);
+
+	addr = (typeof(addr)) bndl_ptrs[bndl_index][30];
+	if (addr)
+		return addr(arg0, arg1, arg2, arg3, arg4, arg5);
+	return -1;
+}
+
+GLDReturn gldGetTextureLevelImage(void* arg0, void* arg1, int arg2, int arg3)
+{
+	typeof(gldGetTextureLevelImage) *addr;
+
+	GLDLog(2, "%s(%p, %p, %d, %d)\n", __FUNCTION__, arg0, arg1, arg2, arg3);
+
+	addr = (typeof(addr)) bndl_ptrs[bndl_index][31];
+	if (addr)
+		return addr(arg0, arg1, arg2, arg3);
+	return -1;
+}
+
 GLD_DEFINE_GENERIC(gldModifyTextureLevel, 32)
 GLD_DEFINE_GENERIC(gldDestroyTextureLevel, 33)
-GLD_DEFINE_GENERIC(gldCreateBuffer, 34)
-GLD_DEFINE_GENERIC(gldBufferSubData, 78)
-GLD_DEFINE_GENERIC(gldLoadBuffer, 35)
-GLD_DEFINE_GENERIC(gldFlushBuffer, 36)
-GLD_DEFINE_GENERIC(gldPageoffBuffer, 37)
-GLD_DEFINE_GENERIC(gldUnbindBuffer, 38)
-GLD_DEFINE_GENERIC(gldReclaimBuffer, 39)
-GLD_DEFINE_GENERIC(gldDestroyBuffer, 40)
-GLD_DEFINE_GENERIC(gldGetMemoryPlugin, 41)
-GLD_DEFINE_GENERIC(gldSetMemoryPlugin, 42)
-GLD_DEFINE_GENERIC(gldTestMemoryPlugin, 43)
-GLD_DEFINE_GENERIC(gldFlushMemoryPlugin, 44)
-GLD_DEFINE_GENERIC(gldDestroyMemoryPlugin, 45)
-GLD_DEFINE_GENERIC(gldCreateFramebuffer, 46)
-GLD_DEFINE_GENERIC(gldUnbindFramebuffer, 47)
-GLD_DEFINE_GENERIC(gldReclaimFramebuffer, 48)
-GLD_DEFINE_GENERIC(gldDestroyFramebuffer, 49)
+
+GLDReturn gldCreateBuffer(gld_shared_t* shared, gld_buffer_t** struct_out, void* arg2, void* arg3)
+{
+	gld_buffer_t* p;
+
+	GLDLog(2, "%s(%p, struct_out, %p, %p)\n", __FUNCTION__, shared, arg2, arg3);
+
+	p = calloc(1, sizeof *p);
+	GLDLog(2, "  %s: buffer @%p\n", __FUNCTION__, p);
+	p->f0 = arg2;
+	p->f1 = arg3;
+	p->f2 = 0;
+	*struct_out = p;
+	return kCGLNoError;
+}
+
+GLDReturn gldBufferSubData(void)
+{
+	GLDLog(2, "%s()\n", __FUNCTION__);
+	return kCGLNoError;
+}
+
+GLDReturn gldLoadBuffer(void)
+{
+	GLDLog(2, "%s()\n", __FUNCTION__);
+	return kCGLNoError;
+}
+
+GLDReturn gldFlushBuffer(gld_shared_t* shared, gld_buffer_t* buffer, void* arg2, int arg3)
+{
+	uint8_t* p;
+
+	GLDLog(2, "%s(%p, %p, %p, %d)\n", __FUNCTION__, shared, buffer, arg2, arg3);
+	p = buffer->f1;
+	if ((*p) & 1U)
+		return kCGLNoError;
+	if (arg2)
+		glrFlushMemory(0, arg2, arg3);
+	*p &= (~2);
+	return kCGLNoError;
+}
+
+void gldPageoffBuffer(gld_shared_t* shared, void* arg1, gld_buffer_t* buffer)
+{
+	typeof(gldPageoffBuffer) *addr;
+
+	GLDLog(2, "%s(%p, %p, %p)\n", __FUNCTION__, shared, arg1, buffer);
+
+	addr = (typeof(addr)) bndl_ptrs[bndl_index][37];
+	if (addr)
+		addr(shared, arg1, buffer);
+}
+
+void gldUnbindBuffer(gld_context_t* context, gld_buffer_t* buffer)
+{
+	gld_waitable_t** p;
+
+	GLDLog(2, "%s(%p, %p)\n", __FUNCTION__, context, buffer);
+	p = (gld_waitable_t**) buffer->f2;
+	if (!p || !(*p) || ((*p)->stamps[3] == 0x10000))
+		return;
+	gldFlush(context);
+}
+
+void gldReclaimBuffer(gld_shared_t* shared, gld_buffer_t* buffer)
+{
+	GLDLog(2, "%s(%p, %p)\n", __FUNCTION__, shared, buffer);
+	if (buffer->f2)
+		gldDestroyMemoryPlugin(shared, buffer->f2);
+	buffer->f2 = 0;
+}
+
+GLDReturn gldDestroyBuffer(gld_shared_t* shared, gld_buffer_t* buffer)
+{
+	GLDLog(2, "%s(%p, %p)\n", __FUNCTION__, shared, buffer);
+	gldReclaimBuffer(shared, buffer);
+	free(buffer);
+	return kCGLNoError;
+}
+
+void gldGetMemoryPlugin(void* arg0, void* arg1, void** struct_out)
+{
+	typeof(gldGetMemoryPlugin) *addr;
+
+	GLDLog(2, "%s(%p, %p, struct_out)\n", __FUNCTION__, arg0, arg1);
+
+	addr = (typeof(addr)) bndl_ptrs[bndl_index][41];
+	if (addr)
+		addr(arg0, arg1, struct_out);
+}
+
+void gldSetMemoryPlugin(void* arg0, void* arg1, void** struct_out)
+{
+	typeof(gldSetMemoryPlugin) *addr;
+
+	GLDLog(2, "%s(%p, %p, struct_out)\n", __FUNCTION__, arg0, arg1);
+
+	addr = (typeof(addr)) bndl_ptrs[bndl_index][42];
+	if (addr)
+		addr(arg0, arg1, struct_out);
+}
+
+int gldTestMemoryPlugin(void* arg0, void* arg1)
+{
+	typeof(gldTestMemoryPlugin) *addr;
+
+	GLDLog(2, "%s(%p, %p\n", __FUNCTION__, arg0, arg1);
+
+	addr = (typeof(addr)) bndl_ptrs[bndl_index][43];
+	if (addr)
+		return addr(arg0, arg1);
+	return -1;
+}
+
+void gldFlushMemoryPlugin(void* arg0, void* arg1)
+{
+	typeof(gldFlushMemoryPlugin) *addr;
+
+	GLDLog(2, "%s(%p, %p\n", __FUNCTION__, arg0, arg1);
+
+	addr = (typeof(addr)) bndl_ptrs[bndl_index][44];
+	if (addr)
+		addr(arg0, arg1);
+}
+
+void gldDestroyMemoryPlugin(void* arg0, void* arg1)
+{
+	typeof(gldDestroyMemoryPlugin) *addr;
+
+	GLDLog(2, "%s(%p, %p\n", __FUNCTION__, arg0, arg1);
+
+	addr = (typeof(addr)) bndl_ptrs[bndl_index][45];
+	if (addr)
+		addr(arg0, arg1);
+}
+
+GLDReturn gldCreateFramebuffer(gld_shared_t * shared, gld_framebuffer_t** struct_out, void* arg2, void* arg3)
+{
+	gld_framebuffer_t* p;
+
+	GLDLog(2, "%s(%p, struct_out, %p, %p)\n", __FUNCTION__, shared, arg2, arg3);
+
+	p = calloc(1, sizeof *p);
+	GLDLog(2, "  %s: framebuffer @%p\n", __FUNCTION__, p);
+	p->f0 = arg2;
+	p->f1 = arg3;
+	*struct_out = p;
+	return kCGLNoError;
+}
+
+void gldUnbindFramebuffer(gld_context_t* context, gld_framebuffer_t* framebuffer)
+{
+	typeof(gldUnbindFramebuffer) *addr;
+
+	GLDLog(2, "%s(%p, %p)\n", __FUNCTION__, context, framebuffer);
+
+	addr = (typeof(addr)) bndl_ptrs[bndl_index][47];
+	if (addr)
+		addr(context, framebuffer);
+}
+
+void gldReclaimFramebuffer(void)
+{
+	GLDLog(2, "%s()\n", __FUNCTION__);
+}
+
+void gldDiscardFramebuffer(void)
+{
+	GLDLog(2, "%s()\n", __FUNCTION__);
+}
+
+GLDReturn gldDestroyFramebuffer(gld_shared_t * shared, gld_framebuffer_t* framebuffer)
+{
+	GLDLog(2, "%s(%p, %p)\n", __FUNCTION__, shared, framebuffer);
+	free(framebuffer);
+	return kCGLNoError;
+}
 
 GLDReturn gldCreatePipelineProgram(gld_shared_t* shared, gld_pipeline_program_t** struct_out, void* arg2)
 {
@@ -1481,11 +1893,6 @@ GLDReturn gldSyncTexture(void)
 {
 	GLDLog(2, "%s()\n", __FUNCTION__);
 	return kCGLNoError;
-}
-
-void gldDiscardFramebuffer(void)
-{
-	GLDLog(2, "%s()\n", __FUNCTION__);
 }
 
 #pragma mark -

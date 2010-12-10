@@ -132,6 +132,15 @@ private:
 		SVGAOverlayUnit	unit;
 	} m_video;
 
+	/*
+	 * GL support stuff
+	 */
+
+	struct {
+		int original_mode_bits;
+		uint32_t region_status[4];
+	} m_gl;
+
 #ifdef TESTING
 	void runTest();
 #endif
@@ -237,12 +246,29 @@ public:
 								 mach_vm_address_t* address,
 								 mach_vm_size_t* rowBytes);
 	IOReturn context_unlock_memory(UInt32* swapFlags);
-	IOReturn context_copy_region(SInt32 destX,
-								 SInt32 destY,
-								 IOAccelDeviceRegion const* region,
-								 size_t regionSize);
+	IOReturn copy_framebuffer_region_to_self(UInt framebufferIndex,
+											 SInt destX,
+											 SInt destY,
+											 IOAccelDeviceRegion const* region,
+											 size_t regionSize);
+	IOReturn copy_self_region_to_framebuffer(UInt framebufferIndex,
+											 SInt destX,
+											 SInt destY,
+											 IOAccelDeviceRegion const* region,
+											 size_t regionSize);
+	IOReturn copy_surface_region_to_self(class VMsvga2Surface* source_surface,
+										 SInt destX,
+										 SInt destY,
+										 IOAccelDeviceRegion const* region,
+										 size_t regionSize);
 	IOReturn surface_video_off();
 	IOReturn surface_flush_video(UInt32* swapFlags);
+
+	/*
+	 * Interface for VMsvga2GLContext
+	 */
+	int getOriginalModeBits() const { return m_gl.original_mode_bits; }
+	void getBoundsForStatus(uint32_t* bounds) const;
 
 	/*
 	 * IOAccelSurfaceConnect

@@ -41,8 +41,8 @@ void glrInitializeHardwareShared(gld_shared_t* shared, void* channel_memory);
 void glrDestroyZeroTexture(gld_shared_t* shared, gld_texture_t* texture);
 void glrDestroyHardwareShared(gld_shared_t* shared);
 void glrFlushSysObject(gld_context_t* context, gld_waitable_t* waitable, int arg2);
-void load_libGLImage(libglimage_t* interface);
-void unload_libGLImage(libglimage_t* interface);
+void load_libs();
+void unload_libs();
 void SubmitPacketsToken(gld_context_t*, int);
 void glrReleaseVendShrPipeProg(gld_shared_t* shared, void* arg1);
 void glrDeleteCachedProgram(gld_pipeline_program_t* pp, void* arg1);
@@ -55,6 +55,10 @@ void glrInitializeHardwareState(gld_context_t* context, PixelFormat* pixel_forma
 void glrSetConfigData(gld_context_t* context, void* arg3, PixelFormat* pixel_format);
 uint32_t glrGLIAlphaGE(int alpha_bits);
 char const* glrGetString(display_info_t* dinfo, int string_code);
+void glrFlushMemory(int, void*, int);
+void glrReleaseDrawable(gld_context_t* context);
+int glrSanitizeWindowModeBits(uint32_t);
+void glrDrawableChanged(gld_context_t* context);
 
 #ifdef __cplusplus
 }

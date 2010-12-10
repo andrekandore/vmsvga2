@@ -121,13 +121,13 @@ bool CLASS::start(IOService* provider)
 	m_provider = OSDynamicCast(VMsvga2Accel, provider);
 	if (!m_provider)
 		return false;
-	m_log_level = m_provider->getLogLevelAC();
+	m_log_level = imax(m_provider->getLogLevelGLD(), m_provider->getLogLevelAC());
 	return super::start(provider);
 }
 
 bool CLASS::initWithTask(task_t owningTask, void* securityToken, UInt32 type)
 {
-	m_log_level = 1;
+	m_log_level = LOGGING_LEVEL;
 	if (!super::initWithTask(owningTask, securityToken, type))
 		return false;
 	m_owning_task = owningTask;

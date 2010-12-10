@@ -39,9 +39,9 @@
 OSDefineMetaClassAndStructors(VMsvga2Device, IOUserClient);
 
 #if LOGGING_LEVEL >= 1
-#define DVLog(log_level, fmt, ...) do { if (log_level <= m_log_level) VLog("IODV: ", fmt, ##__VA_ARGS__); } while (false)
+#define DVLog(log_level, ...) do { if (log_level <= m_log_level) VLog("IODV: ", ##__VA_ARGS__); } while (false)
 #else
-#define DVLog(log_level, fmt, ...)
+#define DVLog(log_level, ...)
 #endif
 
 static IOExternalMethod iofbFuncsCache[kIOVMDeviceNumMethods] =
@@ -69,15 +69,24 @@ static IOExternalMethod iofbFuncsCache[kIOVMDeviceNumMethods] =
 
 struct VendorNewTextureDataRec
 {
+	uint32_t f0;	// puts 6
+	uint8_t f1[4];	// puts 1, 1, 0, 1
+	uint32_t f2;
+	uint16_t f3[2];	// puts 1, 1
+	uint32_t f4;	// puts 0
+	uint32_t f5;
+	uint32_t f6[4];
+	uint64_t f7[4];
 };
 
 struct sIONewTextureReturnData
 {
+	uint32_t data[5];
 };
 
 struct sIODevicePageoffTexture
 {
-	UInt32 data[2];
+	uint32_t data[6];	// Note: only 2 elements are used
 };
 
 struct sIODeviceChannelMemoryData
@@ -173,13 +182,13 @@ bool CLASS::start(IOService* provider)
 	m_provider = OSDynamicCast(VMsvga2Accel, provider);
 	if (!m_provider)
 		return false;
-	m_log_level = m_provider->getLogLevelAC();
+	m_log_level = imax(m_provider->getLogLevelGLD(), m_provider->getLogLevelAC());
 	return super::start(provider);
 }
 
 bool CLASS::initWithTask(task_t owningTask, void* securityToken, UInt32 type)
 {
-	m_log_level = 1;
+	m_log_level = LOGGING_LEVEL;
 	if (!super::initWithTask(owningTask, securityToken, type))
 		return false;
 	m_owning_task = owningTask;
@@ -217,7 +226,7 @@ IOReturn CLASS::get_config(UInt32* c1, UInt32* c2, UInt32* c3, UInt32* c4, UInt3
 	UInt32 const vram_size = m_provider->getVRAMSize();
 
 	*c1 = 0;
-	*c2 = 0;
+	*c2 = static_cast<uint32_t>(m_provider->getLogLevelGLD()) & 7U;		// TBD: is this safe?
 	*c3 = vram_size;
 	*c4 = vram_size;
 #if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ >= 1060
@@ -256,7 +265,16 @@ IOReturn CLASS::new_texture(struct VendorNewTextureDataRec const* struct_in,
 							size_t struct_in_size,
 							size_t* struct_out_size)
 {
+	int i;
+
 	DVLog(2, "%s(%p, %p, %lu, %lu)\n", __FUNCTION__, struct_in, struct_out, struct_in_size, *struct_out_size);
+	if (struct_in_size < sizeof *struct_in ||
+		*struct_out_size < sizeof *struct_out)
+		return kIOReturnBadArgument;
+	for (i = 0; i < 10; ++i)
+		DVLog(2, "%s:   struct_t[%d] == %#x\n", __FUNCTION__, i, reinterpret_cast<uint32_t const*>(struct_in)[i]);
+	for (i = 0; i < 4; ++i)
+		DVLog(2, "%s:   struct_t[%d] == %#x\n", __FUNCTION__, i + 10, struct_in->f7[i]);
 	bzero(struct_out, *struct_out_size);
 	return kIOReturnSuccess;
 }
@@ -270,12 +288,13 @@ IOReturn CLASS::delete_texture(uintptr_t c1)
 IOReturn CLASS::page_off_texture(struct sIODevicePageoffTexture const* struct_in, size_t struct_in_size)
 {
 	DVLog(2, "%s(%p, %lu)\n", __FUNCTION__, struct_in, struct_in_size);
+	DVLog(2, "%s:   struct_in { %#x, %#x }\n", __FUNCTION__, struct_in->data[0], struct_in->data[1]);
 	return kIOReturnSuccess;
 }
 
 IOReturn CLASS::get_channel_memory(struct sIODeviceChannelMemoryData* struct_out, size_t* struct_out_size)
 {
-	DVLog(2, "%s(%p, %lu)\n", __FUNCTION__, struct_out, *struct_out_size);
+	DVLog(2, "%s(struct_out, %lu)\n", __FUNCTION__, *struct_out_size);
 	if (*struct_out_size < sizeof *struct_out)
 		return kIOReturnBadArgument;
 	m_channel_memory = m_provider->getChannelMemory();
@@ -291,7 +310,7 @@ IOReturn CLASS::get_channel_memory(struct sIODeviceChannelMemoryData* struct_out
 		return kIOReturnNoResources;
 	}
 	struct_out->addr = m_channel_memory_map->getAddress();
-	DVLog(2, "%s returns 0x%llx\n", __FUNCTION__, struct_out->addr);
+	DVLog(2, "%s:   mapped to client @%#llx\n", __FUNCTION__, struct_out->addr);
 	return kIOReturnSuccess;
 }
 

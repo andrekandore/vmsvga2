@@ -50,6 +50,7 @@ private:
 	class VMsvga2Surface* surface_client;
 	UInt32 framebufferIndex;
 
+	class VMsvga2Surface* findSurface(UInt surface_id);
 	IOReturn locateSurface(UInt32 surface_id);
 
 public:

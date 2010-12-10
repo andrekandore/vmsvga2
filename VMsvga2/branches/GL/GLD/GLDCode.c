@@ -37,7 +37,8 @@
 #include "GLDData.h"
 #include "ACMethods.h"
 
-__attribute__((visibility("hidden")))
+#pragma GCC visibility push(hidden)
+
 kern_return_t glrPopulateDevice(io_connect_t connect, display_info_t* dinfo)
 {
 	/*
@@ -62,7 +63,6 @@ kern_return_t glrPopulateDevice(io_connect_t connect, display_info_t* dinfo)
 	if (num >= thold) \
 		return r;
 
-__attribute__((visibility("hidden")))
 uint32_t glrGLIBitsGE(uint32_t num)
 {
 	uint32_t r = 0;
@@ -88,7 +88,6 @@ uint32_t glrGLIBitsGE(uint32_t num)
 
 #undef STEP
 
-__attribute__((visibility("hidden")))
 uint32_t glrGLIColorsGE(uint32_t num)
 {
 	if (num > 256U)
@@ -108,7 +107,6 @@ uint32_t glrGLIColorsGE(uint32_t num)
 	return 0xBFFFFFFCU;		/* double hmm... */
 }
 
-__attribute__((visibility("hidden")))
 uint32_t glrGLIAlphaGE(int alpha_bits)
 {
 	if (alpha_bits > 16)
@@ -135,7 +133,6 @@ int glrCheckTimeStampShared(gld_shared_t* shared, int32_t num_to_compare)
 	return (num_to_compare - p[16]) <= 0;
 }
 
-__attribute__((visibility("hidden")))
 void glrWaitSharedObject(gld_shared_t* shared, gld_waitable_t* w)
 {
 	uint64_t input;
@@ -160,13 +157,11 @@ void glrWaitSharedObject(gld_shared_t* shared, gld_waitable_t* w)
 						0, 0, 0, 0, 0, 0);
 }
 
-__attribute__((visibility("hidden")))
 void glrInitializeHardwareShared(gld_shared_t* shared, void* channel_memory)
 {
 	shared->channel_memory = channel_memory;
 }
 
-__attribute__((visibility("hidden")))
 void glrDestroyZeroTexture(gld_shared_t* shared, gld_texture_t* texture)
 {
 	void* tmp = texture->f11;
@@ -175,12 +170,10 @@ void glrDestroyZeroTexture(gld_shared_t* shared, gld_texture_t* texture)
 	free(tmp);
 }
 
-__attribute__((visibility("hidden")))
 void glrDestroyHardwareShared(gld_shared_t* shared)
 {
 }
 
-__attribute__((visibility("hidden")))
 void glrFlushSysObject(gld_context_t* context, gld_waitable_t* waitable, int arg2)
 {
 	if (arg2) {
@@ -206,26 +199,37 @@ void glrFlushSysObject(gld_context_t* context, gld_waitable_t* waitable, int arg
 		gldFlush(context);
 }
 
-__attribute__((visibility("hidden")))
-void load_libGLImage(libglimage_t* interface)
+void load_libs()
 {
-	bzero(interface, sizeof *interface);
-	interface->handle = dlopen(LIBGLIMAGE, 0);
-	if (!interface->handle)
-		return;
-	interface->glg_processor_default_data = dlsym(interface->handle, "glg_processor_default_data");
-	interface->glgTerminateProcessor = dlsym(interface->handle, "glgTerminateProcessor");
+	bzero(&libglimage, sizeof libglimage);
+	libglimage.handle = dlopen(LIBGLIMAGE, 0);
+	if (libglimage.handle) {
+		libglimage.glg_processor_default_data = dlsym(libglimage.handle, "glg_processor_default_data");
+		libglimage.glgConvertType = dlsym(libglimage.handle, "glgConvertType");
+		libglimage.glgPixelCenters = dlsym(libglimage.handle, "glgPixelCenters");
+		libglimage.glgProcessPixelsWithProcessor = dlsym(libglimage.handle, "glgProcessPixelsWithProcessor");
+		libglimage.glgTerminateProcessor = dlsym(libglimage.handle, "glgTerminateProcessor");
+	}
+	bzero(&libglprogrammability, sizeof libglprogrammability);
+	libglprogrammability.handle = dlopen(LIBGLPROGRAMMABILITY, 0);
+	if (libglprogrammability.handle) {
+		libglprogrammability.glpFreePPShaderLinearize = dlsym(libglprogrammability.handle, "glpFreePPShaderLinearize");
+		libglprogrammability.glpFreePPShaderToProgram = dlsym(libglprogrammability.handle, "glpFreePPShaderToProgram");
+		libglprogrammability.glpPPShaderLinearize = dlsym(libglprogrammability.handle, "glpPPShaderLinearize");
+		libglprogrammability.glpPPShaderToProgram = dlsym(libglprogrammability.handle, "glpPPShaderToProgram");
+	}
 }
 
-__attribute__((visibility("hidden")))
-void unload_libGLImage(libglimage_t* interface)
+void unload_libs()
 {
-	if (interface->handle)
-		dlclose(interface->handle);
-	bzero(interface, sizeof *interface);
+	if (libglimage.handle)
+		dlclose(libglimage.handle);
+	bzero(&libglimage, sizeof libglimage);
+	if (libglprogrammability.handle)
+		dlclose(libglprogrammability.handle);
+	bzero(&libglprogrammability, sizeof libglprogrammability);
 }
 
-__attribute__((visibility("hidden")))
 void SubmitPacketsToken(gld_context_t* context, int mode)
 {
 	/*
@@ -233,64 +237,55 @@ void SubmitPacketsToken(gld_context_t* context, int mode)
 	 */
 }
 
-__attribute__((visibility("hidden")))
 void glrReleaseVendShrPipeProg(gld_shared_t* shared, void* arg1)
 {
 }
 
-__attribute__((visibility("hidden")))
 void glrDeleteCachedProgram(gld_pipeline_program_t* pp, void* arg1)
 {
 	// FIXME
 }
 
-__attribute__((visibility("hidden")))
 void glrDeleteSysPipelineProgram(gld_shared_t* shared, gld_pipeline_program_t* pp)
 {
-#if 0
 	if (pp->f0.f) {
-		glpFreePPShaderToProgram(pp->f0.p);	// FIXME: in libGLProgrammability
+		libglprogrammability.glpFreePPShaderToProgram(pp->f0.p);
 		pp->f0.p = 0;
 		pp->f0.f = 0;
 	}
-#endif
 }
 
-__attribute__((visibility("hidden")))
 GLDReturn glrValidatePixelFormat(PixelFormat* pixel_format)
 {
 	// FIXME
 	return kCGLNoError;
 }
 
-__attribute__((visibility("hidden")))
 void glrKillClient(kern_return_t kr)
 {
 	// FIXME
 }
 
-__attribute__((visibility("hidden")))
 uint32_t xlateColorMode(uint32_t colorMode)
 {
 	if (colorMode & 0xFFFFFCU) {
 		if (colorMode & 0x3FC0U)
-			return 3U;
+			return 3U; /* kIOAccelSurfaceModeColorDepth1555 */
 		if (colorMode & 0xFC000U)
-			return 4U;
+			return 4U; /* kIOAccelSurfaceModeColorDepth8888 */
 		if (colorMode & 0x3F00000U)
-			return 11U;
+			return 11U; /* kIOAccelSurfaceModeColorDepthRGBA64 */
 		return 0;
 	}
 	if (colorMode & 0x3F000000U) {
 		if (colorMode & 0x3F00000U)
-			return 12U;
+			return 12U; /* kIOAccelSurfaceModeColorDepthRGBAFloat64 */
 		if (colorMode & 0xC000000U)
-			return 13U;
+			return 13U; /* kIOAccelSurfaceModeColorDepthRGBAFloat128 */
 	}
 	return 0;
 }
 
-__attribute__((visibility("hidden")))
 void glrSetWindowModeBits(uint32_t* wmb, PixelFormat* pixel_format)
 {
 	uint32_t mb = *wmb;
@@ -298,13 +293,13 @@ void glrSetWindowModeBits(uint32_t* wmb, PixelFormat* pixel_format)
 		case kCGL0Bit:
 			break;
 		case kCGL16Bit:
-			mb |= 0x1000000U;
+			mb |= CGLCMB_DepthMode16;
 			break;
 		case kCGL32Bit:
-			mb |= 0x2000000U;
+			mb |= CGLCMB_DepthMode32;
 			break;
 		default:
-			mb |= 0x3000000U;
+			mb |= (CGLCMB_DepthMode16 | CGLCMB_DepthMode32);
 			break;
 	}
 	if (pixel_format->sampleBuffers > 0 &&
@@ -313,19 +308,16 @@ void glrSetWindowModeBits(uint32_t* wmb, PixelFormat* pixel_format)
 	*wmb = mb;
 }
 
-__attribute__((visibility("hidden")))
 void glrInitializeHardwareState(gld_context_t* context, PixelFormat* pixel_format)
 {
 	// FIXME
 }
 
-__attribute__((visibility("hidden")))
 void glrSetConfigData(gld_context_t* context, void* arg3, PixelFormat* pixel_format)
 {
 	// FIXME
 }
 
-__attribute__((visibility("hidden")))
 char const* glrGetString(display_info_t* dinfo, int string_code)
 {
 	switch (string_code) {
@@ -357,3 +349,25 @@ char const* glrGetString(display_info_t* dinfo, int string_code)
 	}
 	return 0;
 }
+
+void glrFlushMemory(int arg0, void* arg1, int arg2)
+{
+	// FIXME: neat function, flushes cache line
+}
+
+void glrReleaseDrawable(gld_context_t* context)
+{
+	// FIXME
+}
+
+int glrSanitizeWindowModeBits(uint32_t mode_bits)
+{
+	return 1;
+}
+
+void glrDrawableChanged(gld_context_t* context)
+{
+	// FIXME
+}
+
+#pragma GCC visibility pop

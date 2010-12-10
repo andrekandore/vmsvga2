@@ -36,18 +36,23 @@ extern "C" {
 extern char const BNDL1[];
 extern char const BNDL2[];
 extern char const LIBGLIMAGE[];
+extern char const LIBGLPROGRAMMABILITY[];
 
 extern void* bndl_handle[2];
 
 extern GLD_GENERIC_FUNC bndl_ptrs[2][NUM_ENTRIES];
 
+#if LOGGING_LEVEL >= 1
 extern int logLevel;
+#endif
 
 extern int bndl_index;
 
 extern glr_io_data_t glr_io_data;
 
 extern libglimage_t libglimage;
+
+extern libglprogrammability_t libglprogrammability;
 
 #ifdef __cplusplus
 }

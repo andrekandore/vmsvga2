@@ -134,13 +134,13 @@ bool CLASS::start(IOService* provider)
 	m_provider = OSDynamicCast(VMsvga2Accel, provider);
 	if (!m_provider)
 		return false;
-	m_log_level = m_provider->getLogLevelAC();
+	m_log_level = imax(m_provider->getLogLevelGA(), m_provider->getLogLevelAC());
 	return super::start(provider);
 }
 
 bool CLASS::initWithTask(task_t owningTask, void* securityToken, UInt32 type)
 {
-	m_log_level = 1;
+	m_log_level = LOGGING_LEVEL;
 	if (!super::initWithTask(owningTask, securityToken, type))
 		return false;
 	m_owning_task = owningTask;
@@ -166,6 +166,18 @@ CLASS* CLASS::withTask(task_t owningTask, void* securityToken, UInt32 type)
 #pragma mark -
 #pragma mark Private Methods
 #pragma mark -
+
+VMsvga2Surface* CLASS::findSurface(UInt surface_id)
+{
+	VMsvga2Accel::FindSurface fs;
+
+	if (!m_provider)
+		return 0;
+	bzero(&fs, sizeof fs);
+	fs.cgsSurfaceID = surface_id;
+	m_provider->messageClients(kIOMessageFindSurface, &fs, sizeof fs);
+	return OSDynamicCast(VMsvga2Surface, fs.client);
+}
 
 IOReturn CLASS::locateSurface(UInt32 surface_id)
 {
@@ -227,25 +239,46 @@ IOReturn CLASS::CopyRegion(uintptr_t source_surface_id,
 						   IOAccelDeviceRegion const* region,
 						   size_t regionSize)
 {
-	/*
-	 * surface-to-surface copy is not supported yet.  Due to the way the code is designed,
-	 *   this is really a pure guest-memory to guest-memory blit.  It can be done by two
-	 *   steps via the host if desired.
-	 *
-	 * surface-to-framebuffer is not supported either.  It's not difficult to do, but the
-	 *   WindowsServer blits by using surface_flush() and QuickTime blits with SwapSurface,
-	 *   so it's not really necessary.
-	 */
-	if (static_cast<UInt32>(source_surface_id)) {
-		TDLog(1, "%s: Copy from surface source (0x%x) - unsupported\n",
-			  __FUNCTION__, static_cast<unsigned>(source_surface_id));
-		return kIOReturnUnsupported;
-	}
+	IOReturn rc;
+	UInt _source_surface_id;
+	SInt _destX, _destY;
+	VMsvga2Surface* source_surface;
+
+	if (!region || regionSize < IOACCEL_SIZEOF_DEVICE_REGION(region))
+		return kIOReturnBadArgument;
+
+	if (bTargetIsCGSSurface && !surface_client)
+		return kIOReturnNotReady;
+
 	/*
 	 * Correct for truncation done by IOUserClient dispatcher
 	 */
-	SInt32 _destX = static_cast<SInt32>(destX);
-	SInt32 _destY = static_cast<SInt32>(destY);
+	_source_surface_id = static_cast<UInt>(source_surface_id);
+	_destX = static_cast<SInt>(destX);
+	_destY = static_cast<SInt>(destY);
+
+	if (_source_surface_id) {
+		source_surface = findSurface(_source_surface_id);
+		if (!source_surface) {
+			TDLog(1, "%s: Source Surface(%#x) not found\n", __FUNCTION__, _source_surface_id);
+			return kIOReturnNotFound;
+		}
+		source_surface->retain();
+		if (bTargetIsCGSSurface)
+			rc = surface_client->copy_surface_region_to_self(source_surface,
+															 _destX,
+															 _destY,
+															 region,
+															 regionSize);
+		else
+			rc = source_surface->copy_self_region_to_framebuffer(framebufferIndex,
+																 _destX,
+																 _destY,
+																 region,
+																 regionSize);
+		source_surface->release();
+		return rc;
+	}
 	if (!bTargetIsCGSSurface) {
 		/*
 		 * destination is framebuffer, use classic mode
@@ -257,9 +290,11 @@ IOReturn CLASS::CopyRegion(uintptr_t source_surface_id,
 	/*
 	 * destination is a surface
 	 */
-	if (!surface_client)
-		return kIOReturnNotReady;
-	return surface_client->context_copy_region(_destX, _destY, region, regionSize);
+	return surface_client->copy_framebuffer_region_to_self(framebufferIndex,
+														   _destX,
+														   _destY,
+														   region,
+														   regionSize);
 }
 
 #pragma mark -

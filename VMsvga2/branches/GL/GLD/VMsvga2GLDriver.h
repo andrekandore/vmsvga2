@@ -38,8 +38,8 @@ extern "C" {
 void gldInitializeLibrary(io_service_t const* pServices,
 						  uint8_t const* pServiceFlags,
 						  uint32_t GLDisplayMask,
-						  void const* arg3,
-						  void const* arg4);
+						  PIODataFlush,
+						  PIODataBindSurface);
 void gldTerminateLibrary(void);
 
 _Bool gldGetVersion(int*, int*, int*, int*);
@@ -56,7 +56,7 @@ GLDReturn gldCreateContext(gld_context_t** struct_out,
 						   void* arg5);
 GLDReturn gldReclaimContext(gld_context_t* context);
 GLDReturn gldDestroyContext(gld_context_t* context);
-GLDReturn gldAttachDrawable(gld_context_t* context, int surface_type, void* arg2, void* arg3);	// note: arg2+arg3 may be a 64-bit param
+GLDReturn gldAttachDrawable(gld_context_t* context, int surface_type, uint32_t const* client_data, uint32_t options);
 GLDReturn gldInitDispatch(void* arg0, void* arg1, void* arg2);
 GLDReturn gldUpdateDispatch(void* arg0, void* arg1, void* arg2);
 char const* gldGetString(uint32_t GLDisplayMask, int string_code);
@@ -77,30 +77,55 @@ GLDReturn gldLoadTexture(gld_context_t* context, gld_texture_t* texture);
 void gldUnbindTexture(gld_context_t* context, gld_texture_t* texture);
 void gldReclaimTexture(gld_shared_t* shared, gld_texture_t* texture);
 void gldDestroyTexture(gld_shared_t* shared, gld_texture_t* texture);
-GLD_DECLARE_GENERIC(gldCopyTexSubImage);
-GLD_DECLARE_GENERIC(gldModifyTexSubImage);
+GLDReturn gldCopyTexSubImage(void* arg0,
+							 void* arg1,
+							 int arg2,
+							 int arg3,
+							 int arg4,
+							 int arg5,
+							 int arg6,
+							 int arg7,
+							 int arg8,
+							 int arg9,
+							 int arg10);
+GLDReturn gldModifyTexSubImage(void* arg0,
+							   void* arg1,
+							   int arg2,
+							   int arg3,
+							   int arg4,
+							   int arg5,
+							   int arg6,
+							   int arg7,
+							   int arg8,
+							   int arg9,
+							   int arg10,
+							   int arg11,
+							   int arg12,
+							   int arg13,
+							   int arg14);
 GLD_DECLARE_GENERIC(gldCreateTextureLevel);
-GLD_DECLARE_GENERIC(gldGetTextureLevelInfo);
-GLD_DECLARE_GENERIC(gldGetTextureLevelImage);
+GLDReturn gldGetTextureLevelInfo(void* arg0, void* arg1, void* arg2, int arg3, int arg4, void* arg5);
+GLDReturn gldGetTextureLevelImage(void* arg0, void* arg1, int arg2, int arg3);
 GLD_DECLARE_GENERIC(gldModifyTextureLevel);
 GLD_DECLARE_GENERIC(gldDestroyTextureLevel);
-GLD_DECLARE_GENERIC(gldCreateBuffer);
-GLD_DECLARE_GENERIC(gldBufferSubData);
-GLD_DECLARE_GENERIC(gldLoadBuffer);
-GLD_DECLARE_GENERIC(gldFlushBuffer);
-GLD_DECLARE_GENERIC(gldPageoffBuffer);
-GLD_DECLARE_GENERIC(gldUnbindBuffer);
-GLD_DECLARE_GENERIC(gldReclaimBuffer);
-GLD_DECLARE_GENERIC(gldDestroyBuffer);
-GLD_DECLARE_GENERIC(gldGetMemoryPlugin);
-GLD_DECLARE_GENERIC(gldSetMemoryPlugin);
-GLD_DECLARE_GENERIC(gldTestMemoryPlugin);
-GLD_DECLARE_GENERIC(gldFlushMemoryPlugin);
-GLD_DECLARE_GENERIC(gldDestroyMemoryPlugin);
-GLD_DECLARE_GENERIC(gldCreateFramebuffer);
-GLD_DECLARE_GENERIC(gldUnbindFramebuffer);
-GLD_DECLARE_GENERIC(gldReclaimFramebuffer);
-GLD_DECLARE_GENERIC(gldDestroyFramebuffer);
+GLDReturn gldCreateBuffer(gld_shared_t* shared, gld_buffer_t** struct_out, void* arg2, void* arg3);
+GLDReturn gldBufferSubData(void);
+GLDReturn gldLoadBuffer(void);
+GLDReturn gldFlushBuffer(gld_shared_t* shared, gld_buffer_t* buffer, void* arg2, int arg3);
+void gldPageoffBuffer(gld_shared_t* shared, void*, gld_buffer_t* buffer);
+void gldUnbindBuffer(gld_context_t* context, gld_buffer_t* buffer);
+void gldReclaimBuffer(gld_shared_t* shared, gld_buffer_t* buffer);
+GLDReturn gldDestroyBuffer(gld_shared_t* shared, gld_buffer_t* buffer);
+void gldGetMemoryPlugin(void* arg0, void* arg1, void** struct_out);
+void gldSetMemoryPlugin(void* arg0, void* arg1, void** struct_out);
+int gldTestMemoryPlugin(void* arg0, void* arg1);
+void gldFlushMemoryPlugin(void* arg0, void* arg1);
+void gldDestroyMemoryPlugin(void* arg0, void* arg1);
+GLDReturn gldCreateFramebuffer(gld_shared_t * shared, gld_framebuffer_t** struct_out, void* arg2, void* arg3);
+void gldUnbindFramebuffer(gld_context_t* context, gld_framebuffer_t* framebuffer);
+void gldReclaimFramebuffer(void);
+void gldDiscardFramebuffer(void);
+GLDReturn gldDestroyFramebuffer(gld_shared_t * shared, gld_framebuffer_t* framebuffer);
 GLDReturn gldCreatePipelineProgram(gld_shared_t* shared, gld_pipeline_program_t** struct_out, void* arg2);
 GLDReturn gldGetPipelineProgramInfo(gld_shared_t* shared, gld_pipeline_program_t* pp, int arg2, void* arg3);
 GLDReturn gldModifyPipelineProgram(gld_shared_t* shared, gld_pipeline_program_t* pp, uint32_t arg2);
@@ -127,7 +152,6 @@ GLDReturn gldDestroyComputeContext(void);
 GLDReturn gldLoadHostBuffer(void);
 GLDReturn gldSyncBufferObject(void);
 GLDReturn gldSyncTexture(void);
-void gldDiscardFramebuffer(void);
 GLD_DECLARE_GENERIC(gldGetTextureLevel);
 GLD_DECLARE_GENERIC(gldDeleteTextureLevel);
 GLD_DECLARE_GENERIC(gldDeleteTexture);

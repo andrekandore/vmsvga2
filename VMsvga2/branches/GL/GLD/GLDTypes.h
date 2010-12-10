@@ -29,6 +29,21 @@
 #ifndef __GLDTYPES_H__
 #define __GLDTYPES_H__
 
+#define CGLCMB_Stereoscopic       0x00000010U
+#define CGLCMB_Windowed           0x00000020U
+#define CGLCMB_DepthMode0         0x00000040U
+#define CGLCMB_StencilMode0       0x00000080U
+#define CGLCMB_AuxBuffersMask     0x00000300U
+#define CGLCMB_DoubleBuffer       0x00000400U
+#define CGLCMB_FullScreen         0x00000800U
+#define CGLCMB_HaveSampleBuffers  0x00001000U
+#define CGLCMB_AuxDepthStencil    0x00002000U
+#define CGLCMB_BeamSync           0x00008000U
+#define CGLCMB_BackingStore       0x00800000U
+#define CGLCMB_DepthMode16        0x01000000U
+#define CGLCMB_DepthMode32        0x02000000U
+#define CGLCMB_SampleBuffersMask  0x0C000000U
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -36,6 +51,13 @@ extern "C" {
 typedef int GLDReturn;
 
 typedef GLDReturn (*GLD_GENERIC_FUNC)(void*, void*, void*, void*, void*, void*);
+
+typedef int (*PIODataFlush)();
+typedef int (*PIODataBindSurface)(uint32_t arg0,
+								  uint32_t arg1,
+								  uint32_t const* surface_id,
+								  uint32_t context_mode_bits,
+								  io_service_t svc);
 
 typedef struct _display_info_t {
 	io_service_t service;
@@ -50,10 +72,10 @@ typedef struct _glr_io_data_t {
 	uint32_t lastDisplay;
 	io_service_t const* pServices;
 	uint8_t const* pServiceFlags;
-	void const* arg3;
-	void const* arg4;
-	uint32_t arr1[32];
-	uint8_t arr2[32];
+	PIODataFlush IODataFlush;
+	PIODataBindSurface IODataBindSurface;
+	io_connect_t surfaces[32];
+	uint8_t surface_refcount[32];
 	uint32_t num_displays;
 	display_info_t* dinfo;
 } glr_io_data_t;
@@ -147,12 +169,13 @@ typedef struct _gld_context_t {
 	void* arg5;						// ( 18,  28)
 	uint8_t flags2[2];				// ( 1C,  30)
 	uint32_t config0;				// ( 20,  34)
-	uint32_t config2;				// ( 24,  38)
+	uint32_t vramSize;				// ( 24,  38)
 	void* f0[2];					// ( 28,  40)
-	uint32_t f1[2];					// ( 30,  50)
-	void* f2;						// ( 38,  58)
+	uint32_t f1;					// ( 30,  50)
+	uint32_t context_mode_bits;		// ( 34,  54)
+	uint32_t const* client_data;	// ( 38,  58)
 	uint32_t f3[18];				// ( 3C,  60)
-	uint8_t f4[8];					// ( 84,  A8)
+	uint8_t flags3[8];				// ( 84,  A8)
 	void* f5;						// ( 8C,  B0)
 	uint32_t f6;					// ( 90,  B8)
 	void* f7[2];					// ( 94,  C0)
@@ -273,18 +296,64 @@ typedef struct _gld_waitable_t {
 	uint8_t type;
 } gld_waitable_t;
 
+typedef struct _gld_framebuffer_t {
+	void* f0;
+	void* f1;
+	uint32_t f2[2];
+} gld_framebuffer_t;
+
+typedef struct _gld_buffer_t {
+	void* f0;
+	void* f1;
+	void* f2;
+	uint32_t reserved[18];
+} gld_buffer_t;
+
 typedef struct _libglimage_t {
 	void* handle;
 	void* glg_processor_default_data;
+	int (*glgConvertType)();
+	int (*glgPixelCenters)();
+	int (*glgProcessPixelsWithProcessor)();
 	void (*glgTerminateProcessor)(void*);
 } libglimage_t;
 
+typedef struct _libglprogrammability_t {
+	void* handle;
+	void (*glpFreePPShaderLinearize)(void*);
+	void (*glpFreePPShaderToProgram)(void*);
+	int (*glpPPShaderLinearize)();
+	int (*glpPPShaderToProgram)();
+} libglprogrammability_t;
+
 typedef struct _sIOGLGetCommandBuffer {
-	uint32_t len0;
-	uint32_t len1;
-	mach_vm_address_t addr0;
-	mach_vm_address_t addr1;
+	uint32_t len[2];
+	mach_vm_address_t addr[2];
 } sIOGLGetCommandBuffer;
+
+typedef struct _sIOGLContextSetSurfaceData {
+	uint32_t surface_id;
+	uint32_t context_mode_bits;
+	uint32_t surface_mode;
+	uint32_t dr_options_hi;		// high byte of options passed to gldAttachDrawable
+	uint32_t dr_options_lo;		// low byte of options passed to gldAttachDrawable
+	uint32_t volatile_state;
+	uint32_t set_scale;
+	uint32_t scale_options;
+	uint32_t scale_width;		// lower 16 bits
+	uint32_t scale_height;		// lower 16 bits
+} sIOGLContextSetSurfaceData;
+
+typedef struct _sIOGLContextGetConfigStatus {
+	uint32_t config[3];
+	uint32_t inner_width;
+	uint32_t inner_height;
+	uint32_t outer_width;
+	uint32_t outer_height;
+	uint32_t status;		// boolean 0 or 1
+	uint32_t surface_mode_bits;
+	uint32_t reserved;
+} sIOGLContextGetConfigStatus;
 
 #ifdef __cplusplus
 }

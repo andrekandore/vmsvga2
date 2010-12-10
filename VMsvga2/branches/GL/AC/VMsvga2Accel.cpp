@@ -293,6 +293,10 @@ void CLASS::processOptions()
 		m_log_level_ga = static_cast<SInt32>(boot_arg);
 		setProperty("VMwareSVGAGALogLevel", static_cast<UInt64>(m_log_level_ga), 32U);
 	}
+	if (PE_parse_boot_argn("vmw_log_gld", &boot_arg, sizeof boot_arg)) {
+		m_log_level_gld = static_cast<SInt>(boot_arg);
+		setProperty("VMwareSVGAGLDLogLevel", static_cast<UInt64>(m_log_level_gld), 32U);
+	}
 }
 
 IOReturn CLASS::findFramebuffer()
@@ -427,6 +431,7 @@ bool CLASS::init(OSDictionary* dictionary)
 	screen.Init(0);
 	m_log_level_ac = LOGGING_LEVEL;
 	m_log_level_ga = -1;
+	m_log_level_gld = -1;
 	m_blitbug_result = kIOReturnNotFound;
 	m_present_tracker.init();
 	return true;
