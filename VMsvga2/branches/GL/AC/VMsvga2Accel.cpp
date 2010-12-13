@@ -26,7 +26,6 @@
  *  SOFTWARE.
  */
 
-#include <libkern/OSAtomic.h>
 #include <IOKit/pci/IOPCIDevice.h>
 #include <IOKit/graphics/IOGraphicsInterfaceTypes.h>
 #include <IOKit/IOBufferMemoryDescriptor.h>
@@ -49,15 +48,22 @@
 #define super IOAccelerator
 OSDefineMetaClassAndStructors(VMsvga2Accel, IOAccelerator);
 
+#define HIDDEN __attribute__((visibility("hidden")))
+
 static __attribute__((used)) char const copyright[] = "Copyright 2009-2010 Zenith432";
 
-UInt32 vmw_options_ac = 0;
+HIDDEN
+uint32_t vmw_options_ac = 0;
 
 #if LOGGING_LEVEL >= 1
-#define ACLog(log_level, fmt, ...) do { if (log_level <= m_log_level_ac) VLog("IOAC: ", fmt, ##__VA_ARGS__); } while(false)
+#define ACLog(log_level, ...) do { if (log_level <= m_log_level_ac) VLog("IOAC: ", ##__VA_ARGS__); } while(false)
 #else
-#define ACLog(log_level, fmt, ...)
+#define ACLog(log_level, ...)
 #endif
+
+#define FMT_D(x) static_cast<int>(x)
+#define FMT_U(x) static_cast<unsigned>(x)
+#define FMT_LU(x) static_cast<size_t>(x)
 
 #pragma mark -
 #pragma mark Static Functions
@@ -66,11 +72,12 @@ UInt32 vmw_options_ac = 0;
 template<unsigned N>
 union DefineRegion
 {
-	UInt8 b[sizeof(IOAccelDeviceRegion) + N * sizeof(IOAccelBounds)];
+	uint8_t b[sizeof(IOAccelDeviceRegion) + N * sizeof(IOAccelBounds)];
 	IOAccelDeviceRegion r;
 };
 
-static inline int log_2_32(UInt32 x)
+static inline
+int log_2_32(uint32_t x)
 {
 	int y = 0;
 
@@ -83,42 +90,46 @@ static inline int log_2_32(UInt32 x)
 	return y;
 }
 
-static inline int log_2_64(UInt64 x)
+static inline
+int log_2_64(uint64_t x)
 {
 	int y = 0;
 
 	if (x & 0xFFFFFFFF00000000ULL) { y |= 32; x >>= 32; }
-	y |= log_2_32(static_cast<UInt32>(x));
+	y |= log_2_32(static_cast<uint32_t>(x));
 	return y;
 }
 
-static inline void memset32(void* dest, UInt32 value, size_t size)
+static inline
+void memset32(void* dest, uint32_t value, size_t size)
 {
 	asm volatile ("cld; rep stosl" : "+c" (size), "+D" (dest) : "a" (value) : "memory");
 }
 
-static void set_region(IOAccelDeviceRegion* rgn,
-					   UInt32 x,
-					   UInt32 y,
-					   UInt32 w,
-					   UInt32 h)
+static
+void set_region(IOAccelDeviceRegion* rgn,
+				uint32_t x,
+				uint32_t y,
+				uint32_t w,
+				uint32_t h)
 {
 	rgn->num_rects = 1;
-	rgn->bounds.x = static_cast<SInt16>(x);
-	rgn->bounds.y = static_cast<SInt16>(y);
-	rgn->bounds.w = static_cast<SInt16>(w);
-	rgn->bounds.h = static_cast<SInt16>(h);
+	rgn->bounds.x = static_cast<int16_t>(x);
+	rgn->bounds.y = static_cast<int16_t>(y);
+	rgn->bounds.w = static_cast<int16_t>(w);
+	rgn->bounds.h = static_cast<int16_t>(h);
 	memcpy(&rgn->rect[0], &rgn->bounds, sizeof rgn->bounds);
 }
 
 #if 0
-static void set_region(IOAccelDeviceRegion* rgn,
-					   IOBlitRectangleStruct const* rects,
-					   size_t numRects)
+static
+void set_region(IOAccelDeviceRegion* rgn,
+				IOBlitRectangleStruct const* rects,
+				size_t numRects)
 {
 	size_t i;
 
-	rgn->num_rects = static_cast<UInt32>(numRects);
+	rgn->num_rects = static_cast<uint32_t>(numRects);
 	rgn->bounds.x = rects->x;
 	rgn->bounds.y = rects->y;
 	rgn->bounds.w = rects->x + rects->width;
@@ -145,7 +156,8 @@ static void set_region(IOAccelDeviceRegion* rgn,
 #endif
 
 #if 0
-static void clip_rect(IOBlitRectangleStruct* rect, SInt32 w, SInt32 h)
+static
+void clip_rect(IOBlitRectangleStruct* rect, int w, int h)
 {
 	if (rect->x < 0) rect->x = 0;
 	if (rect->y < 0) rect->y = 0;
@@ -156,9 +168,10 @@ static void clip_rect(IOBlitRectangleStruct* rect, SInt32 w, SInt32 h)
 }
 #endif
 
-static void convert_rect(IOAccelBounds const* src_rect,
-						 SVGASignedRect* dest_rect,
-						 SVGASignedPoint const* delta = 0)
+static
+void convert_rect(IOAccelBounds const* src_rect,
+				  SVGASignedRect* dest_rect,
+				  SVGASignedPoint const* delta = 0)
 {
 	dest_rect->left = src_rect->x + (delta ? delta->x : 0);
 	dest_rect->right = dest_rect->left + src_rect->w;
@@ -170,6 +183,7 @@ static void convert_rect(IOAccelBounds const* src_rect,
 #pragma mark Private Methods
 #pragma mark -
 
+HIDDEN
 void CLASS::Cleanup()
 {
 #if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ >= 1060
@@ -213,6 +227,7 @@ void CLASS::Cleanup()
 }
 
 #ifdef TIMING
+HIDDEN
 void CLASS::timeSyncs()
 {
 	static uint32_t first_stamp = 0;
@@ -233,15 +248,16 @@ void CLASS::timeSyncs()
 		last_stamp = current_stamp;
 		freq = static_cast<float>(num_syncs)/static_cast<float>(current_stamp - first_stamp);
 		if (m_framebuffer)
-			m_framebuffer->setProperty("VMwareSVGASyncFrequency", static_cast<UInt64>(freq * 1000.0F), 64U);
+			m_framebuffer->setProperty("VMwareSVGASyncFrequency", static_cast<uint64_t>(freq * 1000.0F), 64U);
 	}
 }
 #endif
 
-bool CLASS::createMasterSurface(UInt32 width, UInt32 height)
+HIDDEN
+bool CLASS::createMasterSurface(uint32_t width, uint32_t height)
 {
 	bool rc;
-	UInt32 cid;
+	uint32_t cid;
 
 	m_master_surface_id = AllocSurfaceID();
 	cid = AllocContextID();
@@ -256,15 +272,17 @@ bool CLASS::createMasterSurface(UInt32 width, UInt32 height)
 	return rc;
 }
 
+HIDDEN
 void CLASS::destroyMasterSurface()
 {
 	destroySurface(m_master_surface_id);
 	FreeSurfaceID(m_master_surface_id);
 }
 
+HIDDEN
 void CLASS::processOptions()
 {
-	UInt32 boot_arg;
+	uint32_t boot_arg;
 
 	vmw_options_ac = VMW_OPTION_AC_GL_CONTEXT | VMW_OPTION_AC_2D_CONTEXT | VMW_OPTION_AC_SURFACE_CONNECT;
 	if (PE_parse_boot_argn("vmw_options_ac", &boot_arg, sizeof boot_arg))
@@ -281,24 +299,25 @@ void CLASS::processOptions()
 		vmw_options_ac |= VMW_OPTION_AC_QE | VMW_OPTION_AC_GLD;
 	if (PE_parse_boot_argn("-vmw_gld", &boot_arg, sizeof boot_arg))
 		vmw_options_ac |= VMW_OPTION_AC_GLD;
-	setProperty("VMwareSVGAAccelOptions", static_cast<UInt64>(vmw_options_ac), 32U);
+	setProperty("VMwareSVGAAccelOptions", static_cast<uint64_t>(vmw_options_ac), 32U);
 	if (PE_parse_boot_argn("vmw_options_ga", &boot_arg, sizeof boot_arg)) {
 		m_options_ga = boot_arg;
-		setProperty("VMwareSVGAGAOptions", static_cast<UInt64>(m_options_ga), 32U);
+		setProperty("VMwareSVGAGAOptions", static_cast<uint64_t>(m_options_ga), 32U);
 	}
 	if (PE_parse_boot_argn("vmw_log_ac", &boot_arg, sizeof boot_arg))
-		m_log_level_ac = static_cast<SInt32>(boot_arg);
-	setProperty("VMwareSVGAAccelLogLevel", static_cast<UInt64>(m_log_level_ac), 32U);
+		m_log_level_ac = static_cast<int>(boot_arg);
+	setProperty("VMwareSVGAAccelLogLevel", static_cast<uint64_t>(m_log_level_ac), 32U);
 	if (PE_parse_boot_argn("vmw_log_ga", &boot_arg, sizeof boot_arg)) {
-		m_log_level_ga = static_cast<SInt32>(boot_arg);
-		setProperty("VMwareSVGAGALogLevel", static_cast<UInt64>(m_log_level_ga), 32U);
+		m_log_level_ga = static_cast<int>(boot_arg);
+		setProperty("VMwareSVGAGALogLevel", static_cast<uint64_t>(m_log_level_ga), 32U);
 	}
 	if (PE_parse_boot_argn("vmw_log_gld", &boot_arg, sizeof boot_arg)) {
 		m_log_level_gld = static_cast<SInt>(boot_arg);
-		setProperty("VMwareSVGAGLDLogLevel", static_cast<UInt64>(m_log_level_gld), 32U);
+		setProperty("VMwareSVGAGLDLogLevel", static_cast<uint64_t>(m_log_level_gld), 32U);
 	}
 }
 
+HIDDEN
 IOReturn CLASS::findFramebuffer()
 {
 	OSIterator* it;
@@ -330,6 +349,7 @@ IOReturn CLASS::findFramebuffer()
 	return kIOReturnSuccess;
 }
 
+HIDDEN
 IOReturn CLASS::setupAllocator()
 {
 	IOReturn rc;
@@ -355,16 +375,16 @@ IOReturn CLASS::setupAllocator()
 	}
 	rc = m_allocator->Init(p, s);
 	if (rc != kIOReturnSuccess) {
-		ACLog(1, "%s: Allocator Init(%p, 0x%lx) failed with 0x%x\n",
-			  __FUNCTION__, p, s, rc);
+		ACLog(1, "%s: Allocator Init(%p, %#lx) failed with %#x\n",
+			  __FUNCTION__, p, FMT_LU(s), rc);
 		goto exit;
 	}
 	bytes_reserve = SVGA_FB_MAX_TRACEABLE_SIZE;
 	if (bytes_reserve < s) {
 		rc = m_allocator->Release(bytes_reserve, s);
 		if (rc != kIOReturnSuccess) {
-			ACLog(1, "%s: Allocator Release(0x%lx, 0x%lx) failed with 0x%x\n",
-				  __FUNCTION__, bytes_reserve, s, rc);
+			ACLog(1, "%s: Allocator Release(%#lx, %#lx) failed with %#x\n",
+				  __FUNCTION__, FMT_LU(bytes_reserve), FMT_LU(s), rc);
 			goto exit;
 		}
 		s = bytes_reserve;
@@ -373,8 +393,8 @@ IOReturn CLASS::setupAllocator()
 	if (HaveFrontBuffer()) {
 		rc = m_allocator->Release(0, s);
 		if (rc != kIOReturnSuccess) {
-			ACLog(1, "%s: Allocator Release(0x%x, 0x%lx) failed with 0x%x\n",
-				  __FUNCTION__, 0, s, rc);
+			ACLog(1, "%s: Allocator Release(%#x, %#lx) failed with %#x\n",
+				  __FUNCTION__, 0, FMT_LU(s), rc);
 			if (!bytes_reserve)			// We already got some memory, so it's ok
 				rc = kIOReturnSuccess;
 		}
@@ -388,6 +408,7 @@ exit:
 }
 
 #ifdef FB_NOTIFIER
+HIDDEN
 IOReturn CLASS::fbNotificationHandler(void* ref,
 									  class IOFramebuffer* framebuffer,
 									  SInt32 event,
@@ -399,6 +420,7 @@ IOReturn CLASS::fbNotificationHandler(void* ref,
 }
 #endif
 
+HIDDEN
 void CLASS::initGLStuff()
 {
 	m_channel_memory = IOBufferMemoryDescriptor::withOptions(kIOMemoryKernelUserShared |
@@ -410,6 +432,7 @@ void CLASS::initGLStuff()
 		m_channel_memory->prepare(kIODirectionInOut);
 }
 
+HIDDEN
 void CLASS::cleanGLStuff()
 {
 	if (m_channel_memory) {
@@ -487,7 +510,7 @@ bool CLASS::start(IOService* provider)
 		ACLog(1, "Screen Object On\n");
 	}
 	if ((bHaveScreenObject || checkOptionAC(VMW_OPTION_AC_SVGA3D)) && svga3d.Init(m_svga)) {
-		UInt32 hwv = svga3d.getHWVersion();
+		uint32_t hwv = svga3d.getHWVersion();
 		bHaveSVGA3D = true;
 		ACLog(1, "SVGA3D On, 3D HWVersion == %u.%u\n", SVGA3D_MAJOR_HWVERSION(hwv), SVGA3D_MINOR_HWVERSION(hwv));
 	}
@@ -500,9 +523,9 @@ bool CLASS::start(IOService* provider)
 	if (getPath(&pathbuf[0], &len, gIOServicePlane)) {
 		m_framebuffer->setProperty(kIOAccelTypesKey, pathbuf);
 		m_framebuffer->setProperty(kIOAccelIndexKey, 0ULL, 32U);
-		m_framebuffer->setProperty(kIOAccelRevisionKey, static_cast<UInt64>(kCurrentGraphicsInterfaceRevision), 32U);
+		m_framebuffer->setProperty(kIOAccelRevisionKey, static_cast<uint64_t>(kCurrentGraphicsInterfaceRevision), 32U);
 	}
-	setProperty(kIOAccelRevisionKey, static_cast<UInt64>(kCurrentGraphicsInterfaceRevision), 32U);
+	setProperty(kIOAccelRevisionKey, static_cast<uint64_t>(kCurrentGraphicsInterfaceRevision), 32U);
 	if (checkOptionAC(VMW_OPTION_AC_QE))
 		setProperty("AccelCaps", 3ULL, 32U);
 #ifdef FB_NOTIFIER
@@ -559,7 +582,7 @@ IOReturn CLASS::newUserClient(task_t owningTask,
 		  __FUNCTION__,
 		  owningTask,
 		  securityID,
-		  type);
+		  FMT_U(type));
 	if (!handler)
 		return kIOReturnBadArgument;
 	if (!m_framebuffer)
@@ -621,6 +644,7 @@ IOReturn CLASS::newUserClient(task_t owningTask,
 #pragma mark SVGA FIFO Sync Methods
 #pragma mark -
 
+HIDDEN
 IOReturn CLASS::SyncFIFO()
 {
 	if (!m_framebuffer)
@@ -631,6 +655,7 @@ IOReturn CLASS::SyncFIFO()
 	return kIOReturnSuccess;
 }
 
+HIDDEN
 IOReturn CLASS::RingDoorBell()
 {
 	if (!m_framebuffer)
@@ -641,7 +666,8 @@ IOReturn CLASS::RingDoorBell()
 	return kIOReturnSuccess;
 }
 
-IOReturn CLASS::SyncToFence(UInt32 fence)
+HIDDEN
+IOReturn CLASS::SyncToFence(uint32_t fence)
 {
 	if (!m_framebuffer)
 		return kIOReturnNoDevice;
@@ -655,6 +681,7 @@ IOReturn CLASS::SyncToFence(UInt32 fence)
 #pragma mark SVGA FIFO Acceleration Methods for 2D Context
 #pragma mark -
 
+HIDDEN
 IOReturn CLASS::useAccelUpdates(bool state, task_t owningTask)
 {
 	if (m_updating_ga != 0 && m_updating_ga != owningTask)
@@ -674,7 +701,8 @@ IOReturn CLASS::useAccelUpdates(bool state, task_t owningTask)
  *   use IOFBSynchronize (it uses surface_flush instead), and CopyRegion blits
  *   are done to a surface destination.
  */
-IOReturn CLASS::RectCopy(UInt32 framebufferIndex,
+HIDDEN
+IOReturn CLASS::RectCopy(uint32_t framebufferIndex,
 						 struct IOBlitCopyRectangleStruct const* copyRects,
 						 size_t copyRectsSize)
 {
@@ -717,8 +745,9 @@ IOReturn CLASS::RectCopy(UInt32 framebufferIndex,
 }
 
 #if 0
-IOReturn CLASS::RectFillScreen(UInt32 framebufferIndex,
-							   UInt32 color,
+HIDDEN
+IOReturn CLASS::RectFillScreen(uint32_t framebufferIndex,
+							   uint32_t color,
 							   struct IOBlitRectangleStruct const* rects,
 							   size_t numRects)
 {
@@ -734,17 +763,17 @@ IOReturn CLASS::RectFillScreen(UInt32 framebufferIndex,
 		return kIOReturnNoMemory;
 	set_region(rgn, rects, numRects);
 
-	s2 = rgn->bounds.w * rgn->bounds.h * sizeof(UInt32);
+	s2 = rgn->bounds.w * rgn->bounds.h * sizeof(uint32_t);
 	p = VRAMMalloc(s2);
 	if (!p) {
 		IOFree(rgn, s1);
 		return kIOReturnNoMemory;
 	}
-	memset32(p, color, s2 / sizeof(UInt32));
+	memset32(p, color, s2 / sizeof(uint32_t));
 	bzero(&extra, sizeof extra);
-	extra.mem_pitch = rgn->bounds.w * sizeof(UInt32);
-	extra.srcDeltaX = -static_cast<SInt32>(rgn->bounds.x);
-	extra.srcDeltaY = -static_cast<SInt32>(rgn->bounds.y);
+	extra.mem_pitch = rgn->bounds.w * sizeof(uint32_t);
+	extra.srcDeltaX = -static_cast<int>(rgn->bounds.x);
+	extra.srcDeltaY = -static_cast<int>(rgn->bounds.y);
 	c.value = color;
 	m_framebuffer->lockDevice();
 	extra.mem_offset_in_bar1 = reinterpret_cast<vm_offset_t>(p) - m_framebuffer->getVRAMPtr();
@@ -761,12 +790,13 @@ IOReturn CLASS::RectFillScreen(UInt32 framebufferIndex,
 #endif
 
 #if 0
-IOReturn CLASS::RectFill3D(UInt32 color,
+HIDDEN
+IOReturn CLASS::RectFill3D(uint32_t color,
 						   struct IOBlitRectangleStruct const* rects,
 						   size_t numRects)
 {
 	size_t s;
-	UInt32 sid, cid;
+	uint32_t sid, cid;
 	IOAccelDeviceRegion* rgn;
 	VMsvga2Accel::ExtraInfo extra;
 
@@ -804,8 +834,9 @@ IOReturn CLASS::RectFill3D(UInt32 color,
 }
 #endif
 
-IOReturn CLASS::RectFill(UInt32 framebufferIndex,
-						 UInt32 color,
+HIDDEN
+IOReturn CLASS::RectFill(uint32_t framebufferIndex,
+						 uint32_t color,
 						 struct IOBlitRectangleStruct const* rects,
 						 size_t rectsSize)
 {
@@ -814,8 +845,8 @@ IOReturn CLASS::RectFill(UInt32 framebufferIndex,
 
 	if (!count || !rects)
 		return kIOReturnBadArgument;
-	ACLog(2, "%s: color == 0x%x, numRects == %lu, [%d, %d, %d, %d]\n",
-		  __FUNCTION__, color, count, rects->x, rects->y, rects->width, rects->height);
+	ACLog(2, "%s: color == %#x, numRects == %lu, [%d, %d, %d, %d]\n",
+		  __FUNCTION__, color, count, FMT_D(rects->x), FMT_D(rects->y), FMT_D(rects->width), FMT_D(rects->height));
 	if (!m_framebuffer)
 		return kIOReturnNoDevice;
 	m_framebuffer->lockDevice();
@@ -828,6 +859,7 @@ IOReturn CLASS::RectFill(UInt32 framebufferIndex,
 	return rc ? kIOReturnSuccess : kIOReturnNoMemory;
 }
 
+HIDDEN
 IOReturn CLASS::UpdateFramebufferAutoRing(UInt32 const* rect)
 {
 	if (!rect)
@@ -846,15 +878,16 @@ IOReturn CLASS::UpdateFramebufferAutoRing(UInt32 const* rect)
 	return kIOReturnSuccess;
 }
 
-IOReturn CLASS::CopyRegion(UInt32 framebufferIndex,
-						   SInt32 destX,
-						   SInt32 destY,
+HIDDEN
+IOReturn CLASS::CopyRegion(uint32_t framebufferIndex,
+						   int destX,
+						   int destY,
 						   void /* IOAccelDeviceRegion */ const* region,
 						   size_t regionSize)
 {
 	IOAccelDeviceRegion const* rgn = static_cast<IOAccelDeviceRegion const*>(region);
 	IOAccelBounds const* rect;
-	SInt32 deltaX, deltaY;
+	int deltaX, deltaY;
 	UInt32 i, copyRect[6];
 	bool rc;
 
@@ -871,8 +904,8 @@ IOReturn CLASS::CopyRegion(UInt32 framebufferIndex,
 	if (checkOptionAC(VMW_OPTION_AC_REGION_BOUNDS_COPY)) {
 		copyRect[0] = rect->x;
 		copyRect[1] = rect->y;
-		copyRect[2] = static_cast<UInt32>(destX);
-		copyRect[3] = static_cast<UInt32>(destY);
+		copyRect[2] = static_cast<uint32_t>(destX);
+		copyRect[3] = static_cast<uint32_t>(destY);
 		copyRect[4] = rect->w;
 		copyRect[5] = rect->h;
 		rc = m_svga->RectCopy(&copyRect[0]);
@@ -900,11 +933,12 @@ IOReturn CLASS::CopyRegion(UInt32 framebufferIndex,
 #pragma mark Acceleration Methods for Surfaces
 #pragma mark -
 
-IOReturn CLASS::createSurface(UInt32 sid,
+HIDDEN
+IOReturn CLASS::createSurface(uint32_t sid,
 							  SVGA3dSurfaceFlags surfaceFlags,
 							  SVGA3dSurfaceFormat surfaceFormat,
-							  UInt32 width,
-							  UInt32 height)
+							  uint32_t width,
+							  uint32_t height)
 {
 	bool rc;
 	SVGA3dSize* mipSizes;
@@ -926,7 +960,8 @@ exit:
 	return kIOReturnSuccess;
 }
 
-IOReturn CLASS::destroySurface(UInt32 sid)
+HIDDEN
+IOReturn CLASS::destroySurface(uint32_t sid)
 {
 	if (!bHaveSVGA3D)
 		return kIOReturnNoDevice;
@@ -936,14 +971,15 @@ IOReturn CLASS::destroySurface(UInt32 sid)
 	return kIOReturnSuccess;
 }
 
-IOReturn CLASS::surfaceDMA2D(UInt32 sid,
+HIDDEN
+IOReturn CLASS::surfaceDMA2D(uint32_t sid,
 							 SVGA3dTransferType transfer,
 							 void /* IOAccelDeviceRegion */ const* region,
 							 ExtraInfo const* extra,
-							 UInt32* fence)
+							 uint32_t* fence)
 {
 	bool rc;
-	UInt32 i, numCopyBoxes;
+	uint32_t i, numCopyBoxes;
 	SVGA3dCopyBox* copyBoxes;
 	SVGA3dGuestImage guestImage;
 	SVGA3dSurfaceImageId hostImage;
@@ -958,9 +994,9 @@ IOReturn CLASS::surfaceDMA2D(UInt32 sid,
 	hostImage.sid = sid;
 	hostImage.face = 0;
 	hostImage.mipmap = 0;
-	guestImage.ptr.gmrId = static_cast<UInt32>(-2) /* SVGA_GMR_FRAMEBUFFER */;
-	guestImage.ptr.offset = static_cast<UInt32>(extra->mem_offset_in_bar1);
-	guestImage.pitch = static_cast<UInt32>(extra->mem_pitch);
+	guestImage.ptr.gmrId = static_cast<uint32_t>(-2) /* SVGA_GMR_FRAMEBUFFER */;
+	guestImage.ptr.offset = static_cast<uint32_t>(extra->mem_offset_in_bar1);
+	guestImage.pitch = static_cast<uint32_t>(extra->mem_pitch);
 	m_framebuffer->lockDevice();
 	rc = svga3d.BeginSurfaceDMA(&guestImage, &hostImage, transfer, &copyBoxes, numCopyBoxes);
 	if (!rc)
@@ -984,13 +1020,14 @@ exit:
 	return kIOReturnSuccess;
 }
 
-IOReturn CLASS::surfaceCopy(UInt32 src_sid,
-							UInt32 dst_sid,
+HIDDEN
+IOReturn CLASS::surfaceCopy(uint32_t src_sid,
+							uint32_t dst_sid,
 							void /* IOAccelDeviceRegion */ const* region,
 							ExtraInfo const* extra)
 {
 	bool rc;
-	UInt32 i, numCopyBoxes;
+	uint32_t i, numCopyBoxes;
 	SVGA3dCopyBox* copyBoxes;
 	SVGA3dSurfaceImageId srcImage, dstImage;
 	IOAccelDeviceRegion const* rgn;
@@ -1026,8 +1063,9 @@ exit:
 	return kIOReturnSuccess;
 }
 
-IOReturn CLASS::surfaceStretch(UInt32 src_sid,
-							   UInt32 dst_sid,
+HIDDEN
+IOReturn CLASS::surfaceStretch(uint32_t src_sid,
+							   uint32_t dst_sid,
 							   SVGA3dStretchBltMode mode,
 							   void /* IOAccelBounds */ const* src_rect,
 							   void /* IOAccelBounds */ const* dest_rect)
@@ -1045,17 +1083,17 @@ IOReturn CLASS::surfaceStretch(UInt32 src_sid,
 	bzero(&dstImage, sizeof dstImage);
 	srcImage.sid = src_sid;
 	dstImage.sid = dst_sid;
-	srcBox.x = static_cast<UInt32>(s_rect->x);
-	srcBox.y = static_cast<UInt32>(s_rect->y);
+	srcBox.x = static_cast<uint32_t>(s_rect->x);
+	srcBox.y = static_cast<uint32_t>(s_rect->y);
 	srcBox.z = 0;
-	srcBox.w = static_cast<UInt32>(s_rect->w);
-	srcBox.h = static_cast<UInt32>(s_rect->h);
+	srcBox.w = static_cast<uint32_t>(s_rect->w);
+	srcBox.h = static_cast<uint32_t>(s_rect->h);
 	srcBox.d = 1;
-	dstBox.x = static_cast<UInt32>(d_rect->x);
-	dstBox.y = static_cast<UInt32>(d_rect->y);
+	dstBox.x = static_cast<uint32_t>(d_rect->x);
+	dstBox.y = static_cast<uint32_t>(d_rect->y);
 	dstBox.z = 0;
-	dstBox.w = static_cast<UInt32>(d_rect->w);
-	dstBox.h = static_cast<UInt32>(d_rect->h);
+	dstBox.w = static_cast<uint32_t>(d_rect->w);
+	dstBox.h = static_cast<uint32_t>(d_rect->h);
 	dstBox.d = 1;
 	m_framebuffer->lockDevice();
 	svga3d.SurfaceStretchBlt(&srcImage, &dstImage, &srcBox, &dstBox, mode);
@@ -1063,12 +1101,13 @@ IOReturn CLASS::surfaceStretch(UInt32 src_sid,
 	return kIOReturnSuccess;
 }
 
-IOReturn CLASS::surfacePresentAutoSync(UInt32 sid,
+HIDDEN
+IOReturn CLASS::surfacePresentAutoSync(uint32_t sid,
 									   void /* IOAccelDeviceRegion */ const* region,
 									   ExtraInfo const* extra)
 {
 	bool rc;
-	UInt32 i, numCopyRects;
+	uint32_t i, numCopyRects;
 	SVGA3dCopyRect* copyRects;
 	IOAccelDeviceRegion const* rgn;
 
@@ -1100,10 +1139,11 @@ exit:
 	return kIOReturnSuccess;
 }
 
+HIDDEN
 IOReturn CLASS::surfacePresentReadback(void /* IOAccelDeviceRegion */ const* region)
 {
 	bool rc;
-	UInt32 i, numRects;
+	uint32_t i, numRects;
 	SVGA3dRect* rects;
 	IOAccelDeviceRegion const* rgn;
 
@@ -1130,11 +1170,12 @@ exit:
 }
 
 #if 0
-IOReturn CLASS::setupRenderContext(UInt32 cid,
-								   UInt32 color_sid,
-								   UInt32 depth_sid,
-								   UInt32 width,
-								   UInt32 height)
+HIDDEN
+IOReturn CLASS::setupRenderContext(uint32_t cid,
+								   uint32_t color_sid,
+								   uint32_t depth_sid,
+								   uint32_t width,
+								   uint32_t height)
 {
 	SVGA3dRenderState* rs;
 	SVGA3dSurfaceImageId colorImage;
@@ -1164,8 +1205,9 @@ IOReturn CLASS::setupRenderContext(UInt32 cid,
 	return kIOReturnSuccess;
 }
 #else
-IOReturn CLASS::setupRenderContext(UInt32 cid,
-								   UInt32 color_sid)
+HIDDEN
+IOReturn CLASS::setupRenderContext(uint32_t cid,
+								   uint32_t color_sid)
 {
 	SVGA3dSurfaceImageId colorImage;
 
@@ -1180,15 +1222,16 @@ IOReturn CLASS::setupRenderContext(UInt32 cid,
 }
 #endif
 
-IOReturn CLASS::clearContext(UInt32 cid,
+HIDDEN
+IOReturn CLASS::clearContext(uint32_t cid,
 							 SVGA3dClearFlag flags,
 							 void /* IOAccelDeviceRegion */ const* region,
-							 UInt32 color,
+							 uint32_t color,
 							 float depth,
-							 UInt32 stencil)
+							 uint32_t stencil)
 {
 	bool rc;
-	UInt32 i, numRects;
+	uint32_t i, numRects;
 	SVGA3dRect* rects;
 	IOAccelDeviceRegion const* rgn;
 
@@ -1212,7 +1255,8 @@ exit:
 	return kIOReturnSuccess;
 }
 
-IOReturn CLASS::createContext(UInt32 cid)
+HIDDEN
+IOReturn CLASS::createContext(uint32_t cid)
 {
 	if (!bHaveSVGA3D)
 		return kIOReturnNoDevice;
@@ -1222,7 +1266,8 @@ IOReturn CLASS::createContext(UInt32 cid)
 	return kIOReturnSuccess;
 }
 
-IOReturn CLASS::destroyContext(UInt32 cid)
+HIDDEN
+IOReturn CLASS::destroyContext(uint32_t cid)
 {
 	if (!bHaveSVGA3D)
 		return kIOReturnNoDevice;
@@ -1232,12 +1277,13 @@ IOReturn CLASS::destroyContext(UInt32 cid)
 	return kIOReturnSuccess;
 }
 
-bool CLASS::createClearSurface(UInt32 sid,
-							   UInt32 cid,
+HIDDEN
+bool CLASS::createClearSurface(uint32_t sid,
+							   uint32_t cid,
 							   SVGA3dSurfaceFormat format,
-							   UInt32 width,
-							   UInt32 height,
-							   UInt32 color)
+							   uint32_t width,
+							   uint32_t height,
+							   uint32_t color)
 {
 	DefineRegion<1U> tmpRegion;
 
@@ -1274,12 +1320,13 @@ bool CLASS::createClearSurface(UInt32 sid,
 #pragma mark Screen Support Methods
 #pragma mark -
 
-IOReturn CLASS::blitFromScreen(UInt32 srcScreenId,
+HIDDEN
+IOReturn CLASS::blitFromScreen(uint32_t srcScreenId,
 							   void /* IOAccelDeviceRegion */ const* region,
 							   ExtraInfo const* extra,
-							   UInt32* fence)
+							   uint32_t* fence)
 {
-	UInt32 i, numRects;
+	uint32_t i, numRects;
 	SVGAGuestPtr guestPtr;
 	SVGAGMRImageFormat fmt;
 	IOAccelDeviceRegion const* rgn;
@@ -1290,12 +1337,12 @@ IOReturn CLASS::blitFromScreen(UInt32 srcScreenId,
 		return kIOReturnNoDevice;
 	rgn = static_cast<IOAccelDeviceRegion const*>(region);
 	numRects = rgn ? rgn->num_rects : 0;
-	guestPtr.gmrId = static_cast<UInt32>(-2) /* SVGA_GMR_FRAMEBUFFER */;
-	guestPtr.offset = static_cast<UInt32>(extra->mem_offset_in_bar1);
+	guestPtr.gmrId = static_cast<uint32_t>(-2) /* SVGA_GMR_FRAMEBUFFER */;
+	guestPtr.offset = static_cast<uint32_t>(extra->mem_offset_in_bar1);
 	fmt.value = 0x1820U;
 	m_framebuffer->lockDevice();
 	screen.DefineGMRFB(guestPtr,
-					   static_cast<UInt32>(extra->mem_pitch),
+					   static_cast<uint32_t>(extra->mem_pitch),
 					   fmt);
 	for (i = 0; i < numRects; ++i) {
 		IOAccelBounds const* src = &rgn->rect[i];
@@ -1312,12 +1359,13 @@ IOReturn CLASS::blitFromScreen(UInt32 srcScreenId,
 	return kIOReturnSuccess;
 }
 
-IOReturn CLASS::blitToScreen(UInt32 destScreenId,
+HIDDEN
+IOReturn CLASS::blitToScreen(uint32_t destScreenId,
 							 void /* IOAccelDeviceRegion */ const* region,
 							 ExtraInfo const* extra,
-							 UInt32* fence)
+							 uint32_t* fence)
 {
-	UInt32 i, numRects;
+	uint32_t i, numRects;
 	SVGAGuestPtr guestPtr;
 	SVGAGMRImageFormat fmt;
 	IOAccelDeviceRegion const* rgn;
@@ -1328,12 +1376,12 @@ IOReturn CLASS::blitToScreen(UInt32 destScreenId,
 		return kIOReturnNoDevice;
 	rgn = static_cast<IOAccelDeviceRegion const*>(region);
 	numRects = rgn ? rgn->num_rects : 0;
-	guestPtr.gmrId = static_cast<UInt32>(-2) /* SVGA_GMR_FRAMEBUFFER */;
-	guestPtr.offset = static_cast<UInt32>(extra->mem_offset_in_bar1);
+	guestPtr.gmrId = static_cast<uint32_t>(-2) /* SVGA_GMR_FRAMEBUFFER */;
+	guestPtr.offset = static_cast<uint32_t>(extra->mem_offset_in_bar1);
 	fmt.value = 0x1820U;
 	m_framebuffer->lockDevice();
 	screen.DefineGMRFB(guestPtr,
-					   static_cast<UInt32>(extra->mem_pitch),
+					   static_cast<uint32_t>(extra->mem_pitch),
 					   fmt);
 	for (i = 0; i < numRects; ++i) {
 		IOAccelBounds const* src = &rgn->rect[i];
@@ -1351,13 +1399,14 @@ IOReturn CLASS::blitToScreen(UInt32 destScreenId,
 	return kIOReturnSuccess;
 }
 
-IOReturn CLASS::blitSurfaceToScreen(UInt32 src_sid,
-									UInt32 destScreenId,
+HIDDEN
+IOReturn CLASS::blitSurfaceToScreen(uint32_t src_sid,
+									uint32_t destScreenId,
 									void /* IOAccelBounds */ const* src_rect,
 									void /* IOAccelDeviceRegion */ const* dest_region)
 {
 	bool rc;
-	UInt32 i, numRects;
+	uint32_t i, numRects;
 	SVGA3dSurfaceImageId srcImage;
 	SVGASignedRect srcRect;
 	SVGASignedRect destRect;
@@ -1396,15 +1445,16 @@ exit:
 #pragma mark GFB Methods
 #pragma mark -
 
-IOReturn CLASS::blitGFB(UInt32 framebufferIndex,
+HIDDEN
+IOReturn CLASS::blitGFB(uint32_t framebufferIndex,
 						void /* IOAccelDeviceRegion */ const* region,
 						ExtraInfo const* extra,
 						vm_size_t limit,
 						int direction)
 {
-	UInt32 i, numRects;
-	SInt32 gfb_pitch, buffer_pitch;
-	SInt32 const bytes_per_pixel = sizeof(UInt32);
+	uint32_t i, numRects;
+	int gfb_pitch, buffer_pitch;
+	int const bytes_per_pixel = sizeof(uint32_t);
 	IOVirtualAddress vram_ptr, gfb_start, gfb_end, buffer_start, buffer_end;
 	IOAccelDeviceRegion const* rgn;
 
@@ -1425,7 +1475,7 @@ IOReturn CLASS::blitGFB(UInt32 framebufferIndex,
 	m_framebuffer->unlockDevice();
 	buffer_start = vram_ptr + extra->mem_offset_in_bar1;
 	buffer_end = vram_ptr + limit;
-	buffer_pitch = static_cast<SInt32>(extra->mem_pitch);
+	buffer_pitch = static_cast<int>(extra->mem_pitch);
 	for (i = 0; i < numRects; ++i) {
 		IOAccelBounds const* rect = &rgn->rect[i];
 		IOVirtualAddress addr1 = gfb_start +
@@ -1435,7 +1485,7 @@ IOReturn CLASS::blitGFB(UInt32 framebufferIndex,
 			(rect->y + extra->dstDeltaY) * buffer_pitch +
 			(rect->x + extra->dstDeltaX) * bytes_per_pixel;
 		size_t l = static_cast<size_t>(rect->w * bytes_per_pixel);
-		for (SInt16 j = 0; j < rect->h; ++j) {
+		for (int16_t j = 0; j < rect->h; ++j) {
 			if (addr1 < gfb_start || addr1 + l > gfb_end)
 				continue;
 			if (addr2 < buffer_start || addr2 + l > buffer_end)
@@ -1456,13 +1506,14 @@ IOReturn CLASS::blitGFB(UInt32 framebufferIndex,
 }
 
 #if 0
-IOReturn CLASS::clearGFB(UInt32 color,
+HIDDEN
+IOReturn CLASS::clearGFB(uint32_t color,
 						 struct IOBlitRectangleStruct const* rects,
 						 size_t numRects)
 {
 	size_t i;
-	SInt32 gfb_pitch, gfb_w, gfb_h;
-	SInt32 const bytes_per_pixel = sizeof(UInt32);
+	int gfb_pitch, gfb_w, gfb_h;
+	int const bytes_per_pixel = sizeof(uint32_t);
 	IOVirtualAddress gfb_start;
 
 	if (!m_framebuffer)
@@ -1484,7 +1535,7 @@ IOReturn CLASS::clearGFB(UInt32 color,
 			memset32(reinterpret_cast<void*>(addr), color, rect.height * rect.width);
 			continue;
 		}
-		for (SInt32 j = 0; j < rect.height; ++j) {
+		for (int j = 0; j < rect.height; ++j) {
 			memset32(reinterpret_cast<void*>(addr), color, rect.width);
 			addr += gfb_pitch;
 		}
@@ -1497,6 +1548,7 @@ IOReturn CLASS::clearGFB(UInt32 color,
 #pragma mark Misc Methods
 #pragma mark -
 
+HIDDEN
 IOReturn CLASS::getScreenInfo(IOAccelSurfaceReadData* info)
 {
 	if (!info)
@@ -1516,18 +1568,19 @@ IOReturn CLASS::getScreenInfo(IOAccelSurfaceReadData* info)
 #endif
 	info->client_row_bytes = m_svga->getCurrentPitch();
 	m_framebuffer->unlockDevice();
-	ACLog(2, "%s: width == %d, height == %d\n", __FUNCTION__, info->w, info->h);
+	ACLog(2, "%s: width == %d, height == %d\n", __FUNCTION__, FMT_D(info->w), FMT_D(info->h));
 	return kIOReturnSuccess;
 }
 
+HIDDEN
 bool CLASS::retainMasterSurface()
 {
 	bool rc = true;
-	UInt32 width, height;
+	uint32_t width, height;
 
 	if (!bHaveSVGA3D)
 		return false;
-	if (OSIncrementAtomic(&m_master_surface_retain_count) == 0) {
+	if (__sync_fetch_and_add(&m_master_surface_retain_count, 1) == 0) {
 		m_framebuffer->lockDevice();
 		width = m_svga->getCurrentWidth();
 		height = m_svga->getCurrentHeight();
@@ -1540,11 +1593,12 @@ bool CLASS::retainMasterSurface()
 	return rc;
 }
 
+HIDDEN
 void CLASS::releaseMasterSurface()
 {
 	if (!bHaveSVGA3D)
 		return;
-	SInt32 v = OSDecrementAtomic(&m_master_surface_retain_count);
+	int v = __sync_fetch_and_add(&m_master_surface_retain_count, -1);
 	if (v <= 0) {
 		m_master_surface_retain_count = 0;
 		return;
@@ -1553,22 +1607,25 @@ void CLASS::releaseMasterSurface()
 		destroyMasterSurface();
 }
 
+HIDDEN
 void CLASS::lockAccel()
 {
 	IOLockLock(m_iolock);
 }
 
+HIDDEN
 void CLASS::unlockAccel()
 {
 	IOLockUnlock(m_iolock);
 }
 
-UInt32 CLASS::getVRAMSize() const
+HIDDEN
+uint32_t CLASS::getVRAMSize() const
 {
 	if (m_svga)
 		return m_svga->getVRAMSize();
 	if (m_bar1)
-		return static_cast<UInt32>(m_bar1->getLength());
+		return static_cast<uint32_t>(m_bar1->getLength());
 	return 134217728U;
 }
 
@@ -1576,11 +1633,12 @@ UInt32 CLASS::getVRAMSize() const
 #pragma mark Video Methods
 #pragma mark -
 
-IOReturn CLASS::VideoSetRegsInRange(UInt32 streamId,
+HIDDEN
+IOReturn CLASS::VideoSetRegsInRange(uint32_t streamId,
 									struct SVGAOverlayUnit const* regs,
-									UInt32 regMin,
-									UInt32 regMax,
-									UInt32* fence)
+									uint32_t regMin,
+									uint32_t regMax,
+									uint32_t* fence)
 {
 	if (!m_framebuffer)
 		return kIOReturnNoDevice;
@@ -1595,10 +1653,11 @@ IOReturn CLASS::VideoSetRegsInRange(UInt32 streamId,
 	return kIOReturnSuccess;
 }
 
-IOReturn CLASS::VideoSetReg(UInt32 streamId,
-							UInt32 registerId,
-							UInt32 value,
-							UInt32* fence)
+HIDDEN
+IOReturn CLASS::VideoSetReg(uint32_t streamId,
+							uint32_t registerId,
+							uint32_t value,
+							uint32_t* fence)
 {
 	if (!m_framebuffer)
 		return kIOReturnNoDevice;
@@ -1616,92 +1675,100 @@ IOReturn CLASS::VideoSetReg(UInt32 streamId,
 #pragma mark ID Allocation Methods
 #pragma mark -
 
-UInt32 CLASS::AllocSurfaceID()
+HIDDEN
+uint32_t CLASS::AllocSurfaceID()
 {
 	int i;
-	UInt64 x;
+	uint64_t x;
 
 	lockAccel();
 	x = (~m_surface_id_mask) & (m_surface_id_mask + 1);
 	m_surface_id_mask |= x;
 	i = log_2_64(x);
 	if (i < 0)
-		i = static_cast<int>(8U * sizeof(UInt64) + m_surface_ids_unmanaged++);
+		i = static_cast<int>(8U * sizeof(uint64_t) + m_surface_ids_unmanaged++);
 	unlockAccel();
-	return static_cast<UInt32>(i);
+	return static_cast<uint32_t>(i);
 }
 
-void CLASS::FreeSurfaceID(UInt32 sid)
+HIDDEN
+void CLASS::FreeSurfaceID(uint32_t sid)
 {
-	if (sid >= 8U * static_cast<UInt32>(sizeof(UInt64)))
+	if (sid >= 8U * static_cast<uint32_t>(sizeof(uint64_t)))
 		return;
 	lockAccel();
 	m_surface_id_mask &= ~(1ULL << sid);
 	unlockAccel();
 }
 
-UInt32 CLASS::AllocContextID()
+HIDDEN
+uint32_t CLASS::AllocContextID()
 {
 	int i;
-	UInt64 x;
+	uint64_t x;
 
 	lockAccel();
 	x = (~m_context_id_mask) & (m_context_id_mask + 1);
 	m_context_id_mask |= x;
 	i = log_2_64(x);
 	if (i < 0)
-		i = static_cast<int>(8U * sizeof(UInt64) + m_context_ids_unmanaged++);
+		i = static_cast<int>(8U * sizeof(uint64_t) + m_context_ids_unmanaged++);
 	unlockAccel();
-	return static_cast<UInt32>(i);
+	return static_cast<uint32_t>(i);
 }
 
-void CLASS::FreeContextID(UInt32 cid)
+HIDDEN
+void CLASS::FreeContextID(uint32_t cid)
 {
-	if (cid >= 8U * static_cast<UInt32>(sizeof(UInt64)))
+	if (cid >= 8U * static_cast<uint32_t>(sizeof(uint64_t)))
 		return;
 	lockAccel();
 	m_context_id_mask &= ~(1ULL << cid);
 	unlockAccel();
 }
 
-UInt32 CLASS::AllocStreamID()
+HIDDEN
+uint32_t CLASS::AllocStreamID()
 {
 	int i;
-	UInt32 x;
+	uint32_t x;
 
 	lockAccel();
 	x = (~m_stream_id_mask) & (m_stream_id_mask + 1);
 	m_stream_id_mask |= x;
 	i = log_2_32(x);
 	unlockAccel();
-	return static_cast<UInt32>(i);
+	return static_cast<uint32_t>(i);
 }
 
-void CLASS::FreeStreamID(UInt32 streamId)
+HIDDEN
+void CLASS::FreeStreamID(uint32_t streamId)
 {
-	if (streamId >= 8U * static_cast<UInt32>(sizeof(UInt32)))
+	if (streamId >= 8U * static_cast<uint32_t>(sizeof(uint32_t)))
 		return;
 	lockAccel();
 	m_stream_id_mask &= ~(1U << streamId);
 	unlockAccel();
 }
 
-UInt32 CLASS::AllocGMRID()
+HIDDEN
+uint32_t CLASS::AllocGMRID()
 {
 	int i;
-	UInt64 x;
+	uint64_t x;
 
 	lockAccel();
 	x = (~m_gmr_id_mask) & (m_gmr_id_mask + 1);
 	m_gmr_id_mask |= x;
 	i = log_2_64(x);
 	unlockAccel();
-	return static_cast<UInt32>(i);
+	return static_cast<uint32_t>(i);
 }
 
-void CLASS::FreeGMRID(UInt32 gmrId)
+HIDDEN
+void CLASS::FreeGMRID(uint32_t gmrId)
 {
-	if (gmrId >= 8U * static_cast<UInt32>(sizeof(UInt64)))
+	if (gmrId >= 8U * static_cast<uint32_t>(sizeof(uint64_t)))
 		return;
 	lockAccel();
 	m_gmr_id_mask &= ~(1ULL << gmrId);
@@ -1712,6 +1779,7 @@ void CLASS::FreeGMRID(UInt32 gmrId)
 #pragma mark Memory Methods
 #pragma mark -
 
+HIDDEN
 void* CLASS::VRAMMalloc(size_t bytes)
 {
 	IOReturn rc;
@@ -1727,6 +1795,7 @@ void* CLASS::VRAMMalloc(size_t bytes)
 	return p;
 }
 
+HIDDEN
 void* CLASS::VRAMRealloc(void* ptr, size_t bytes)
 {
 	IOReturn rc;
@@ -1742,6 +1811,7 @@ void* CLASS::VRAMRealloc(void* ptr, size_t bytes)
 	return newp;
 }
 
+HIDDEN
 void CLASS::VRAMFree(void* ptr)
 {
 	IOReturn rc;
@@ -1755,6 +1825,7 @@ void CLASS::VRAMFree(void* ptr)
 		ACLog(1, "%s(%p) failed\n", __FUNCTION__, ptr);
 }
 
+HIDDEN
 IOMemoryMap* CLASS::mapVRAMRangeForTask(task_t task, vm_offset_t offset_in_bar1, vm_size_t size)
 {
 	if (!m_bar1)

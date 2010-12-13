@@ -3,7 +3,7 @@
  *  VMsvga2Accel
  *
  *  Created by Zenith432 on August 21st 2009.
- *  Copyright 2009 Zenith432. All rights reserved.
+ *  Copyright 2009-2010 Zenith432. All rights reserved.
  *  Portions Copyright (c) Apple Computer, Inc.
  *
  *  Permission is hereby granted, free of charge, to any person
@@ -32,15 +32,15 @@
 
 #include <IOKit/IOUserClient.h>
 
-typedef uintptr_t eIOGLContextModeBits;
 struct VendorCommandBufferHeader;
+struct VendorGLStreamInfo;
 class IOMemoryDescriptor;
 
 struct VMsvga2CommandBuffer
 {
-	UInt32 pad1[2];
+	uint32_t pad1[2];
 	IOMemoryDescriptor* md;
-	UInt32 pad2[8];
+	uint32_t pad2[8];
 	VendorCommandBufferHeader* kernel_ptr;
 	size_t size;
 };
@@ -53,9 +53,10 @@ private:
 	task_t m_owning_task;					// offset 0x78
 											// offset 0x7C: unknown
 	class VMsvga2Accel* m_provider;			// offset 0x80
-	IOExternalMethod* m_funcs_cache;
-	SInt32 m_log_level;
-											// offset 0x84 - 0xB4: unknown 
+	int m_log_level;
+											// offset 0x84 - 0x8C: unknown
+	class VMsvga2Device* shared;			// offset 0x8C
+											// offset 0x90 - 0xB4: unknown 
 	IOMemoryDescriptor* m_type2;			// offset 0xB4
 	size_t m_type2_len;						// offset 0xB8
 	VendorCommandBufferHeader* m_type2_ptr; // offset 0xBC
@@ -65,7 +66,8 @@ private:
 	class OSSet* m_gc;						// offset 0xFC
 	VMsvga2CommandBuffer m_context_buffer0; // offset 0x100 - 0x134
 	VMsvga2CommandBuffer m_context_buffer1; // offset 0x130 - 0x154
-	UInt32 m_mem_type;						// offset 0x19C
+	uint32_t m_mem_type;					// offset 0x19C
+	int m_stream_error;						// offset 0x194
 
 	void Cleanup();
 	bool allocCommandBuffer(VMsvga2CommandBuffer*, size_t);
@@ -73,6 +75,53 @@ private:
 	bool allocAllContextBuffers();
 	class VMsvga2Surface* findSurfaceforID(uint32_t surface_id);
 	IOReturn get_status(uint32_t*);
+	void processCommandBuffer();
+	void discardCommandBuffer();
+
+public:
+	/*
+	 * Command buffer process & discard methods
+	 */
+	/*
+	 * Tokens 0 - 10
+	 */
+	void process_token_Noop(VendorGLStreamInfo*);
+	void process_token_TextureVolatile(VendorGLStreamInfo*);
+	void process_token_TextureNonVolatile(VendorGLStreamInfo*);
+	void process_token_SetSurfaceState(VendorGLStreamInfo*);
+	void process_token_BindDrawFBO(VendorGLStreamInfo*);
+	void process_token_BindReadFBO(VendorGLStreamInfo*);
+	void process_token_UnbindDrawFBO(VendorGLStreamInfo*);
+	void process_token_UnbindReadFBO(VendorGLStreamInfo*);
+	void process_token_Start(VendorGLStreamInfo*);
+	void process_token_End(VendorGLStreamInfo*);
+	void process_token_Swap(VendorGLStreamInfo*);
+	void process_token_Flush(VendorGLStreamInfo*);
+
+	/*
+	 * Tokens 32 - 61
+	 */
+	void discard_token_Texture(VendorGLStreamInfo*);
+	void discard_token_NoTex(VendorGLStreamInfo*);
+	void discard_token_VertexBuffer(VendorGLStreamInfo*);
+	void discard_token_NoVertexBuffer(VendorGLStreamInfo*);
+	void discard_token_DrawBuffer(VendorGLStreamInfo*);
+	void discard_token_Noop(VendorGLStreamInfo*);
+	void discard_token_TexSubImage2D(VendorGLStreamInfo*);
+	void discard_token_CopyPixelsDst(VendorGLStreamInfo*);
+	void discard_token_AsyncReadDrawBuffer(VendorGLStreamInfo*);
+	void process_token_Texture(VendorGLStreamInfo*);
+	void process_token_NoTex(VendorGLStreamInfo*);
+	void process_token_VertexBuffer(VendorGLStreamInfo*);
+	void process_token_NoVertexBuffer(VendorGLStreamInfo*);
+	void process_token_DrawBuffer(VendorGLStreamInfo*);
+	void process_token_SetFence(VendorGLStreamInfo*);
+	void process_token_TexSubImage2D(VendorGLStreamInfo*);
+	void process_token_CopyPixelsDst(VendorGLStreamInfo*);
+	void process_token_CopyPixelsSrc(VendorGLStreamInfo*);
+	void process_token_CopyPixelsSrcFBO(VendorGLStreamInfo*);
+	void process_token_DrawRect(VendorGLStreamInfo*);
+	void process_token_AsyncReadDrawBuffer(VendorGLStreamInfo*);
 
 public:
 	/*
@@ -87,7 +136,7 @@ public:
 #endif
 	bool start(IOService* provider);
 	bool initWithTask(task_t owningTask, void* securityToken, UInt32 type);
-	static VMsvga2GLContext* withTask(task_t owningTask, void* securityToken, UInt32 type);
+	static VMsvga2GLContext* withTask(task_t owningTask, void* securityToken, uint32_t type);
 
 	/*
 	 * Methods corresponding to Apple's GeForce.kext GL Context User Client
@@ -95,25 +144,25 @@ public:
 	/*
 	 * IONVGLContext
 	 */
-	IOReturn set_surface(uintptr_t, eIOGLContextModeBits, uintptr_t, uintptr_t);
+	IOReturn set_surface(uintptr_t, uintptr_t /* eIOGLContextModeBits */, uintptr_t, uintptr_t);
 	IOReturn set_swap_rect(intptr_t, intptr_t, intptr_t, intptr_t);
 	IOReturn set_swap_interval(intptr_t, intptr_t);
 	IOReturn get_config(uint32_t*, uint32_t*, uint32_t*);
-	IOReturn get_surface_size(UInt32*, UInt32*, UInt32*, UInt32*);
-	IOReturn get_surface_info(uintptr_t, UInt32*, UInt32*, UInt32*);
+	IOReturn get_surface_size(uint32_t*, uint32_t*, uint32_t*, uint32_t*);
+	IOReturn get_surface_info(uintptr_t, uint32_t*, uint32_t*, uint32_t*);
 	IOReturn read_buffer(struct sIOGLContextReadBufferData const*, size_t);
 	IOReturn finish();
 	IOReturn wait_for_stamp(uintptr_t);
 #if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ < 1060
-	IOReturn new_texture(struct sIOGLNewTextureData const*,
-						 struct sIOGLNewTextureReturnData*,
+	IOReturn new_texture(struct VendorNewTextureDataStruc const*,
+						 struct sIONewTextureReturnData*,
 						 size_t,
 						 size_t*);
 	IOReturn delete_texture(uintptr_t);
 #endif
 	IOReturn become_global_shared(uintptr_t);
 #if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ < 1060
-	IOReturn page_off_texture(struct sIOGLContextPageoffTexture const*, size_t);
+	IOReturn page_off_texture(struct sIODevicePageoffTexture const*, size_t);
 #endif
 	IOReturn purge_texture(uintptr_t);
 	IOReturn set_surface_volatile_state(uintptr_t);
@@ -126,7 +175,7 @@ public:
 	IOReturn set_stereo(uintptr_t, uintptr_t);
 	IOReturn purge_accelerator(uintptr_t);
 #if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ < 1060
-	IOReturn get_channel_memory(struct sIOGLChannelMemoryData*, size_t*);
+	IOReturn get_channel_memory(struct sIODeviceChannelMemoryData*, size_t*);
 #else
 	IOReturn submit_command_buffer(uintptr_t do_get_data,
 								   struct sIOGLGetCommandBuffer*,
@@ -137,24 +186,24 @@ public:
 	 * NVGLContext
 	 */
 	IOReturn get_query_buffer(uintptr_t c1, struct sIOGLGetQueryBuffer*, size_t*);
-	IOReturn get_notifiers(UInt32*, UInt32*);
+	IOReturn get_notifiers(uint32_t*, uint32_t*);
 #if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ < 1060
 	IOReturn new_heap_object(struct sNVGLNewHeapObjectData const*,
-							 struct sIOGLNewTextureReturnData*,
+							 struct sIONewTextureReturnData*,
 							 size_t,
 							 size_t*);
 #endif
 	IOReturn kernel_printf(char const*, size_t);
-	IOReturn nv_rm_config_get(UInt32 const*, UInt32*, size_t, size_t*);
-	IOReturn nv_rm_config_get_ex(UInt32 const*, UInt32*, size_t, size_t*);
+	IOReturn nv_rm_config_get(uint32_t const*, uint32_t*, size_t, size_t*);
+	IOReturn nv_rm_config_get_ex(uint32_t const*, uint32_t*, size_t, size_t*);
 	IOReturn nv_client_request(void const*, void*, size_t, size_t*);
 	IOReturn pageoff_surface_texture(struct sNVGLContextPageoffSurfaceTextureData const*, size_t);
 	IOReturn get_data_buffer_with_offset(struct sIOGLContextGetDataBuffer*, size_t*);
-	IOReturn nv_rm_control(UInt32 const*, UInt32*, size_t, size_t*);
-	IOReturn get_power_state(UInt32*, UInt32*);
+	IOReturn nv_rm_control(uint32_t const*, uint32_t*, size_t, size_t*);
+	IOReturn get_power_state(uint32_t*, uint32_t*);
 #if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ >= 1060
 	IOReturn set_watchdog_timer(uintptr_t);
-	IOReturn GetHandleIndex(UInt32*, UInt32*);
+	IOReturn GetHandleIndex(uint32_t*, uint32_t*);
 	IOReturn ForceTextureLargePages(uintptr_t);
 #endif
 };

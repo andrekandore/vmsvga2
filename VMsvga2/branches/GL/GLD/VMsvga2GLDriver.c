@@ -34,7 +34,6 @@
 #include <IOKit/IOKitLib.h>
 #include <OpenGL/CGLRenderers.h>
 #include <OpenGL/CGLTypes.h>
-#include <libkern/OSAtomic.h>
 #include "GLDTypes.h"
 #include "VMsvga2GLDriver.h"
 #include "EntryPointNames.h"
@@ -88,30 +87,6 @@
  * Obsolete (10.6.2)
  *   gldCreateTextureLevel, gldModifyTextureLevel, gldDestroyTextureLevel
  */
-
-#pragma mark -
-#pragma mark Struct Accessors
-#pragma mark -
-
-static inline
-uint32_t get32(void const* p, size_t ofs32, size_t ofs64)
-{
-#ifdef __LP64__
-	return *(uint32_t const*) (((uint8_t const*) p) + ofs64);
-#else
-	return *(uint32_t const*) (((uint8_t const*) p) + ofs32);
-#endif
-}
-
-static inline
-uintptr_t getp(void const* p, size_t ofs32, size_t ofs64)
-{
-#ifdef __LP64__
-	return *(uintptr_t const*) (((uint8_t const*) p) + ofs64);
-#else
-	return *(uintptr_t const*) (((uint8_t const*) p) + ofs32);
-#endif
-}
 
 #pragma mark -
 #pragma mark GLD
@@ -641,7 +616,7 @@ GLDReturn gldCreateContextInternal(gld_context_t** struct_out,
 						   void* arg5)
 {
 	uint64_t input;
-	sIOGLGetCommandBuffer outputStruct;
+	struct sIOGLGetCommandBuffer outputStruct;
 	display_info_t* dinfo;
 	gld_context_t* context;
 	GLDReturn rc;
@@ -682,7 +657,7 @@ GLDReturn gldCreateContextInternal(gld_context_t** struct_out,
 							 &input, 1,
 							 0, 0, 0, 0,
 							 &outputStruct, &outputStructCnt);
-	context->command_buffer_ptr = (void*) (uintptr_t) outputStruct.addr[0];	// Note: truncation in 32-bits
+	context->command_buffer_ptr = (uint32_t*) (uintptr_t) outputStruct.addr[0];	// Note: truncation in 32-bits
 	context->command_buffer_size = outputStruct.len[0];
 	if (kr != ERR_SUCCESS) {
 #if 0
@@ -882,20 +857,13 @@ GLDReturn gldReclaimContext(gld_context_t* context)
 
 GLDReturn gldDestroyContext(gld_context_t* context)
 {
-	// FIXME: TEMPORARY_BUG
-#ifdef TEMPORARY_BUG
 	typeof(gldDestroyContext) *addr;
-#endif
 
 	GLDLog(2, "%s(%p)\n", __FUNCTION__, context);
 
-#ifdef TEMPORARY_BUG
 	addr = (typeof(addr)) bndl_ptrs[bndl_index][8];
 	if (addr)
 		return addr(context);
-#else
-	return kCGLNoError;
-#endif
 	return -1;
 }
 
@@ -909,8 +877,8 @@ GLDReturn gldAttachDrawableInternal(gld_context_t* context, int surface_type, ui
 	uint64_t output;	// at var_40
 	size_t outputStructCnt; // at var_38
 	kern_return_t kr;
-	sIOGLContextSetSurfaceData inputStruct; // at var_90
-	sIOGLContextGetConfigStatus outputStruct;  // at var_c0
+	struct sIOGLContextSetSurfaceData inputStruct; // at var_90
+	struct sIOGLContextGetConfigStatus outputStruct;  // at var_c0
 
 	// int var_d4 = surface_type
 	// r13 = client_data
@@ -1167,7 +1135,7 @@ void gldFlush(gld_context_t* context)
 {
 	GLDLog(2, "%s(%p)\n", __FUNCTION__, context);
 
-	if ((uintptr_t) context->command_buffer_ptr + 32 < (uintptr_t) context->f15[1])
+	if (context->command_buffer_ptr + 8 < context->cb_iter[1])
 		SubmitPacketsToken(context, 1);
 }
 
@@ -1175,7 +1143,7 @@ void gldFinish(gld_context_t* context)
 {
 	GLDLog(2, "%s(%p)\n", __FUNCTION__, context);
 
-	if ((uintptr_t) context->command_buffer_ptr + 32 < (uintptr_t) context->f15[1])
+	if (context->command_buffer_ptr + 8 < context->cb_iter[1])
 		SubmitPacketsToken(context, 1);
 	IOConnectCallMethod(context->context_obj,
 						kIOVMGLFinish,
@@ -1197,25 +1165,20 @@ GLDReturn gldTestObject(gld_context_t* context, int object_type, void const* obj
 GLDReturn gldFlushObject(gld_context_t* context, int object_type, int arg2, void const* object)
 {
 	gld_texture_t const* object_1;
-	void* const* object_3;
-	void* p;
+	gld_buffer_t const* object_3;
 
 	GLDLog(2, "%s(%p, %d, %d, %p)\n", __FUNCTION__, context, object_type, arg2, object);
 
 	switch (object_type) {
 		case 1:
 			object_1 = (gld_texture_t const*) object;
-			if (object_1->waitable)
-				glrFlushSysObject(context, object_1->waitable, arg2);
+			if (object_1->obj)
+				glrFlushSysObject(context, object_1->obj, arg2);
 			break;
 		case 3:
-			object_3 = (void* const*) object;
-			p = object_3[2];
-			if (!p)
-				break;
-			p = *(void* const *) p;
-			if (p)
-				glrFlushSysObject(context, (gld_waitable_t*) p, arg2);
+			object_3 = (gld_buffer_t const*) object;
+			if (object_3->f2 && *(object_3->f2))
+				glrFlushSysObject(context, *(object_3->f2), arg2);
 			break;
 		default:
 			return kCGLBadEnumeration;
@@ -1238,26 +1201,20 @@ GLDReturn gldFinishObject(gld_context_t* context, int object_type, void const* o
 GLDReturn gldWaitObject(gld_shared_t* shared, int object_type, void const* object, void const* arg3)
 {
 	gld_texture_t const* object_1;
-	void* const* object_3;
-	void* p;
+	gld_buffer_t const* object_3;
 
 	GLDLog(2, "%s(%p, %d, %p, %p)\n", __FUNCTION__, shared, object_type, object, arg3);
 
 	switch (object_type) {
 		case 1:
 			object_1 = (gld_texture_t const*) object;
-			if (object_1->waitable)
-				glrWaitSharedObject(shared, object_1->waitable);
+			if (object_1->obj)
+				glrWaitSharedObject(shared, object_1->obj);
 			break;
 		case 3:
-			object_3 = (void* const*) object;
-			p = object_3[2];
-			if (!p)
-				break;
-			p = *(void* const *) p;
-			if (!p)
-				break;
-			glrWaitSharedObject(shared, (gld_waitable_t*) p);
+			object_3 = (gld_buffer_t const*) object;
+			if (object_3->f2 && *(object_3->f2))
+				glrWaitSharedObject(shared, *(object_3->f2));
 			break;
 		default:
 			return kCGLBadEnumeration;
@@ -1265,19 +1222,19 @@ GLDReturn gldWaitObject(gld_shared_t* shared, int object_type, void const* objec
 	return kCGLNoError;
 }
 
-GLDReturn gldCreateTexture(gld_shared_t* shared, gld_texture_t** texture, void* arg2)
+GLDReturn gldCreateTexture(gld_shared_t* shared, gld_texture_t** texture, void* client_texture)
 {
-	GLDLog(2, "%s(%p, struct_out, %p)\n", __FUNCTION__, shared, arg2);
+	GLDLog(2, "%s(%p, struct_out, %p)\n", __FUNCTION__, shared, client_texture);
 
 	gld_texture_t* p = (gld_texture_t*) calloc(1 , sizeof(gld_texture_t));
 	GLDLog(2, "  %s: gld_texture @%p\n", __FUNCTION__, p);
-	p->f10 = arg2;
+	p->client_texture = client_texture;
 	p->f11 = 0;
-	p->waitable = 0;
+	p->obj = 0;
 	p->f0 = 0;
-	p->f1 = 8;
-	p->f3 = 0;
-	p->f4 = 0;
+	p->tds.type = 8U;
+	p->tds.size = 0;
+	p->tds.f4 = 0;
 	p->f6 = &p->f7;
 	p->f7 = 0;
 	p->f8 = &p->f6;
@@ -1290,13 +1247,13 @@ int gldIsTextureResident(gld_shared_t* shared, gld_texture_t* texture)
 {
 	GLDLog(2, "%s(%p, %p)\n", __FUNCTION__, shared, texture);
 
-	return texture->waitable != 0;
+	return texture->obj != 0;
 }
 
 GLDReturn gldModifyTexture(gld_shared_t* shared, gld_texture_t* texture, uint8_t arg2, int arg3, uint8_t arg4)
 {
 	uint64_t input;
-	gld_waitable_t* w;
+	gld_sys_object_t* sys_obj;
 
 	GLDLog(2, "%s(%p, %p, %u, %d, %u)\n", __FUNCTION__, shared, texture, arg2, arg3, arg4);
 
@@ -1306,22 +1263,22 @@ GLDReturn gldModifyTexture(gld_shared_t* shared, gld_texture_t* texture, uint8_t
 	if (!(arg2 & 1))
 		return kCGLNoError;
 	texture->f13 = 0;
-	w = texture->waitable;
-	if (!w)
+	sys_obj = texture->obj;
+	if (!sys_obj)
 		return kCGLNoError;
-	switch (w->type) {
+	switch (sys_obj->type) {
 		case 6:
 		case 9:
 			if (shared->needs_locking)
 				pthread_mutex_lock(&shared->mutex);
-			if (!OSAtomicAdd32(0xFFFF0000, &w->stamps[3])) {
-				input = (uint64_t) w->texture_id;
+			if (__sync_fetch_and_add(&sys_obj->refcount, 0-0x10000) == 0x10000) {
+				input = (uint64_t) sys_obj->object_id;
 				IOConnectCallMethod(shared->obj,
 									kIOVMDeviceDeleteTexture,
 									&input, 1,
 									0, 0, 0, 0, 0, 0);
 			}
-			texture->waitable = 0;
+			texture->obj = 0;
 			if (shared->needs_locking)
 				pthread_mutex_unlock(&shared->mutex);
 			break;
@@ -1519,13 +1476,11 @@ void gldPageoffBuffer(gld_shared_t* shared, void* arg1, gld_buffer_t* buffer)
 
 void gldUnbindBuffer(gld_context_t* context, gld_buffer_t* buffer)
 {
-	gld_waitable_t** p;
-
 	GLDLog(2, "%s(%p, %p)\n", __FUNCTION__, context, buffer);
-	p = (gld_waitable_t**) buffer->f2;
-	if (!p || !(*p) || ((*p)->stamps[3] == 0x10000))
-		return;
-	gldFlush(context);
+	if (buffer->f2 &&
+		*(buffer->f2) &&
+		(*(buffer->f2))->refcount != 0x10000)
+		gldFlush(context);
 }
 
 void gldReclaimBuffer(gld_shared_t* shared, gld_buffer_t* buffer)

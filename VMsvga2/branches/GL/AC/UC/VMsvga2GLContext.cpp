@@ -3,7 +3,7 @@
  *  VMsvga2Accel
  *
  *  Created by Zenith432 on August 21st 2009.
- *  Copyright 2009 Zenith432. All rights reserved.
+ *  Copyright 2009-2010 Zenith432. All rights reserved.
  *  Portions Copyright (c) Apple Computer, Inc.
  *
  *  Permission is hereby granted, free of charge, to any person
@@ -33,7 +33,9 @@
 #include "VMsvga2Accel.h"
 #include "VMsvga2GLContext.h"
 #include "VMsvga2Surface.h"
+#include "VMsvga2Device.h"
 #include "ACMethods.h"
+#include "UCTypes.h"
 
 #define CLASS VMsvga2GLContext
 #define super IOUserClient
@@ -45,7 +47,10 @@ OSDefineMetaClassAndStructors(VMsvga2GLContext, IOUserClient);
 #define GLLog(log_level, ...)
 #endif
 
-static IOExternalMethod iofbFuncsCache[kIOVMGLNumMethods] =
+#define HIDDEN __attribute__((visibility("hidden")))
+
+static
+IOExternalMethod iofbFuncsCache[kIOVMGLNumMethods] =
 {
 // Note: methods from IONVGLContext
 {0, reinterpret_cast<IOMethod>(&CLASS::set_surface), kIOUCScalarIScalarO, 4, 0},
@@ -105,95 +110,139 @@ static IOExternalMethod iofbFuncsCache[kIOVMGLNumMethods] =
 #pragma mark struct definitions
 #pragma mark -
 
-struct sIOGLContextReadBufferData
-{
-	uint32_t data[8];		// Note: only uses four
-};
-
-#if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ < 1060
 /*
- * Note: used in OS 10.5, copied from Device UC
+ * Known:
+ *   - data[4] is the size of the buffer (in dwords) starting
+ *     right after the header.
+ *   - data[5] is a flag word, bit 1 (mask 0x2) if on, tells
+ *     the client to flush the surface attached to the context.
+ *   - data[7] is really the first word of the pipeline
+ *   - each pipeline command begins with a count of the number
+ *     of dwords in that command.  A terminating token has a
+ *     non-zero upper nibble (0x10000000 or 0x20000000).
  */
-struct sIOGLNewTextureData
-{
-	uint32_t f0;
-	uint8_t f1[4];
-	uint32_t f2;
-	uint16_t f3[2];
-	uint32_t f4;
-	uint32_t f5;
-	uint32_t f6[4];
-	uint64_t f7[4];
-};
-
-/*
- * Note: used in OS 10.5, copied from Device UC
- */
-struct sIOGLNewTextureReturnData
-{
-	uint32_t data[5];
-};
-
-/*
- * Note: used in OS 10.5, copied from Device UC
- */
-struct sIOGLContextPageoffTexture
-{
-	uint32_t data[2];
-};
-#endif
-
-struct sIOGLContextSetSurfaceData
-{
-	uint32_t surface_id;
-	uint32_t context_mode_bits;
-	uint32_t surface_mode;
-	uint32_t dr_options_hi;		// high byte of options passed to gldAttachDrawable
-	uint32_t dr_options_lo;		// low byte of options passed to gldAttachDrawable
-	uint32_t volatile_state;
-	uint32_t set_scale;
-	uint32_t scale_options;
-	uint32_t scale_width;		// lower 16 bits
-	uint32_t scale_height;		// lower 16 bits
-};
-
-struct sIOGLContextGetConfigStatus
-{
-	uint32_t config[3];
-	uint32_t inner_width;
-	uint32_t inner_height;
-	uint32_t outer_width;
-	uint32_t outer_height;
-	uint32_t status;		// boolean 0 or 1
-	uint32_t surface_mode_bits;
-	uint32_t reserved;
-};
-
-struct sIOGLContextGetDataBuffer
-{
-	uint32_t len;
-	mach_vm_address_t addr;
-} __attribute__((packed));
-
-#if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ < 1060
-/*
- * Note: used in OS 10.5, copied from Device UC
- */
-struct sIOGLChannelMemoryData
-{
-	mach_vm_address_t addr;
-};
-#else
-struct sIOGLGetCommandBuffer
-{
-	uint32_t len[2];
-	mach_vm_address_t addr[2];
-};
-#endif
-
 struct VendorCommandBufferHeader
 {
-	uint32_t data[8];
+	uint32_t data[4];
+	uint32_t size_dwords;
+	uint32_t options;
+	uint32_t stamp;
+	uint32_t begin;
+};
+
+struct VendorGLStreamInfo {
+	uint32_t* p;
+	uint32_t* limit;
+	uint32_t flags; // offset 0x18
+	uint32_t unknown1; // offset 0x1F0
+};
+
+#pragma mark -
+#pragma mark Private Dispatch Tables
+#pragma mark -
+
+typedef void (CLASS::*dispatch_function_t)(VendorGLStreamInfo*);
+
+static
+dispatch_function_t dispatch_discard_1[] =
+{
+	&CLASS::process_token_Noop,
+	&CLASS::process_token_Noop,
+	&CLASS::process_token_Noop,
+	&CLASS::process_token_Noop,
+	&CLASS::process_token_TextureVolatile,
+	&CLASS::process_token_TextureNonVolatile,
+	&CLASS::process_token_SetSurfaceState,
+	&CLASS::process_token_BindDrawFBO,
+	&CLASS::process_token_BindReadFBO,
+	&CLASS::process_token_UnbindDrawFBO,
+	&CLASS::process_token_UnbindReadFBO,
+};
+
+static
+dispatch_function_t dispatch_discard_2[] =
+{
+	&CLASS::discard_token_Texture,
+	&CLASS::discard_token_Texture,
+	&CLASS::discard_token_Texture,
+	&CLASS::discard_token_Texture,
+	&CLASS::discard_token_NoTex,
+	&CLASS::discard_token_NoTex,
+	&CLASS::discard_token_NoTex,
+	&CLASS::discard_token_NoTex,
+	&CLASS::discard_token_NoTex,
+	&CLASS::discard_token_NoTex,
+	&CLASS::discard_token_NoTex,
+	&CLASS::discard_token_NoTex,
+	&CLASS::discard_token_NoTex,
+	&CLASS::discard_token_NoTex,
+	&CLASS::discard_token_NoTex,
+	&CLASS::discard_token_NoTex,
+	&CLASS::discard_token_NoTex,
+	&CLASS::discard_token_NoTex,
+	&CLASS::discard_token_NoTex,
+	&CLASS::discard_token_NoTex,
+	&CLASS::discard_token_VertexBuffer,
+	&CLASS::discard_token_NoVertexBuffer,
+	&CLASS::discard_token_DrawBuffer,
+	&CLASS::discard_token_Noop,
+	&CLASS::discard_token_TexSubImage2D,
+	&CLASS::discard_token_CopyPixelsDst,
+	&CLASS::discard_token_Noop,
+	&CLASS::discard_token_Noop,
+	&CLASS::discard_token_Noop,
+	&CLASS::discard_token_AsyncReadDrawBuffer,
+};
+
+static
+dispatch_function_t dispatch_process_1[] =
+{
+	&CLASS::process_token_Start,
+	&CLASS::process_token_End,
+	&CLASS::process_token_Swap,
+	&CLASS::process_token_Flush,
+	&CLASS::process_token_TextureVolatile,
+	&CLASS::process_token_TextureNonVolatile,
+	&CLASS::process_token_SetSurfaceState,
+	&CLASS::process_token_BindDrawFBO,
+	&CLASS::process_token_BindReadFBO,
+	&CLASS::process_token_UnbindDrawFBO,
+	&CLASS::process_token_UnbindReadFBO,
+};
+
+static
+dispatch_function_t dispatch_process_2[] =
+{
+	&CLASS::process_token_Texture,
+	&CLASS::process_token_Texture,
+	&CLASS::process_token_Texture,
+	&CLASS::process_token_Texture,
+	&CLASS::process_token_NoTex,
+	&CLASS::process_token_NoTex,
+	&CLASS::process_token_NoTex,
+	&CLASS::process_token_NoTex,
+	&CLASS::process_token_NoTex,
+	&CLASS::process_token_NoTex,
+	&CLASS::process_token_NoTex,
+	&CLASS::process_token_NoTex,
+	&CLASS::process_token_NoTex,
+	&CLASS::process_token_NoTex,
+	&CLASS::process_token_NoTex,
+	&CLASS::process_token_NoTex,
+	&CLASS::process_token_NoTex,
+	&CLASS::process_token_NoTex,
+	&CLASS::process_token_NoTex,
+	&CLASS::process_token_NoTex,
+	&CLASS::process_token_VertexBuffer,
+	&CLASS::process_token_NoVertexBuffer,
+	&CLASS::process_token_DrawBuffer,
+	&CLASS::process_token_SetFence,
+	&CLASS::process_token_TexSubImage2D,
+	&CLASS::process_token_CopyPixelsDst,
+	&CLASS::process_token_CopyPixelsSrc,
+	&CLASS::process_token_CopyPixelsSrcFBO,
+	&CLASS::process_token_DrawRect,
+	&CLASS::process_token_AsyncReadDrawBuffer,
 };
 
 #pragma mark -
@@ -210,8 +259,13 @@ void unlockAccel(VMsvga2Accel* accel)
 {
 }
 
+HIDDEN
 void CLASS::Cleanup()
 {
+	if (shared) {
+		shared->release();
+		shared = 0;
+	}
 	if (surface_client) {
 		surface_client->release();
 		surface_client = 0;
@@ -239,6 +293,7 @@ void CLASS::Cleanup()
 	}
 }
 
+HIDDEN
 bool CLASS::allocCommandBuffer(VMsvga2CommandBuffer* buffer, size_t size)
 {
 	IOBufferMemoryDescriptor* bmd;
@@ -260,13 +315,15 @@ bool CLASS::allocCommandBuffer(VMsvga2CommandBuffer* buffer, size_t size)
 	return true;
 }
 
+HIDDEN
 void CLASS::initCommandBufferHeader(VendorCommandBufferHeader* buffer_ptr, size_t size)
 {
 	bzero(buffer_ptr, sizeof *buffer_ptr);
-	buffer_ptr->data[4] = static_cast<uint32_t>((size - sizeof *buffer_ptr) / sizeof(uint32_t));
-	buffer_ptr->data[6] = 0;	// Intel915 puts (submitStamp - 1) here
+	buffer_ptr->size_dwords = static_cast<uint32_t>((size - sizeof *buffer_ptr) / sizeof(uint32_t));
+	buffer_ptr->stamp = 0;	// Intel915 puts (submitStamp - 1) here
 }
 
+HIDDEN
 bool CLASS::allocAllContextBuffers()
 {
 	IOBufferMemoryDescriptor* bmd;
@@ -283,7 +340,7 @@ bool CLASS::allocAllContextBuffers()
 	m_context_buffer0.kernel_ptr = static_cast<VendorCommandBufferHeader*>(bmd->getBytesNoCopy());
 	p = m_context_buffer0.kernel_ptr;
 	bzero(p, sizeof *p);
-	p->data[5] = 1;
+	p->options = 1;
 	p->data[3] = 1007;
 
 	/*
@@ -300,12 +357,13 @@ bool CLASS::allocAllContextBuffers()
 	m_context_buffer1.kernel_ptr = static_cast<VendorCommandBufferHeader*>(bmd->getBytesNoCopy());
 	p = m_context_buffer1.kernel_ptr;
 	bzero(p, sizeof *p);
-	p->data[5] = 1;
+	p->options = 1;
 	p->data[3] = 1007;
 	// TBD: allocates another one like this
 	return true;
 }
 
+HIDDEN
 VMsvga2Surface* CLASS::findSurfaceforID(uint32_t surface_id)
 {
 	VMsvga2Accel::FindSurface fs;
@@ -318,6 +376,7 @@ VMsvga2Surface* CLASS::findSurfaceforID(uint32_t surface_id)
 	return OSDynamicCast(VMsvga2Surface, fs.client);
 }
 
+HIDDEN
 IOReturn CLASS::get_status(uint32_t* status)
 {
 	/*
@@ -327,6 +386,74 @@ IOReturn CLASS::get_status(uint32_t* status)
 	return kIOReturnSuccess;
 }
 
+HIDDEN
+void CLASS::processCommandBuffer()
+{
+	VendorGLStreamInfo cb_iter;
+	uint32_t cmd, upper, commands_processed;
+#if 0
+	int i, lim;
+#endif
+
+#if 0
+	/*
+	 * Print header
+	 */
+	for (i = 0; i != 8; ++i)
+		GLLog(2, "%s:   command_buffer_header[%d] == %#x\n", __FUNCTION__,
+			  i, m_command_buffer.kernel_ptr->data[i]);
+	lim = m_command_buffer.kernel_ptr->data[7];
+	for (i = 0; i != lim; ++i)
+		GLLog(2, "%s:   command[%d] == %#x\n", __FUNCTION__,
+			  i, m_command_buffer.kernel_ptr->data[i + 8]);
+#endif
+	cb_iter.p = &m_command_buffer.kernel_ptr->begin;
+	cb_iter.limit = &m_command_buffer.kernel_ptr->data[0] +  m_command_buffer.size / sizeof(uint32_t);
+	commands_processed = 0;
+	m_stream_error = 0;
+	do {
+		cmd = *cb_iter.p;
+		upper = cmd >> 24;
+		cmd &= 0xFFFFFFU;
+		GLLog(2, "%s:   cmd %#x length %u\n", __FUNCTION__, upper, cmd);
+		if (upper <= 10U)
+			(this->*dispatch_process_1[upper])(&cb_iter);
+		else if (upper >= 32U && upper <= 61U)
+			(this->*dispatch_process_2[upper - 32U])(&cb_iter);
+		if (m_stream_error)
+			break;
+		++commands_processed;
+		cb_iter.p += cmd;
+		if (cb_iter.limit <= cb_iter.p)
+			break;
+	} while (cmd);
+	GLLog(2, "%s:   processed %d stream commands, error == %#x\n", __FUNCTION__, commands_processed, m_stream_error);
+}
+
+HIDDEN
+void CLASS::discardCommandBuffer()
+{
+	VendorGLStreamInfo cb_iter;
+	uint32_t cmd, upper;
+	cb_iter.p = &m_command_buffer.kernel_ptr->begin;
+	cb_iter.limit = &m_command_buffer.kernel_ptr->data[0] +  m_command_buffer.size / sizeof(uint32_t);
+	do {
+		cmd = *cb_iter.p;
+		upper = cmd >> 24;
+		cmd &= 0xFFFFFFU;
+		if (upper <= 10U)
+			(this->*dispatch_discard_1[upper])(&cb_iter);
+		else if (upper >= 32U && upper <= 61U)
+			(this->*dispatch_discard_2[upper - 32U])(&cb_iter);
+		/*
+		 * Note: ignores errors
+		 */
+		cb_iter.p += cmd;
+		if (cb_iter.limit <= cb_iter.p)
+			break;
+	} while (cmd);
+}
+
 #pragma mark -
 #pragma mark IOUserClient Methods
 #pragma mark -
@@ -334,7 +461,7 @@ IOReturn CLASS::get_status(uint32_t* status)
 IOExternalMethod* CLASS::getTargetAndMethodForIndex(IOService** targetP, UInt32 index)
 {
 	if (index >= kIOVMGLNumMethods)
-		GLLog(2, "%s(%p, %u)\n", __FUNCTION__, targetP, index);
+		GLLog(2, "%s(target_out, %u)\n", __FUNCTION__, static_cast<unsigned>(index));
 	if (!targetP || index >= kIOVMGLNumMethods)
 		return 0;
 #if 0
@@ -348,7 +475,7 @@ IOExternalMethod* CLASS::getTargetAndMethodForIndex(IOService** targetP, UInt32 
 #else
 	*targetP = this;
 #endif
-	return &m_funcs_cache[index];
+	return &iofbFuncsCache[index];
 }
 
 IOReturn CLASS::clientClose()
@@ -369,8 +496,8 @@ IOReturn CLASS::clientMemoryForType(UInt32 type, IOOptionBits* options, IOMemory
 	IOBufferMemoryDescriptor* bmd;
 	size_t d;
 
-	GLLog(2, "%s(%u, %p, %p)\n", __FUNCTION__, type, options, memory);
-	if (type > 4 || !options || !memory)
+	GLLog(2, "%s(%u, options_out, memory_out)\n", __FUNCTION__, static_cast<unsigned>(type));
+	if (type > 4U || !options || !memory)
 		return kIOReturnBadArgument;
 #if 0
 	if (dword @ this+0x194 != 0) {
@@ -391,6 +518,8 @@ IOReturn CLASS::clientMemoryForType(UInt32 type, IOOptionBits* options, IOMemory
 			 * TBD: Huge amount of code to process previous command buffer
 			 *   A0B7-AB58
 			 */
+			processCommandBuffer();
+			discardCommandBuffer();
 			lockAccel(m_provider);
 			/*
 			 * AB58: reinitialize buffer
@@ -403,10 +532,10 @@ IOReturn CLASS::clientMemoryForType(UInt32 type, IOOptionBits* options, IOMemory
 			*memory = md;
 			p = m_command_buffer.kernel_ptr;
 			initCommandBufferHeader(p, m_command_buffer.size);
-			p->data[5] = 0;				// TBD: from this+0x88
-			p->data[7] = 1;
+			p->options = 0;				// TBD: from this+0x88
+			p->begin = 1;
 			p->data[8] = 0x1000000U;	// terminating token
-			p->data[6] = 0;				// TBD: from this+0x7C
+			p->stamp = 0;				// TBD: from this+0x7C
 			unlockAccel(m_provider);
 			// sleepForSwapCompleteNoLock(this+0x84)
 			return kIOReturnSuccess;
@@ -422,7 +551,7 @@ IOReturn CLASS::clientMemoryForType(UInt32 type, IOOptionBits* options, IOMemory
 			*memory = md;
 			p = m_context_buffer0.kernel_ptr;
 			bzero(p, sizeof *p);
-			p->data[5] = 1;
+			p->options = 1;
 			p->data[3] = 1007;
 			unlockAccel(m_provider);
 			return kIOReturnSuccess;
@@ -477,10 +606,10 @@ IOReturn CLASS::clientMemoryForType(UInt32 type, IOOptionBits* options, IOMemory
 			*memory = md;
 			p = m_command_buffer.kernel_ptr;
 			initCommandBufferHeader(p, m_command_buffer.size);
-			p->data[5] = 0;
-			p->data[7] = 1;
+			p->options = 0;
+			p->begin = 1;
 			p->data[8] = 0x1000000U;	// terminating token
-			p->data[6] = 0;				// TBD: from this+0x7C
+			p->stamp = 0;				// TBD: from this+0x7C
 			unlockAccel(m_provider);
 			return kIOReturnSuccess;
 	}
@@ -490,13 +619,26 @@ IOReturn CLASS::clientMemoryForType(UInt32 type, IOOptionBits* options, IOMemory
 	return super::clientMemoryForType(type, options, memory);
 }
 
+/*
+ * Note:
+ *   Apple's drivers actually connect the "Shared" object, not the
+ *   Device UC itself.  The "Shared" class implements the
+ *   functionality of the Device UC.
+ */
 IOReturn CLASS::connectClient(IOUserClient* client)
 {
+	VMsvga2Device* d;
 	GLLog(2, "%s(%p), name == %s\n", __FUNCTION__, client, client ? client->getName() : "NULL");
+	d = OSDynamicCast(VMsvga2Device, client);
+	if (!d)
+		return kIOReturnError;
+	if (d->getOwningTask() != m_owning_task)
+		return kIOReturnNotPermitted;
+	d->retain();
+	if (shared)
+		shared->release();
+	shared = d;
 	return kIOReturnSuccess;
-#if 0
-	return super::connectClient(client);
-#endif
 }
 
 #if 0
@@ -520,8 +662,8 @@ bool CLASS::start(IOService* provider)
 	if (!super::start(provider))
 		return false;
 	m_log_level = imax(m_provider->getLogLevelGLD(), m_provider->getLogLevelAC());
-	m_mem_type = 4;
-	m_gc = OSSet::withCapacity(2);
+	m_mem_type = 4U;
+	m_gc = OSSet::withCapacity(2U);
 	if (!m_gc) {
 		super::stop(provider);
 		return false;
@@ -538,7 +680,7 @@ bool CLASS::start(IOService* provider)
 		return false;
 	}
 	m_command_buffer.kernel_ptr->data[5] = 2U;
-	m_command_buffer.kernel_ptr->data[9] = 1000000U;
+	m_command_buffer.kernel_ptr->data[9] = 0x1000000U;
 	return true;
 }
 
@@ -548,11 +690,11 @@ bool CLASS::initWithTask(task_t owningTask, void* securityToken, UInt32 type)
 	if (!super::initWithTask(owningTask, securityToken, type))
 		return false;
 	m_owning_task = owningTask;
-	m_funcs_cache = &iofbFuncsCache[0];
 	return true;
 }
 
-CLASS* CLASS::withTask(task_t owningTask, void* securityToken, UInt32 type)
+HIDDEN
+CLASS* CLASS::withTask(task_t owningTask, void* securityToken, uint32_t type)
 {
 	CLASS* inst;
 
@@ -571,24 +713,28 @@ CLASS* CLASS::withTask(task_t owningTask, void* securityToken, UInt32 type)
 #pragma mark IONVGLContext Methods
 #pragma mark -
 
-IOReturn CLASS::set_surface(uintptr_t surface_id, eIOGLContextModeBits context_mode_bits, uintptr_t c3, uintptr_t c4)
+HIDDEN
+IOReturn CLASS::set_surface(uintptr_t surface_id, uintptr_t /* eIOGLContextModeBits */ context_mode_bits, uintptr_t c3, uintptr_t c4)
 {
 	GLLog(2, "%s(%#lx, %#lx, %lu, %lu)\n", __FUNCTION__, surface_id, context_mode_bits, c3, c4);
 	return kIOReturnSuccess;
 }
 
+HIDDEN
 IOReturn CLASS::set_swap_rect(intptr_t c1, intptr_t c2, intptr_t c3, intptr_t c4)
 {
 	GLLog(2, "%s(%ld, %ld, %ld, %ld)\n", __FUNCTION__, c1, c2, c3, c4);
 	return kIOReturnSuccess;
 }
 
+HIDDEN
 IOReturn CLASS::set_swap_interval(intptr_t c1, intptr_t c2)
 {
 	GLLog(2, "%s(%ld, %ld)\n", __FUNCTION__, c1, c2);
 	return kIOReturnSuccess;
 }
 
+HIDDEN
 IOReturn CLASS::get_config(uint32_t* c1, uint32_t* c2, uint32_t* c3)
 {
 	UInt32 const vram_size = m_provider->getVRAMSize();
@@ -600,7 +746,8 @@ IOReturn CLASS::get_config(uint32_t* c1, uint32_t* c2, uint32_t* c3)
 	return kIOReturnSuccess;
 }
 
-IOReturn CLASS::get_surface_size(UInt32* c1, UInt32* c2, UInt32* c3, UInt32* c4)
+HIDDEN
+IOReturn CLASS::get_surface_size(uint32_t* c1, uint32_t* c2, uint32_t* c3, uint32_t* c4)
 {
 	*c1 = 1;
 	*c2 = 2;
@@ -610,7 +757,8 @@ IOReturn CLASS::get_surface_size(UInt32* c1, UInt32* c2, UInt32* c3, UInt32* c4)
 	return kIOReturnSuccess;
 }
 
-IOReturn CLASS::get_surface_info(uintptr_t c1, UInt32* c2, UInt32* c3, UInt32* c4)
+HIDDEN
+IOReturn CLASS::get_surface_info(uintptr_t c1, uint32_t* c2, uint32_t* c3, uint32_t* c4)
 {
 	*c2 = 0x4081;
 	*c3 = 0x4082;
@@ -619,9 +767,10 @@ IOReturn CLASS::get_surface_info(uintptr_t c1, UInt32* c2, UInt32* c3, UInt32* c
 	return kIOReturnSuccess;
 }
 
+HIDDEN
 IOReturn CLASS::read_buffer(struct sIOGLContextReadBufferData const* struct_in, size_t struct_in_size)
 {
-	GLLog(2, "%s(%p, %lu)\n", __FUNCTION__, struct_in, struct_in_size);
+	GLLog(2, "%s(struct_in, %lu)\n", __FUNCTION__, struct_in_size);
 	if (struct_in_size < sizeof *struct_in)
 		return kIOReturnBadArgument;
 	for (int i = 0; i < 8; ++i)
@@ -629,12 +778,14 @@ IOReturn CLASS::read_buffer(struct sIOGLContextReadBufferData const* struct_in, 
 	return kIOReturnSuccess;
 }
 
+HIDDEN
 IOReturn CLASS::finish()
 {
 	GLLog(2, "%s()\n", __FUNCTION__);
 	return kIOReturnSuccess;
 }
 
+HIDDEN
 IOReturn CLASS::wait_for_stamp(uintptr_t c1)
 {
 	GLLog(2, "%s(%lu)\n", __FUNCTION__, c1);
@@ -642,16 +793,18 @@ IOReturn CLASS::wait_for_stamp(uintptr_t c1)
 }
 
 #if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ < 1060
+HIDDEN
 IOReturn CLASS::new_texture(struct sIOGLNewTextureData const* struct_in,
 							struct sIOGLNewTextureReturnData* struct_out,
 							size_t struct_in_size,
 							size_t* struct_out_size)
 {
-	GLLog(2, "%s(%p, %p, %lu, %lu)\n", __FUNCTION__, struct_in, struct_out, struct_in_size, *struct_out_size);
+	GLLog(2, "%s(struct_in, struct_out, %lu, %lu)\n", __FUNCTION__, struct_in_size, *struct_out_size);
 	bzero(struct_out, *struct_out_size);
 	return kIOReturnSuccess;
 }
 
+HIDDEN
 IOReturn CLASS::delete_texture(uintptr_t c1)
 {
 	GLLog(2, "%s(%lu)\n", __FUNCTION__, c1);
@@ -659,6 +812,7 @@ IOReturn CLASS::delete_texture(uintptr_t c1)
 }
 #endif
 
+HIDDEN
 IOReturn CLASS::become_global_shared(uintptr_t c1)
 {
 	GLLog(2, "%s(%lu)\n", __FUNCTION__, c1);
@@ -666,25 +820,29 @@ IOReturn CLASS::become_global_shared(uintptr_t c1)
 }
 
 #if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ < 1060
+HIDDEN
 IOReturn CLASS::page_off_texture(struct sIOGLContextPageoffTexture const* struct_in, size_t struct_in_size)
 {
-	GLLog(2, "%s(%p, %lu)\n", __FUNCTION__, struct_in, struct_in_size);
+	GLLog(2, "%s(struct_in, %lu)\n", __FUNCTION__, struct_in_size);
 	return kIOReturnSuccess;
 }
 #endif
 
+HIDDEN
 IOReturn CLASS::purge_texture(uintptr_t c1)
 {
 	GLLog(2, "%s(%lu)\n", __FUNCTION__, c1);
 	return kIOReturnSuccess;
 }
 
+HIDDEN
 IOReturn CLASS::set_surface_volatile_state(uintptr_t c1)
 {
 	GLLog(2, "%s(%lu)\n", __FUNCTION__, c1);
 	return kIOReturnSuccess;
 }
 
+HIDDEN
 IOReturn CLASS::set_surface_get_config_status(struct sIOGLContextSetSurfaceData const* struct_in,
 											  struct sIOGLContextGetConfigStatus* struct_out,
 											  size_t struct_in_size,
@@ -782,15 +940,17 @@ IOReturn CLASS::set_surface_get_config_status(struct sIOGLContextSetSurfaceData 
 	return kIOReturnSuccess;
 }
 
+HIDDEN
 IOReturn CLASS::reclaim_resources()
 {
 	GLLog(2, "%s()\n", __FUNCTION__);
 	return kIOReturnSuccess;
 }
 
+HIDDEN
 IOReturn CLASS::get_data_buffer(struct sIOGLContextGetDataBuffer* struct_out, size_t* struct_out_size)
 {
-	GLLog(2, "%s(%p, %lu)\n", __FUNCTION__, struct_out, *struct_out_size);
+	GLLog(2, "%s(struct_out, %lu)\n", __FUNCTION__, *struct_out_size);
 	if (*struct_out_size < sizeof *struct_out)
 		return kIOReturnBadArgument;
 	*struct_out_size = sizeof *struct_out;
@@ -798,12 +958,14 @@ IOReturn CLASS::get_data_buffer(struct sIOGLContextGetDataBuffer* struct_out, si
 	return kIOReturnSuccess;
 }
 
+HIDDEN
 IOReturn CLASS::set_stereo(uintptr_t c1, uintptr_t c2)
 {
 	GLLog(2, "%s(%lu, %lu)\n", __FUNCTION__, c1, c2);
 	return kIOReturnSuccess;
 }
 
+HIDDEN
 IOReturn CLASS::purge_accelerator(uintptr_t c1)
 {
 	GLLog(2, "%s(%lu)\n", __FUNCTION__, c1);
@@ -811,13 +973,15 @@ IOReturn CLASS::purge_accelerator(uintptr_t c1)
 }
 
 #if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ < 1060
+HIDDEN
 IOReturn CLASS::get_channel_memory(struct sIOGLChannelMemoryData* struct_out, size_t* struct_out_size)
 {
-	GLLog(2, "%s(%p, %lu)\n", __FUNCTION__, struct_out, *struct_out_size);
+	GLLog(2, "%s(struct_out, %lu)\n", __FUNCTION__, *struct_out_size);
 	bzero(struct_out, *struct_out_size);
 	return kIOReturnSuccess;
 }
 #else
+HIDDEN
 IOReturn CLASS::submit_command_buffer(uintptr_t do_get_data,
 									  struct sIOGLGetCommandBuffer* struct_out,
 									  size_t* struct_out_size)
@@ -871,105 +1035,196 @@ IOReturn CLASS::submit_command_buffer(uintptr_t do_get_data,
 #pragma mark NVGLContext Methods
 #pragma mark -
 
+HIDDEN
 IOReturn CLASS::get_query_buffer(uintptr_t c1, struct sIOGLGetQueryBuffer* struct_out, size_t* struct_out_size)
 {
-	GLLog(2, "%s(%lu, %p, %lu)\n", __FUNCTION__, c1, struct_out, *struct_out_size);
+	GLLog(2, "%s(%lu, struct_out, %lu)\n", __FUNCTION__, c1, *struct_out_size);
 	return kIOReturnUnsupported;
 }
 
-IOReturn CLASS::get_notifiers(UInt32*, UInt32*)
+HIDDEN
+IOReturn CLASS::get_notifiers(uint32_t*, uint32_t*)
 {
 	GLLog(2, "%s(out1, out2)\n", __FUNCTION__);
 	return kIOReturnUnsupported;
 }
 
 #if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ < 1060
+HIDDEN
 IOReturn CLASS::new_heap_object(struct sNVGLNewHeapObjectData const* struct_in,
 								struct sIOGLNewTextureReturnData* struct_out,
 								size_t struct_in_size,
 								size_t* struct_out_size)
 {
-	GLLog(2, "%s(%p, %p, %lu, %lu)\n", __FUNCTION__, struct_in, struct_out, struct_in_size, *struct_out_size);
+	GLLog(2, "%s(struct_in, struct_out, %lu, %lu)\n", __FUNCTION__, struct_in_size, *struct_out_size);
 	return kIOReturnUnsupported;
 }
 #endif
 
+HIDDEN
 IOReturn CLASS::kernel_printf(char const* str, size_t str_size)
 {
-	GLLog(2, "%s: %s\n", __FUNCTION__, str);
+	GLLog(2, "%s: %.80s\n", __FUNCTION__, str);
 	return kIOReturnUnsupported;
 }
 
-IOReturn CLASS::nv_rm_config_get(UInt32 const* struct_in,
-								 UInt32* struct_out,
+HIDDEN
+IOReturn CLASS::nv_rm_config_get(uint32_t const* struct_in,
+								 uint32_t* struct_out,
 								 size_t struct_in_size,
 								 size_t* struct_out_size)
 {
-	GLLog(2, "%s(%p, %p, %lu, %lu)\n", __FUNCTION__, struct_in, struct_out, struct_in_size, *struct_out_size);
+	GLLog(2, "%s(struct_in, struct_out, %lu, %lu)\n", __FUNCTION__, struct_in_size, *struct_out_size);
 	return kIOReturnUnsupported;
 }
 
-IOReturn CLASS::nv_rm_config_get_ex(UInt32 const* struct_in,
-									UInt32* struct_out,
+HIDDEN
+IOReturn CLASS::nv_rm_config_get_ex(uint32_t const* struct_in,
+									uint32_t* struct_out,
 									size_t struct_in_size,
 									size_t* struct_out_size)
 {
-	GLLog(2, "%s(%p, %p, %lu, %lu)\n", __FUNCTION__, struct_in, struct_out, struct_in_size, *struct_out_size);
+	GLLog(2, "%s(struct_in, struct_out, %lu, %lu)\n", __FUNCTION__, struct_in_size, *struct_out_size);
 	return kIOReturnUnsupported;
 }
 
+HIDDEN
 IOReturn CLASS::nv_client_request(void const* struct_in,
 								  void* struct_out,
 								  size_t struct_in_size,
 								  size_t* struct_out_size)
 {
-	GLLog(2, "%s(%p, %p, %lu, %lu)\n", __FUNCTION__, struct_in, struct_out, struct_in_size, *struct_out_size);
+	GLLog(2, "%s(struct_in, struct_out, %lu, %lu)\n", __FUNCTION__, struct_in_size, *struct_out_size);
 	return kIOReturnUnsupported;
 }
 
+HIDDEN
 IOReturn CLASS::pageoff_surface_texture(struct sNVGLContextPageoffSurfaceTextureData const* struct_in, size_t struct_in_size)
 {
-	GLLog(2, "%s(%p, %lu)\n", __FUNCTION__, struct_in, struct_in_size);
+	GLLog(2, "%s(struct_in, %lu)\n", __FUNCTION__, struct_in_size);
 	return kIOReturnUnsupported;
 }
 
+HIDDEN
 IOReturn CLASS::get_data_buffer_with_offset(struct sIOGLContextGetDataBuffer* struct_out, size_t* struct_out_size)
 {
-	GLLog(2, "%s(%p, %lu)\n", __FUNCTION__, struct_out, struct_out_size);
+	GLLog(2, "%s(struct_out, %lu)\n", __FUNCTION__, *struct_out_size);
 	return kIOReturnUnsupported;
 }
 
-IOReturn CLASS::nv_rm_control(UInt32 const* struct_in,
-							  UInt32* struct_out,
+HIDDEN
+IOReturn CLASS::nv_rm_control(uint32_t const* struct_in,
+							  uint32_t* struct_out,
 							  size_t struct_in_size,
 							  size_t* struct_out_size)
 {
-	GLLog(2, "%s(%p, %p, %lu, %lu)\n", __FUNCTION__, struct_in, struct_out, struct_in_size, *struct_out_size);
+	GLLog(2, "%s(struct_in, struct_out, %lu, %lu)\n", __FUNCTION__, struct_in_size, *struct_out_size);
 	return kIOReturnUnsupported;
 }
 
-IOReturn CLASS::get_power_state(UInt32*, UInt32*)
+HIDDEN
+IOReturn CLASS::get_power_state(uint32_t*, uint32_t*)
 {
 	GLLog(2, "%s(out1, out2)\n", __FUNCTION__);
 	return kIOReturnUnsupported;
 }
 
 #if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ >= 1060
+HIDDEN
 IOReturn CLASS::set_watchdog_timer(uintptr_t c1)
 {
 	GLLog(2, "%s(%lu)\n", __FUNCTION__, c1);
 	return kIOReturnUnsupported;
 }
 
-IOReturn CLASS::GetHandleIndex(UInt32*, UInt32*)
+HIDDEN
+IOReturn CLASS::GetHandleIndex(uint32_t*, uint32_t*)
 {
 	GLLog(2, "%s(out1, out2)\n", __FUNCTION__);
 	return kIOReturnUnsupported;
 }
 
+HIDDEN
 IOReturn CLASS::ForceTextureLargePages(uintptr_t c1)
 {
 	GLLog(2, "%s(%lu)\n", __FUNCTION__, c1);
 	return kIOReturnUnsupported;
 }
 #endif
+
+#pragma mark -
+#pragma mark Dispatch Funtions
+#pragma mark -
+
+HIDDEN void CLASS::process_token_Noop(VendorGLStreamInfo*) {} // Null
+HIDDEN void CLASS::process_token_TextureVolatile(VendorGLStreamInfo*) {}
+HIDDEN void CLASS::process_token_TextureNonVolatile(VendorGLStreamInfo*) {}
+HIDDEN void CLASS::process_token_SetSurfaceState(VendorGLStreamInfo*) {}
+HIDDEN void CLASS::process_token_BindDrawFBO(VendorGLStreamInfo*) {}
+HIDDEN void CLASS::process_token_BindReadFBO(VendorGLStreamInfo*) {}
+HIDDEN void CLASS::process_token_UnbindDrawFBO(VendorGLStreamInfo*) {}
+HIDDEN void CLASS::process_token_UnbindReadFBO(VendorGLStreamInfo*) {}
+HIDDEN void CLASS::process_token_Start(VendorGLStreamInfo*) {} // Null
+HIDDEN void CLASS::process_token_End(VendorGLStreamInfo*) {} // Null
+
+HIDDEN
+void CLASS::process_token_Swap(VendorGLStreamInfo* info)
+{
+	info->flags = 3U;
+}
+
+HIDDEN
+void CLASS::process_token_Flush(VendorGLStreamInfo* info)
+{
+	info->flags = 2U;
+}
+
+HIDDEN
+void CLASS::discard_token_Texture(VendorGLStreamInfo* info)
+{
+	if (!shared)
+		return;
+	shared->derefSysObject((info->p)[2]);
+}
+
+HIDDEN void CLASS::discard_token_NoTex(VendorGLStreamInfo*) {}
+
+HIDDEN
+void CLASS::discard_token_VertexBuffer(VendorGLStreamInfo* info)
+{
+	info->unknown1 = 0;
+}
+
+HIDDEN void CLASS::discard_token_NoVertexBuffer(VendorGLStreamInfo*) {}
+HIDDEN void CLASS::discard_token_DrawBuffer(VendorGLStreamInfo*) {}
+HIDDEN void CLASS::discard_token_Noop(VendorGLStreamInfo*) {} // Null
+HIDDEN void CLASS::discard_token_TexSubImage2D(VendorGLStreamInfo*) {}
+HIDDEN void CLASS::discard_token_CopyPixelsDst(VendorGLStreamInfo*) {}
+
+HIDDEN
+void CLASS::discard_token_AsyncReadDrawBuffer(VendorGLStreamInfo* info)
+{
+	bzero(info->p, 10U * sizeof(uint32_t));
+}
+
+HIDDEN void CLASS::process_token_Texture(VendorGLStreamInfo*) {}
+HIDDEN void CLASS::process_token_NoTex(VendorGLStreamInfo*) {}
+HIDDEN void CLASS::process_token_VertexBuffer(VendorGLStreamInfo*) {}
+HIDDEN void CLASS::process_token_NoVertexBuffer(VendorGLStreamInfo*) {}
+HIDDEN void CLASS::process_token_DrawBuffer(VendorGLStreamInfo*) {}
+HIDDEN void CLASS::process_token_SetFence(VendorGLStreamInfo*) {}
+HIDDEN void CLASS::process_token_TexSubImage2D(VendorGLStreamInfo*) {}
+HIDDEN void CLASS::process_token_CopyPixelsDst(VendorGLStreamInfo*) {}
+HIDDEN void CLASS::process_token_CopyPixelsSrc(VendorGLStreamInfo*) {}
+HIDDEN void CLASS::process_token_CopyPixelsSrcFBO(VendorGLStreamInfo*) {}
+
+HIDDEN
+void CLASS::process_token_DrawRect(VendorGLStreamInfo* info)
+{
+	*(info->p) = 0x7D800003U;
+#if 0
+	memcpy(&info->p[1], this->0x304U, 4U * sizeof(uint32_t));
+#endif
+}
+
+HIDDEN void CLASS::process_token_AsyncReadDrawBuffer(VendorGLStreamInfo*) {}

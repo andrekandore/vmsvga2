@@ -69,7 +69,7 @@ GLDReturn gldTestObject(gld_context_t* context, int object_type, void const* obj
 GLDReturn gldFlushObject(gld_context_t* context, int object_type, int arg2, void const* object);
 GLDReturn gldFinishObject(gld_context_t* context, int object_type, void const* object);
 GLDReturn gldWaitObject(gld_shared_t* shared, int object_type, void const* object, void const* arg3);
-GLDReturn gldCreateTexture(gld_shared_t* shared, gld_texture_t** texture, void* arg2);
+GLDReturn gldCreateTexture(gld_shared_t* shared, gld_texture_t** texture, void* client_texture);
 int gldIsTextureResident(gld_shared_t* shared, gld_texture_t* texture);
 GLDReturn gldModifyTexture(gld_shared_t* shared, gld_texture_t* texture, uint8_t arg2, int arg3, uint8_t arg4);
 GLDReturn gldGenerateTexMipmaps(gld_shared_t* shared, gld_texture_t* texture, int arg2);

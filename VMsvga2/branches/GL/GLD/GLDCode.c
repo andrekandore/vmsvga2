@@ -27,6 +27,7 @@
  */
 
 #include <dlfcn.h>
+#include <stdlib.h>
 #include <string.h>
 #include <IOKit/IOKitLib.h>
 #include <OpenGL/CGLTypes.h>
@@ -133,24 +134,24 @@ int glrCheckTimeStampShared(gld_shared_t* shared, int32_t num_to_compare)
 	return (num_to_compare - p[16]) <= 0;
 }
 
-void glrWaitSharedObject(gld_shared_t* shared, gld_waitable_t* w)
+void glrWaitSharedObject(gld_shared_t* shared, gld_sys_object_t* obj)
 {
 	uint64_t input;
 	int index;
-	switch (w->type) {
+	switch (obj->type) {
 		case 6:
-			index = 1;
+			index = 0;
 			break;
 		case 2:
 		case 9:
-			index = 2;
+			index = 1;
 			break;
 		default:
 			return;
 	}
-	if (glrCheckTimeStampShared(shared, w->stamps[index]))
+	if (glrCheckTimeStampShared(shared, obj->stamps[index]))
 		return;
-	input = (uint64_t) w->stamps[index];
+	input = (uint64_t) obj->stamps[index];
 	IOConnectCallMethod(shared->obj,
 						kIOVMDeviceWaitForStamp,
 						&input, 1,
@@ -174,11 +175,11 @@ void glrDestroyHardwareShared(gld_shared_t* shared)
 {
 }
 
-void glrFlushSysObject(gld_context_t* context, gld_waitable_t* waitable, int arg2)
+void glrFlushSysObject(gld_context_t* context, gld_sys_object_t* obj, int arg2)
 {
 	if (arg2) {
 		if (arg2 == 1)
-			switch (waitable->type) {
+			switch (obj->type) {
 				case 8:
 				case 9:
 				case 14:
@@ -186,7 +187,7 @@ void glrFlushSysObject(gld_context_t* context, gld_waitable_t* waitable, int arg
 				default:
 					return;
 			}
-	} else switch (waitable->type) {
+	} else switch (obj->type) {
 		case 9:
 		case 6:
 		case 2:
@@ -195,7 +196,7 @@ void glrFlushSysObject(gld_context_t* context, gld_waitable_t* waitable, int arg
 			return;
 	}
 
-	if (waitable->stamps[3] != 0x10000)
+	if (obj->refcount != 0x10000)
 		gldFlush(context);
 }
 
@@ -368,6 +369,95 @@ int glrSanitizeWindowModeBits(uint32_t mode_bits)
 void glrDrawableChanged(gld_context_t* context)
 {
 	// FIXME
+}
+
+int glrGetKernelTextureAGPRef(gld_shared_t* shared,
+							  gld_texture_t* texture,
+							  void const* pixels1,
+							  void const* pixels2,
+							  uint32_t texture_size)
+{
+	uint8_t const* client_texture = (uint8_t const*) texture->client_texture; // r13
+	gld_sys_object_t* sys_obj = texture->obj; // r15
+	int rc = 0;
+	kern_return_t kr;
+	uint64_t input;
+	size_t outputStructCnt;
+	struct sIONewTextureReturnData outputStruct;
+#if 0
+	uint8_t ecx, edi, esi;
+#endif
+
+	// var_58 = shared;
+	// r14 = texture;
+#if 0
+	ecx = *MKOFS(uint8_t, 0x75, 0x7D, client_texture);
+	edi = *MKOFS(uint8_t, 0x78, 0x80, client_texture);
+	esi = 0;
+	if (edi) {
+		// 1442C
+		if (!(*MKOFS(uint16_t, 0x7A, 0x82, client_texture) & (1U << ecx))) {
+			
+		}
+	}
+#endif
+	// skip to 14489
+	texture->obj = 0;
+	texture->f0 = 0;
+	texture->tds.type = 6;
+	texture->tds.pixels[0] = (uintptr_t) pixels1;
+	texture->tds.pixels[1] = (uintptr_t) pixels2;
+	texture->tds.size = texture_size;
+	texture->tds.version = *MKOFS(uint8_t, 0x78, 0x80, client_texture);
+	texture->tds.flags[0] = *MKOFS(uint8_t, 0x76, 0x7E, client_texture);
+	texture->tds.flags[1] = *MKOFS(uint8_t, 0x75, 0x7D, client_texture);
+	// texture->flags[3] = glrPixelBytes(word rbx+0x14, word rbx+0x16);
+	texture->tds.bytespp = 2;	// also to esi
+	texture->tds.width = 0;	// taken from client_texture
+	texture->tds.height = 0; // taken from client_texture
+	texture->tds.depth = 1; // taken from client_texture
+	texture->tds.f3[0] = 0;
+	texture->tds.pitch = 0; // calculated... TBD
+	outputStructCnt = sizeof outputStruct;
+	kr = IOConnectCallMethod(shared->obj,
+							 kIOVMDeviceNewTexture,
+							 0, 0,
+							 &texture->tds, sizeof texture->tds,
+							 0, 0,
+							 &outputStruct, &outputStructCnt);
+	if (kr == ERR_SUCCESS) {
+		texture->obj = (gld_sys_object_t*) (uintptr_t) outputStruct.addr;	// Truncation32
+		__sync_fetch_and_add(&texture->obj->refcount, 0x10000);
+		texture->obj->in_use = 1;
+		rc = 1;
+		if (sys_obj != texture->obj)
+			texture->f14 |= 1;
+	}
+	if (sys_obj &&
+		__sync_fetch_and_add(&sys_obj->refcount, -0x10000) == 0x10000) {
+		input = sys_obj->object_id;
+		kr = IOConnectCallMethod(shared->obj,
+								 kIOVMDeviceDeleteTexture,
+								 &input, 1,
+								 0, 0, 0, 0, 0, 0);
+	}
+	return rc;
+}
+
+void glrWriteAllHardwareState(gld_context_t* context)
+{
+	uint32_t count;
+	uint32_t* mem1 = context->mem1_addr;
+	mem1[5] |= 1U;
+	memcpy(&mem1[8], &context->block1[0], sizeof context->block1);
+	mem1[8 + 285] = 0x2000001U;
+	count = 3U * context->f29;
+	mem1[8 + 286] = (3U * count - 1U) | 0x7D050000U;
+	memcpy(&mem1[8 + 287], &context->block2[0], count * sizeof(uint32_t));
+	count += 287;
+	mem1[4] = count;
+	if (mem1[3] < count)
+		exit(1);
 }
 
 #pragma GCC visibility pop

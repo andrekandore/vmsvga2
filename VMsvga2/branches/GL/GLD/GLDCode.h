@@ -36,11 +36,11 @@ extern "C" {
 kern_return_t glrPopulateDevice(io_connect_t connect, display_info_t* dinfo);
 uint32_t glrGLIBitsGE(uint32_t num);
 uint32_t glrGLIColorsGE(uint32_t num);
-void glrWaitSharedObject(gld_shared_t* shared, gld_waitable_t* w);
+void glrWaitSharedObject(gld_shared_t* shared, gld_sys_object_t* obj);
 void glrInitializeHardwareShared(gld_shared_t* shared, void* channel_memory);
 void glrDestroyZeroTexture(gld_shared_t* shared, gld_texture_t* texture);
 void glrDestroyHardwareShared(gld_shared_t* shared);
-void glrFlushSysObject(gld_context_t* context, gld_waitable_t* waitable, int arg2);
+void glrFlushSysObject(gld_context_t* context, gld_sys_object_t* obj, int arg2);
 void load_libs();
 void unload_libs();
 void SubmitPacketsToken(gld_context_t*, int);
@@ -59,6 +59,12 @@ void glrFlushMemory(int, void*, int);
 void glrReleaseDrawable(gld_context_t* context);
 int glrSanitizeWindowModeBits(uint32_t);
 void glrDrawableChanged(gld_context_t* context);
+int glrGetKernelTextureAGPRef(gld_shared_t* shared,
+							  gld_texture_t* texture,
+							  void const* pixels1,
+							  void const* pixels2,
+							  uint32_t texture_size);
+void glrWriteAllHardwareState(gld_context_t* context);
 
 #ifdef __cplusplus
 }
