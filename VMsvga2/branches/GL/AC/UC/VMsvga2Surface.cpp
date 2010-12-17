@@ -113,7 +113,7 @@ uint32_t round_up_to_power2(uint32_t s, uint32_t power2)
 static inline
 void memset32(void* dest, uint32_t value, size_t size)
 {
-	asm volatile ("cld; rep stosl" : "+c" (size), "+D" (dest) : "a" (value) : "memory");
+	__asm__ volatile ("cld; rep stosl" : "+c" (size), "+D" (dest) : "a" (value) : "memory");
 }
 
 #ifdef VECTORIZE
@@ -137,19 +137,39 @@ bool isRegionEmpty(IOAccelDeviceRegion const* rgn)
 	return false;
 }
 
-static
 void set_region(IOAccelDeviceRegion* rgn,
 				uint32_t x,
 				uint32_t y,
 				uint32_t w,
-				uint32_t h)
+				uint32_t h);
+
+HIDDEN
+void genericBlitCopy(uint8_t* dst_addr,
+					 uint8_t const* src_addr,
+					 void const* dst_limit,
+					 void const* src_limit,
+					 size_t dst_pitch,
+					 size_t src_pitch,
+					 size_t width,
+					 size_t height,
+					 size_t bytes_per_pixel)
 {
-	rgn->num_rects = 1;
-	rgn->bounds.x = static_cast<int16_t>(x);
-	rgn->bounds.y = static_cast<int16_t>(y);
-	rgn->bounds.w = static_cast<int16_t>(w);
-	rgn->bounds.h = static_cast<int16_t>(h);
-	memcpy(&rgn->rect[0], &rgn->bounds, sizeof rgn->bounds);
+	size_t l = width * bytes_per_pixel;
+	for (size_t j = 0U; j != height; ++j) {
+		if (dst_addr + l > dst_limit)
+			continue;
+		if (src_addr + l > src_limit)
+			continue;
+		memcpy(dst_addr, src_addr, l);
+		dst_addr += dst_pitch;
+		src_addr += src_pitch;
+	}
+}
+
+static inline
+uint32_t GMR_VRAM(void)
+{
+	return static_cast<uint32_t>(-2) /* SVGA_GMR_FRAMEBUFFER */;
 }
 
 #pragma mark -
@@ -556,6 +576,56 @@ IOReturn CLASS::copy_from_client_backing()
 	return kIOReturnSuccess;
 }
 
+HIDDEN
+IOReturn CLASS::copy_from_screen_to_client_backing(uint32_t framebufferIndex,
+												   IOAccelDeviceRegion const* region,
+												   void* extra)
+{
+	VMsvga2Accel::ExtraInfo* _extra = static_cast<VMsvga2Accel::ExtraInfo*>(extra);
+	IOMemoryDescriptor* md;
+	uint32_t gmrId, fence;
+	IOReturn rc;
+
+	gmrId = m_provider->AllocGMRID();
+	if (static_cast<int>(gmrId) < 0)
+		return kIOReturnNoResources;
+	md = IOMemoryDescriptor::withAddressRange(m_client_backing.addr,
+											  m_client_backing.size,
+											  kIODirectionIn,
+											  m_owning_task);
+	if (!md) {
+		m_provider->FreeGMRID(gmrId);
+		return kIOReturnError;
+	}
+	rc = md->prepare();
+	if (rc != kIOReturnSuccess) {
+		m_provider->FreeGMRID(gmrId);
+		md->release();
+		return rc;
+	}
+	rc = m_provider->createGMR(gmrId, md);
+	if (rc != kIOReturnSuccess) {
+		m_provider->FreeGMRID(gmrId);
+		md->complete();
+		md->release();
+	}
+	_extra->mem_gmr_id = gmrId;
+	_extra->mem_offset_in_gmr = static_cast<vm_offset_t>(m_client_backing.addr & (PAGE_SIZE - 1U)) + m_scale.reserved[2];
+	_extra->mem_pitch = m_client_backing.rowbytes;
+	rc = m_provider->blitFromScreen(framebufferIndex,
+									region,
+									_extra,
+									&fence);
+	if (rc == kIOReturnSuccess)
+		m_provider->SyncToFence(fence);
+	m_provider->destroyGMR(gmrId);
+	md->complete();
+	md->release();
+	m_provider->FreeGMRID(gmrId);
+	SFLog(2, "%s: completed copy direct to client backing, rc == %#x\n", __FUNCTION__, rc);
+	return rc;
+}
+
 #pragma mark -
 #pragma mark Private Support Methods - 3D
 #pragma mark -
@@ -636,7 +706,8 @@ IOReturn CLASS::detectBlitBug()
 	for (i = 0; i < pixels; ++i)
 		ptr[i] = pixval_green;
 	bzero(&extra, sizeof extra);
-	extra.mem_offset_in_bar1 = reinterpret_cast<vm_offset_t>(ptr) - CLIENT_ADDR_TO_UINTPTR_T(m_screenInfo.client_addr);
+	extra.mem_gmr_id = GMR_VRAM();
+	extra.mem_offset_in_gmr = reinterpret_cast<vm_offset_t>(ptr) - CLIENT_ADDR_TO_UINTPTR_T(m_screenInfo.client_addr);
 	extra.mem_pitch = w * bytes_per_pixel / 2;
 	extra.dstDeltaX = w/2;
 	extra.dstDeltaY = h/2;
@@ -678,7 +749,8 @@ IOReturn CLASS::DMAOutDirect(bool withFence)
 	 * Note: this code asssumes 1:1 scale (m_last_region->bounds.w == m_scale.buffer.w && m_last_region->bounds.h == m_scale.buffer.h)
 	 */
 	bzero(&extra, sizeof extra);
-	extra.mem_offset_in_bar1 = m_backing.offset + m_scale.reserved[2];
+	extra.mem_gmr_id = GMR_VRAM();
+	extra.mem_offset_in_gmr = m_backing.offset + m_scale.reserved[2];
 	extra.mem_pitch = m_scale.reserved[1];
 	extra.srcDeltaX = -static_cast<int>(m_last_region->bounds.x);
 	extra.srcDeltaY = -static_cast<int>(m_last_region->bounds.y);
@@ -712,7 +784,8 @@ IOReturn CLASS::DMAOutWithCopy(bool withFence)
 										m_scale.buffer.h))
 		return kIOReturnNoResources;
 	bzero(&extra, sizeof extra);
-	extra.mem_offset_in_bar1 = m_backing.offset + m_scale.reserved[2];
+	extra.mem_gmr_id = GMR_VRAM();
+	extra.mem_offset_in_gmr = m_backing.offset + m_scale.reserved[2];
 	extra.mem_pitch = m_scale.reserved[1];
 	extra.srcDeltaX = deltaX;
 	extra.srcDeltaY = deltaY;
@@ -761,7 +834,8 @@ IOReturn CLASS::DMAOutStretchWithCopy(bool withFence)
 		return kIOReturnNoResources;
 	set_region(&tmpRegion.r, 0, 0, width, height);
 	bzero(&extra, sizeof extra);
-	extra.mem_offset_in_bar1 = m_backing.offset + m_scale.reserved[2];
+	extra.mem_gmr_id = GMR_VRAM();
+	extra.mem_offset_in_gmr = m_backing.offset + m_scale.reserved[2];
 	extra.mem_pitch = m_scale.reserved[1];
 	rc = m_provider->surfaceDMA2D(m_aux_surface_id[1],
 								  SVGA3D_WRITE_HOST_VRAM,
@@ -861,7 +935,8 @@ IOReturn CLASS::ScreenObjectOutDirect(bool withFence)
 	 * Note: this code asssumes 1:1 scale (m_last_region->bounds.w == m_scale.buffer.w && m_last_region->bounds.h == m_scale.buffer.h)
 	 */
 	bzero(&extra, sizeof extra);
-	extra.mem_offset_in_bar1 = m_backing.offset + m_scale.reserved[2];
+	extra.mem_gmr_id = GMR_VRAM();
+	extra.mem_offset_in_gmr = m_backing.offset + m_scale.reserved[2];
 	extra.mem_pitch = m_scale.reserved[1];
 	extra.srcDeltaX = -static_cast<int>(m_last_region->bounds.x);
 	extra.srcDeltaY = -static_cast<int>(m_last_region->bounds.y);
@@ -893,7 +968,8 @@ IOReturn CLASS::ScreenObjectOutVia3D(bool withFence)
 		return kIOReturnNoResources;
 	set_region(&tmpRegion.r, 0, 0, width, height);
 	bzero(&extra, sizeof extra);
-	extra.mem_offset_in_bar1 = m_backing.offset + m_scale.reserved[2];
+	extra.mem_gmr_id = GMR_VRAM();
+	extra.mem_offset_in_gmr = m_backing.offset + m_scale.reserved[2];
 	extra.mem_pitch = m_scale.reserved[1];
 	rc = m_provider->surfaceDMA2D(m_aux_surface_id[0],
 								  SVGA3D_WRITE_HOST_VRAM,
@@ -922,7 +998,7 @@ HIDDEN
 IOReturn CLASS::GFBOutDirect()
 {
 	VMsvga2Accel::ExtraInfo extra;
-	UInt32 rect[4];
+	uint32_t rect[4];
 
 	if (!m_last_region || !isBackingValid())
 		return kIOReturnNotReady;
@@ -930,7 +1006,8 @@ IOReturn CLASS::GFBOutDirect()
 	 * Note: this code asssumes 1:1 scale (m_last_region->bounds.w == m_scale.buffer.w && m_last_region->bounds.h == m_scale.buffer.h)
 	 */
 	bzero(&extra, sizeof extra);
-	extra.mem_offset_in_bar1 = m_backing.offset + m_scale.reserved[2];
+	extra.mem_gmr_id = GMR_VRAM();
+	extra.mem_offset_in_gmr = m_backing.offset + m_scale.reserved[2];
 	extra.mem_pitch = m_scale.reserved[1];
 	/*
 	 * Note: dst applies to backing, src to GFB
@@ -962,8 +1039,8 @@ IOReturn CLASS::GFBOutDirect()
 HIDDEN
 void CLASS::clear_yuv_to_black(void* buffer, vm_size_t size)
 {
-	vm_size_t s = size / sizeof(UInt);	// size should already be aligned to PAGE_SIZE
-	UInt pixval = 0;
+	vm_size_t s = size / sizeof(uint32_t);	// size should already be aligned to PAGE_SIZE
+	uint32_t pixval = 0;
 
 	switch (m_video.vmware_pixel_format) {
 		case VMWARE_FOURCC_UYVY:
@@ -1078,6 +1155,8 @@ bool CLASS::setVideoRegs()
 	m_video.unit.srcHeight = static_cast<uint32_t>(m_scale.buffer.h);
 	m_video.unit.pitches[0] = m_scale.reserved[1];
 	m_video.unit.size = m_video.unit.height * m_video.unit.pitches[0];
+	m_video.unit.dataGMRId = GMR_VRAM();
+	m_video.unit.dstScreenId = m_framebufferIndex;
 	return true;
 }
 
@@ -1208,11 +1287,6 @@ IOReturn CLASS::set_id_mode(uintptr_t wID, eIOAccelSurfaceModeBits modebits)
 		m_log_level = imax(m_provider->getLogLevelGLD(), m_log_level); // temporarily elevate to GLD level
 
 	SFLog(2, "%s(%#lx, %#x)\n", __FUNCTION__, wID, modebits);
-
-#ifdef TESTING
-	if (checkOptionAC(VMW_OPTION_AC_TEST_MASK))
-		runTest();
-#endif
 
 	/*
 	 * wID == 1U is used by Mac OS X's WindowServer
@@ -1703,9 +1777,9 @@ IOReturn CLASS::context_unlock_memory(uint32_t* swapFlags)
  *   more efficient.
  */
 HIDDEN
-IOReturn CLASS::copy_framebuffer_region_to_self(UInt framebufferIndex,
-												SInt destX,
-												SInt destY,
+IOReturn CLASS::copy_framebuffer_region_to_self(uint32_t framebufferIndex,
+												int destX,
+												int destY,
 												IOAccelDeviceRegion const* region,
 												size_t regionSize)
 {
@@ -1737,10 +1811,13 @@ IOReturn CLASS::copy_framebuffer_region_to_self(UInt framebufferIndex,
 	 *    if an attempt is made to rescale while the surface
 	 *    is locked.]
 	 */
-	if (!allocBacking())
+	if (bHaveScreenObject && isClientBackingValid())
+		;
+	else if (!allocBacking())
 		return kIOReturnNoMemory;
 	bzero(&extra, sizeof extra);
-	extra.mem_offset_in_bar1 = m_backing.offset + m_scale.reserved[2];
+	extra.mem_gmr_id = GMR_VRAM();
+	extra.mem_offset_in_gmr = m_backing.offset + m_scale.reserved[2];
 	extra.mem_pitch = m_scale.reserved[1];
 	extra.dstDeltaX = destX - region->bounds.x;
 	extra.dstDeltaY = destY - region->bounds.y;
@@ -1748,6 +1825,10 @@ IOReturn CLASS::copy_framebuffer_region_to_self(UInt framebufferIndex,
 					   extra.dstDeltaX,
 					   extra.dstDeltaY);
 	if (bHaveScreenObject) {
+		if (isClientBackingValid())
+			return copy_from_screen_to_client_backing(framebufferIndex,
+													  region,
+													  &extra);
 		rc = m_provider->blitFromScreen(framebufferIndex,
 										region,
 										&extra,
@@ -1806,9 +1887,9 @@ finishup:
  *   so it's not really necessary.
  */
 HIDDEN
-IOReturn CLASS::copy_self_region_to_framebuffer(UInt framebufferIndex,
-												SInt destX,
-												SInt destY,
+IOReturn CLASS::copy_self_region_to_framebuffer(uint32_t framebufferIndex,
+												int destX,
+												int destY,
 												IOAccelDeviceRegion const* region,
 												size_t regionSize)
 {
@@ -1825,19 +1906,79 @@ IOReturn CLASS::copy_self_region_to_framebuffer(UInt framebufferIndex,
  *   steps via the host if desired.
  */
 HIDDEN
- IOReturn CLASS::copy_surface_region_to_self(class VMsvga2Surface* source_surface,
-											 SInt destX,
-											 SInt destY,
-											 IOAccelDeviceRegion const* region,
-											 size_t regionSize)
+IOReturn CLASS::copy_surface_region_to_self(class VMsvga2Surface* source_surface,
+											int destX,
+											int destY,
+											IOAccelDeviceRegion const* region,
+											size_t regionSize)
 {
+	IOAccelDeviceRegion* rgn;
+	uint8_t *dst_base, *dst_limit, *dst;
+	uint8_t const *src_base, *src_limit, *src;
+	size_t dst_pitch, src_pitch;
+	int dstDeltaX, dstDeltaY;
+	uint32_t i;
+
 	if (!source_surface)
 		return kIOReturnBadArgument;
-	SFLog(1, "%s: Copy from surface(%#x) to surface(%#x) - unsupported\n", __FUNCTION__,
-		  FMT_U(source_surface->m_wID), FMT_U(m_wID));
+
+	SFLog(3, "%s(%#x, %d, %d, %p, %lu)\n", __FUNCTION__, source_surface->m_wID, destX, destY, region, regionSize);
+
 	if (!region || regionSize < IOACCEL_SIZEOF_DEVICE_REGION(region))
 		return kIOReturnBadArgument;
-	return kIOReturnUnsupported;
+	if (!bHaveID || !isSourceValid())
+		return kIOReturnNotReady;
+	if (!source_surface->bHaveID || !source_surface->isBackingValid())
+		return kIOReturnNotReady;
+	if (m_surfaceFormat != source_surface->m_surfaceFormat ||
+		m_bytes_per_pixel != source_surface->m_bytes_per_pixel) {
+		SFLog(1, "%s: called for source surface format %d, dest surface format %d - unsupported\n",
+			  __FUNCTION__, source_surface->m_surfaceFormat, m_surfaceFormat);
+		return kIOReturnUnsupported;
+	}
+	/*
+	 * TBD: see comment in copy_framebuffer_region_to_self()
+	 *   about growing the source while locked.
+	 */
+	if (!allocBacking())
+		return kIOReturnNoMemory;
+	dstDeltaX = destX - region->bounds.x;
+	dstDeltaY = destY - region->bounds.y;
+	rgn = const_cast<IOAccelDeviceRegion*>(region);
+	clipRegionToBuffer(rgn,
+					   dstDeltaX,
+					   dstDeltaY);
+	dst_pitch = m_scale.reserved[1];
+	src_pitch = source_surface->m_scale.reserved[1];
+	dst_base = m_backing.self + m_scale.reserved[2];
+	src_base = source_surface->m_backing.self + source_surface->m_scale.reserved[2];
+	dst_limit = m_backing.self + m_backing.size;
+	src_limit = source_surface->m_backing.self + source_surface->m_backing.size;
+	if (!rgn->num_rects) {
+		/*
+		 * Dumbass WindowServer...
+		 */
+		memcpy(&rgn->rect[0], &rgn->bounds, sizeof rgn->bounds);
+		++rgn->num_rects;
+	}
+	for (i = 0U; i != region->num_rects; ++i) {
+		IOAccelBounds const* rect = &region->rect[i];
+		dst = dst_base + (dstDeltaX + rect->x) * m_bytes_per_pixel + (dstDeltaY + rect->y) * dst_pitch;
+		src = src_base + rect->x * m_bytes_per_pixel + rect->y * src_pitch;
+		if (src < src_base)
+			continue;
+		genericBlitCopy(dst, src, dst_limit, src_limit, dst_pitch, src_pitch, rect->w, rect->h, m_bytes_per_pixel);
+	}
+
+	/*
+	 * TBD: this is not clean, because it copies the entire backing,
+	 *   including what's outside the clipping area.
+	 * TBD2:
+	 *   Should really copy directly instead of two-step.
+	 */
+	if (isClientBackingValid())
+		copy_to_client_backing();
+	return kIOReturnSuccess;
 }
 
 HIDDEN
@@ -1879,9 +2020,9 @@ IOReturn CLASS::surface_flush_video(uint32_t* swapFlags)
 #if LOGGING_LEVEL >= 1
 	if (m_log_level >= 3)
 		for (size_t i = 0; i < SVGA_VIDEO_NUM_REGS; ++i)
-			SFLog(3, "%s:   reg[%lu] == %#x\n", __FUNCTION__, i, reinterpret_cast<UInt const*>(&m_video.unit)[i]);
+			SFLog(3, "%s:   reg[%lu] == %#x\n", __FUNCTION__, i, reinterpret_cast<uint32_t const*>(&m_video.unit)[i]);
 #endif
-	return m_provider->VideoSetRegsInRange(m_video.stream_id, &m_video.unit, SVGA_VIDEO_ENABLED, SVGA_VIDEO_PITCH_3, &m_backing.last_DMA_fence);
+	return m_provider->VideoSetRegsInRange(m_video.stream_id, &m_video.unit, SVGA_VIDEO_ENABLED, SVGA_VIDEO_DST_SCREEN_ID, &m_backing.last_DMA_fence);
 }
 
 #pragma mark -
@@ -1895,146 +2036,3 @@ void CLASS::getBoundsForStatus(uint32_t* bounds) const
 		return;
 	memcpy(bounds, &m_gl.region_status[0], 4 * sizeof(uint32_t));
 }
-
-#pragma mark -
-#pragma mark TEST
-#pragma mark -
-
-#ifdef TESTING
-HIDDEN
-void CLASS::runTest()
-{
-	DefineRegion<1U> tmpRegion;
-	bool rc;
-	uint32_t* ptr;
-	uint32_t const color_sid = 12345;
-#if 0
-	uint32_t const depth_sid = 12346;
-#endif
-	uint32_t const cid = 12347;
-	uint32_t const pixval_green = 0xFF00U, pixval_random = 0x5A0086U;
-	uint32_t i, w, h, pixels;
-	uint32_t offset, bytes_per_pixel;
-	uint32_t rect[4];
-	VMsvga2Accel::ExtraInfo extra;
-
-	offset = SVGA_FB_MAX_TRACEABLE_SIZE;
-	bytes_per_pixel = sizeof(uint32_t);
-	if (checkOptionAC(VMW_OPTION_AC_TEST_SMALL)) {
-		w = h = 512;
-	} else {
-		w = screenInfo.w;
-		h = screenInfo.h;
-	}
-	pixels = w * h;
-	rc = m_provider->createClearSurface(color_sid, cid, SVGA3D_X8R8G8B8, w, h);
-	if (!rc) {
-		SFLog(1, "%s: createClearSurface failed\n", __FUNCTION__);
-		return;
-	}
-	ptr = static_cast<uint32_t*>(CLIENT_ADDR_TO_PVOID(screenInfo.client_addr)) + offset / sizeof(uint32_t);
-	set_region(&tmpRegion.r, 0, 0, w, h);
-	rect[0] = 0;
-	rect[1] = 0;
-	rect[2] = w;
-	rect[3] = h;
-	for (i = 0; i < pixels; ++i)
-		ptr[i] = pixval_green;
-	bzero(&extra, sizeof extra);
-	extra.mem_offset_in_bar1 = offset;
-	extra.mem_pitch = w * bytes_per_pixel;
-	rc = (m_provider->surfaceDMA2D(color_sid, SVGA3D_WRITE_HOST_VRAM, &tmpRegion.r, &extra) != kIOReturnSuccess);
-	if (!rc) {
-		SFLog(1, "%s: surfaceDMA2D write failed\n", __FUNCTION__);
-		return;
-	}
-	m_provider->SyncFIFO();
-	bzero(ptr, pixels * bytes_per_pixel);
-	for (i = 0; i < pixels; ++i)
-		if (ptr[i] != pixval_green) {
-			SFLog(1, "%s: DMA dummy diff ok\n", __FUNCTION__);
-			break;
-		}
-	rc = (m_provider->surfaceDMA2D(color_sid, SVGA3D_READ_HOST_VRAM, &tmpRegion.r, &extra) != kIOReturnSuccess);
-	if (!rc) {
-		SFLog(1, "%s: surfaceDMA2D read failed\n", __FUNCTION__);
-		return;
-	}
-	m_provider->SyncFIFO();
-	for (i = 0; i < pixels; ++i)
-		if (ptr[i] != pixval_green) {
-			SFLog(1, "%s: DMA readback differs\n", __FUNCTION__);
-			break;
-		}
-	if (!checkOptionAC(VMW_OPTION_AC_TEST_DMA))
-		goto skip_dma_test;
-#if 0
-	for (i = w/2 - 50; i < w/2 + 50; ++i)
-		for (j = h/2 - 50 ; j < h/2 + 50; ++j)
-			ptr[j * w + i] = pixval_random;
-	set_region(&tmpRegion.r, w/2 - 50, h/2 - 50, 100, 100);
-#else
-	for (i = 0; i < 100 * 100; ++i)
-		ptr[i] = pixval_random;
-	set_region(&tmpRegion.r, 0, 0, 100, 100);
-	bzero(&extra, sizeof extra);
-	extra.mem_offset_in_bar1 = offset;
-	extra.mem_pitch = 100 * bytes_per_pixel;
-	extra.dstDeltaX = w/2 - 50;
-	extra.dstDeltaY = h/2 - 50;
-#endif
-	rc = (m_provider->surfaceDMA2D(color_sid, SVGA3D_WRITE_HOST_VRAM, &tmpRegion.r, &extra) != kIOReturnSuccess);
-	if (!rc) {
-		SFLog(1, "%s: surfaceDMA2D 2nd write failed\n", __FUNCTION__);
-		return;
-	}
-	m_provider->SyncFIFO();
-	set_region(&tmpRegion.r, 0, 0, w, h);
-	bzero(&extra, sizeof extra);
-	extra.mem_offset_in_bar1 = offset;
-	extra.mem_pitch = w * bytes_per_pixel;
-	rc = (m_provider->surfaceDMA2D(color_sid, SVGA3D_READ_HOST_VRAM, &tmpRegion.r, &extra) != kIOReturnSuccess);
-	if (!rc) {
-		SFLog(1, "%s: surfaceDMA2D 2nd read failed\n", __FUNCTION__);
-		return;
-	}
-	m_provider->SyncFIFO();
-	for (i = 0; i < w; ++i)
-		if (ptr[i] != pixval_green) {
-			SFLog(1, "%s: DMA 2nd readback differs\n", __FUNCTION__);
-			setProperty("DMATestResult", static_cast<void*>(&ptr[0]), 128);
-			break;
-		}
-skip_dma_test:
-	if (checkOptionAC(VMW_OPTION_AC_TEST_PRESENT)) {
-		bzero(&extra, sizeof extra);
-		rc = (m_provider->surfacePresentAutoSync(color_sid, &tmpRegion.r, &extra) != kIOReturnSuccess);
-		if (!rc) {
-			SFLog(1, "%s: surfacePresent failed\n", __FUNCTION__);
-			return;
-		}
-		if (checkOptionAC(VMW_OPTION_AC_TEST_READBACK)) {
-			rc = (m_provider->surfacePresentReadback(&tmpRegion.r) != kIOReturnSuccess);
-			if (!rc) {
-				SFLog(1, "%s: surfacePresentReadback failed\n", __FUNCTION__);
-				return;
-			}
-		}
-		m_provider->SyncFIFO();
-	} else {
-		extra.mem_offset_in_bar1 = 0;
-		extra.mem_pitch = screenInfo.client_row_bytes;
-		rc = (m_provider->surfaceDMA2D(color_sid, SVGA3D_READ_HOST_VRAM, &tmpRegion.r, &extra) != kIOReturnSuccess);
-		if (!rc) {
-			SFLog(1, "%s: surfaceDMA2D to FB failed\n", __FUNCTION__);
-			return;
-		}
-		m_provider->UpdateFramebuffer(&rect[0]);
-		m_provider->SyncFIFO();
-	}
-	SFLog(1, "%s: complete\n", __FUNCTION__);
-	IOSleep(10000);
-	m_provider->destroySurface(color_sid);
-	m_provider->SyncFIFO();
-}
-#endif /* TESTING */

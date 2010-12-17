@@ -103,17 +103,53 @@ int log_2_64(uint64_t x)
 static inline
 void memset32(void* dest, uint32_t value, size_t size)
 {
-	asm volatile ("cld; rep stosl" : "+c" (size), "+D" (dest) : "a" (value) : "memory");
+	__asm__ volatile ("cld; rep stosl" : "+c" (size), "+D" (dest) : "a" (value) : "memory");
 }
 
 static
+uint32_t find_bit_in_array32(uint32_t* array, size_t num_entries)
+{
+	uint32_t x;
+	int i;
+
+	for (i = 0; num_entries; ++array, i += 8 * static_cast<int>(sizeof(uint32_t)), --num_entries) {
+		x = *array;
+		x = (~x & (x + 1U));
+		if (!x)
+			continue;
+		*array |= x;
+		i += log_2_32(x);
+		return static_cast<uint32_t>(i);
+	}
+	return static_cast<uint32_t>(-1);
+}
+
+static
+uint32_t find_bit_in_array64(uint64_t* array, size_t num_entries)
+{
+	uint64_t x;
+	int i;
+
+	for (i = 0; num_entries; ++array, i += 8 * static_cast<int>(sizeof(uint64_t)), --num_entries) {
+		x = *array;
+		x = (~x & (x + 1ULL));
+		if (!x)
+			continue;
+		*array |= x;
+		i += log_2_64(x);
+		return static_cast<uint32_t>(i);
+	}
+	return static_cast<uint32_t>(-1);
+}
+
+HIDDEN
 void set_region(IOAccelDeviceRegion* rgn,
 				uint32_t x,
 				uint32_t y,
 				uint32_t w,
 				uint32_t h)
 {
-	rgn->num_rects = 1;
+	rgn->num_rects = 1U;
 	rgn->bounds.x = static_cast<int16_t>(x);
 	rgn->bounds.y = static_cast<int16_t>(y);
 	rgn->bounds.w = static_cast<int16_t>(w);
@@ -177,6 +213,12 @@ void convert_rect(IOAccelBounds const* src_rect,
 	dest_rect->right = dest_rect->left + src_rect->w;
 	dest_rect->top = src_rect->y + (delta ? delta->y : 0);
 	dest_rect->bottom = dest_rect->top + src_rect->h;
+}
+
+static inline
+uint32_t GMR_VRAM(void)
+{
+	return static_cast<uint32_t>(-2) /* SVGA_GMR_FRAMEBUFFER */;
 }
 
 #pragma mark -
@@ -591,6 +633,11 @@ IOReturn CLASS::newUserClient(task_t owningTask,
 		case kIOAccelSurfaceClientType:
 			if (!checkOptionAC(VMW_OPTION_AC_SURFACE_CONNECT))
 				return kIOReturnUnsupported;
+			/*
+			 * WindowServer is the Creator of All Surfaces
+			 */
+			if (m_updating_ga != 0 && m_updating_ga != owningTask)
+				return kIOReturnNotPrivileged;
 			if (setupAllocator() != kIOReturnSuccess)
 				return kIOReturnNoMemory;
 			client = VMsvga2Surface::withTask(owningTask, securityID, type);
@@ -736,7 +783,7 @@ IOReturn CLASS::RectCopy(uint32_t framebufferIndex,
 		return kIOReturnNoDevice;
 	m_framebuffer->lockDevice();
 	for (i = 0; i < count; ++i) {
-		rc = m_svga->RectCopy(reinterpret_cast<UInt32 const*>(&copyRects[i]));
+		rc = m_svga->RectCopy(reinterpret_cast<uint32_t const*>(&copyRects[i]));
 		if (!rc)
 			break;
 	}
@@ -776,7 +823,8 @@ IOReturn CLASS::RectFillScreen(uint32_t framebufferIndex,
 	extra.srcDeltaY = -static_cast<int>(rgn->bounds.y);
 	c.value = color;
 	m_framebuffer->lockDevice();
-	extra.mem_offset_in_bar1 = reinterpret_cast<vm_offset_t>(p) - m_framebuffer->getVRAMPtr();
+	extra.mem_gmr_id = GMR_VRAM();
+	extra.mem_offset_in_gmr = reinterpret_cast<vm_offset_t>(p) - m_framebuffer->getVRAMPtr();
 	screen.AnnotateFill(c);
 	m_framebuffer->unlockDevice();
 	blitToScreen(framebufferIndex,
@@ -851,7 +899,7 @@ IOReturn CLASS::RectFill(uint32_t framebufferIndex,
 		return kIOReturnNoDevice;
 	m_framebuffer->lockDevice();
 	for (i = 0; i < count; ++i) {
-		rc = m_svga->RectFill(color, reinterpret_cast<UInt32 const*>(&rects[i]));
+		rc = m_svga->RectFill(color, reinterpret_cast<uint32_t const*>(&rects[i]));
 		if (!rc)
 			break;
 	}
@@ -860,7 +908,7 @@ IOReturn CLASS::RectFill(uint32_t framebufferIndex,
 }
 
 HIDDEN
-IOReturn CLASS::UpdateFramebufferAutoRing(UInt32 const* rect)
+IOReturn CLASS::UpdateFramebufferAutoRing(uint32_t const* rect)
 {
 	if (!rect)
 		return kIOReturnBadArgument;
@@ -888,7 +936,7 @@ IOReturn CLASS::CopyRegion(uint32_t framebufferIndex,
 	IOAccelDeviceRegion const* rgn = static_cast<IOAccelDeviceRegion const*>(region);
 	IOAccelBounds const* rect;
 	int deltaX, deltaY;
-	UInt32 i, copyRect[6];
+	uint32_t i, copyRect[6];
 	bool rc;
 
 	if (!rgn || regionSize < IOACCEL_SIZEOF_DEVICE_REGION(rgn))
@@ -994,8 +1042,8 @@ IOReturn CLASS::surfaceDMA2D(uint32_t sid,
 	hostImage.sid = sid;
 	hostImage.face = 0;
 	hostImage.mipmap = 0;
-	guestImage.ptr.gmrId = static_cast<uint32_t>(-2) /* SVGA_GMR_FRAMEBUFFER */;
-	guestImage.ptr.offset = static_cast<uint32_t>(extra->mem_offset_in_bar1);
+	guestImage.ptr.gmrId = extra->mem_gmr_id;
+	guestImage.ptr.offset = static_cast<uint32_t>(extra->mem_offset_in_gmr);
 	guestImage.pitch = static_cast<uint32_t>(extra->mem_pitch);
 	m_framebuffer->lockDevice();
 	rc = svga3d.BeginSurfaceDMA(&guestImage, &hostImage, transfer, &copyBoxes, numCopyBoxes);
@@ -1337,8 +1385,8 @@ IOReturn CLASS::blitFromScreen(uint32_t srcScreenId,
 		return kIOReturnNoDevice;
 	rgn = static_cast<IOAccelDeviceRegion const*>(region);
 	numRects = rgn ? rgn->num_rects : 0;
-	guestPtr.gmrId = static_cast<uint32_t>(-2) /* SVGA_GMR_FRAMEBUFFER */;
-	guestPtr.offset = static_cast<uint32_t>(extra->mem_offset_in_bar1);
+	guestPtr.gmrId = extra->mem_gmr_id;
+	guestPtr.offset = static_cast<uint32_t>(extra->mem_offset_in_gmr);
 	fmt.value = 0x1820U;
 	m_framebuffer->lockDevice();
 	screen.DefineGMRFB(guestPtr,
@@ -1376,8 +1424,8 @@ IOReturn CLASS::blitToScreen(uint32_t destScreenId,
 		return kIOReturnNoDevice;
 	rgn = static_cast<IOAccelDeviceRegion const*>(region);
 	numRects = rgn ? rgn->num_rects : 0;
-	guestPtr.gmrId = static_cast<uint32_t>(-2) /* SVGA_GMR_FRAMEBUFFER */;
-	guestPtr.offset = static_cast<uint32_t>(extra->mem_offset_in_bar1);
+	guestPtr.gmrId = extra->mem_gmr_id;
+	guestPtr.offset = static_cast<uint32_t>(extra->mem_offset_in_gmr);
 	fmt.value = 0x1820U;
 	m_framebuffer->lockDevice();
 	screen.DefineGMRFB(guestPtr,
@@ -1460,6 +1508,8 @@ IOReturn CLASS::blitGFB(uint32_t framebufferIndex,
 
 	if (!extra)
 		return kIOReturnBadArgument;
+	if (extra->mem_gmr_id != GMR_VRAM())
+		return kIOReturnUnsupported;
 	if (!m_framebuffer)
 		return kIOReturnNotReady;
 	rgn = static_cast<IOAccelDeviceRegion const*>(region);
@@ -1473,7 +1523,10 @@ IOReturn CLASS::blitGFB(uint32_t framebufferIndex,
 	 * TBD: should we lock for the entire blit?
 	 */
 	m_framebuffer->unlockDevice();
-	buffer_start = vram_ptr + extra->mem_offset_in_bar1;
+	/*
+	 * TBD: support GMRs other than VRAM
+	 */
+	buffer_start = vram_ptr + extra->mem_offset_in_gmr;
 	buffer_end = vram_ptr + limit;
 	buffer_pitch = static_cast<int>(extra->mem_pitch);
 	for (i = 0; i < numRects; ++i) {
@@ -1678,17 +1731,14 @@ IOReturn CLASS::VideoSetReg(uint32_t streamId,
 HIDDEN
 uint32_t CLASS::AllocSurfaceID()
 {
-	int i;
-	uint64_t x;
+	uint32_t r;
 
 	lockAccel();
-	x = (~m_surface_id_mask) & (m_surface_id_mask + 1);
-	m_surface_id_mask |= x;
-	i = log_2_64(x);
-	if (i < 0)
-		i = static_cast<int>(8U * sizeof(uint64_t) + m_surface_ids_unmanaged++);
+	r = find_bit_in_array64(&m_surface_id_mask, 1U);
+	if (static_cast<int>(r) < 0)
+		r = 8U * static_cast<uint32_t>(sizeof(uint64_t)) + m_surface_ids_unmanaged++;
 	unlockAccel();
-	return static_cast<uint32_t>(i);
+	return r;
 }
 
 HIDDEN
@@ -1704,17 +1754,14 @@ void CLASS::FreeSurfaceID(uint32_t sid)
 HIDDEN
 uint32_t CLASS::AllocContextID()
 {
-	int i;
-	uint64_t x;
+	uint32_t r;
 
 	lockAccel();
-	x = (~m_context_id_mask) & (m_context_id_mask + 1);
-	m_context_id_mask |= x;
-	i = log_2_64(x);
-	if (i < 0)
-		i = static_cast<int>(8U * sizeof(uint64_t) + m_context_ids_unmanaged++);
+	r = find_bit_in_array64(&m_context_id_mask, 1U);
+	if (static_cast<int>(r) < 0)
+		r = 8U * static_cast<uint32_t>(sizeof(uint64_t)) + m_context_ids_unmanaged++;
 	unlockAccel();
-	return static_cast<uint32_t>(i);
+	return r;
 }
 
 HIDDEN
@@ -1730,15 +1777,12 @@ void CLASS::FreeContextID(uint32_t cid)
 HIDDEN
 uint32_t CLASS::AllocStreamID()
 {
-	int i;
-	uint32_t x;
+	uint32_t r;
 
 	lockAccel();
-	x = (~m_stream_id_mask) & (m_stream_id_mask + 1);
-	m_stream_id_mask |= x;
-	i = log_2_32(x);
+	r = find_bit_in_array32(&m_stream_id_mask, 1U);
 	unlockAccel();
-	return static_cast<uint32_t>(i);
+	return r;
 }
 
 HIDDEN
@@ -1754,24 +1798,21 @@ void CLASS::FreeStreamID(uint32_t streamId)
 HIDDEN
 uint32_t CLASS::AllocGMRID()
 {
-	int i;
-	uint64_t x;
+	uint r;
 
 	lockAccel();
-	x = (~m_gmr_id_mask) & (m_gmr_id_mask + 1);
-	m_gmr_id_mask |= x;
-	i = log_2_64(x);
+	r = find_bit_in_array64(&m_gmr_id_mask[0], 2U);
 	unlockAccel();
-	return static_cast<uint32_t>(i);
+	return r;
 }
 
 HIDDEN
 void CLASS::FreeGMRID(uint32_t gmrId)
 {
-	if (gmrId >= 8U * static_cast<uint32_t>(sizeof(uint64_t)))
+	if (gmrId >= 2U * 8U * static_cast<uint32_t>(sizeof(uint64_t)))
 		return;
 	lockAccel();
-	m_gmr_id_mask &= ~(1ULL << gmrId);
+	m_gmr_id_mask[gmrId >> 6] &= ~(1ULL << (gmrId & 63U));
 	unlockAccel();
 }
 
@@ -1835,4 +1876,108 @@ IOMemoryMap* CLASS::mapVRAMRangeForTask(task_t task, vm_offset_t offset_in_bar1,
 									   kIOMapAnywhere,
 									   offset_in_bar1,
 									   size);
+}
+
+#pragma mark -
+#pragma mark GMR Allocation
+#pragma mark -
+
+HIDDEN
+IOReturn CLASS::createGMR(uint32_t gmrId, IOMemoryDescriptor* md)
+{
+	IOBufferMemoryDescriptor* helper;
+	addr64_t phys_addr;
+	IOByteCount offset, length = 0U, helper_length = 0U;
+	size_t const dpp = (PAGE_SIZE / sizeof(SVGAGuestMemDescriptor)) - 1U;
+	size_t const max_bits = PAGE_SHIFT + 8U * sizeof(uint32_t);
+	size_t num_physical_ranges, num_pages, next_page, in_page_count;
+	IOVirtualAddress helper_base;
+	SVGAGuestMemDescriptor* helper_ptr;
+	uint32_t helper_base_ppn, helper_ppn;
+	IOReturn rc;
+
+	if (!md)
+		return kIOReturnBadArgument;
+	if (!m_framebuffer)
+		return kIOReturnNoDevice;
+	if (!m_svga->HasCapability(SVGA_CAP_GMR))
+		return kIOReturnUnsupported;
+	num_physical_ranges = 0U;
+	offset = 0U;
+	while ((phys_addr = md->getPhysicalSegment(offset, &length, 0U))) {
+#ifdef __LP64__
+		if (phys_addr >> max_bits)
+			return kIOReturnUnsupported;
+#endif
+		++num_physical_ranges;
+		offset += length;
+	}
+	if (!num_physical_ranges)
+		return kIOReturnBadArgument;
+	num_pages = (num_physical_ranges + (dpp - 1U)) / dpp;
+	if (num_physical_ranges + num_pages > m_svga->getMaxGMRDescriptorLength())
+		return kIOReturnNoResources;
+	helper = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(kernel_task,
+															  0U,
+															  num_pages << PAGE_SHIFT,
+															  ((1ULL << max_bits) - 1ULL) & -PAGE_SIZE);
+	if (!helper)
+		return kIOReturnNoResources;
+	rc = helper->prepare();
+	if (rc != kIOReturnSuccess) {
+		helper->release();
+		return rc;
+	}
+	helper_base = reinterpret_cast<IOVirtualAddress>(helper->getBytesNoCopy());
+	helper_ptr = reinterpret_cast<SVGAGuestMemDescriptor*>(helper_base);
+	bzero(helper_ptr, num_pages << PAGE_SHIFT);
+	helper_ppn = static_cast<uint32_t>(helper->getPhysicalSegment(0U, &helper_length, 0U) >> PAGE_SHIFT);
+	helper_base_ppn = helper_ppn;
+	++helper_ppn;
+	helper_length -= PAGE_SIZE;
+	offset = 0U;
+	next_page = 1U;
+	in_page_count = dpp;
+	while ((phys_addr = md->getPhysicalSegment(offset, &length, 0U))) {
+		offset += length;
+		length += static_cast<IOByteCount>(phys_addr & (PAGE_SIZE - 1U));
+		length = (length + (PAGE_SIZE - 1U)) & -PAGE_SIZE;
+		helper_ptr->ppn = static_cast<uint32_t>(phys_addr >> PAGE_SHIFT);
+		helper_ptr->numPages = static_cast<uint32_t>(length >> PAGE_SHIFT);
+		++helper_ptr;
+		--in_page_count;
+		if (in_page_count)
+			continue;
+		if (static_cast<intptr_t>(helper_length) > 0)
+			;
+		else if (next_page < num_pages) {
+			helper_ppn = static_cast<uint32_t>(helper->getPhysicalSegment(next_page << PAGE_SHIFT, &helper_length, 0U) >> PAGE_SHIFT);
+		} else
+			break;
+		helper_ptr->ppn = helper_ppn;
+		++helper_ppn;
+		helper_length -= PAGE_SIZE;
+		helper_ptr = reinterpret_cast<SVGAGuestMemDescriptor*>(helper_base + next_page * PAGE_SIZE);
+		++next_page;
+		in_page_count = dpp;
+	}
+	m_framebuffer->lockDevice();
+	m_svga->defineGMR(gmrId, helper_base_ppn);
+	m_framebuffer->unlockDevice();
+	helper->complete();
+	helper->release();
+	return kIOReturnSuccess;
+}
+
+HIDDEN
+IOReturn CLASS::destroyGMR(uint32_t gmrId)
+{
+	if (!m_framebuffer)
+		return kIOReturnNoDevice;
+	if (!m_svga->HasCapability(SVGA_CAP_GMR))
+		return kIOReturnUnsupported;
+	m_framebuffer->lockDevice();
+	m_svga->defineGMR(gmrId, 0U);
+	m_framebuffer->unlockDevice();
+	return kIOReturnSuccess;
 }

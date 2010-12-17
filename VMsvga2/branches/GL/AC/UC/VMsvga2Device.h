@@ -40,22 +40,13 @@ class VMsvga2Device: public IOUserClient
 
 private:
 	task_t m_owning_task;
-	class VMsvga2Accel* m_provider;
+	class VMsvga2Accel* m_provider;	// offset 0x84
 	int m_log_level;
 
+	class VMsvga2Shared* m_shared;	// offset 0x7C
 	class IOMemoryMap* m_channel_memory_map;
-	class IOMemoryMap* m_client_sys_objs_map;
-	void* m_client_sys_objs_ptr;
-	uint32_t m_next_obj_id;
 
 	void Cleanup();
-	IOReturn allocClientSysObj(struct GLDSysObject**, mach_vm_address_t*);
-	GLDSysObject* findClientSysObj(uint32_t object_id);
-	VMsvga2TextureBuffer* new_surface_texture(uint32_t, uint32_t, uint64_t*);
-	VMsvga2TextureBuffer* new_iosurface_texture(uint32_t, uint32_t, uint32_t, uint32_t, uint64_t*);
-	VMsvga2TextureBuffer* new_texture_internal(uint32_t, uint32_t, uint64_t, uint32_t, uint32_t, uint64_t*, uint64_t*);
-	VMsvga2TextureBuffer* new_agpref_texture(uint64_t, uint64_t, uint32_t, uint32_t, uint64_t*);
-	bool initializeTexture(VMsvga2TextureBuffer*, struct VendorNewTextureDataStruc const*);
 
 public:
 	/*
@@ -75,7 +66,7 @@ public:
 	 * Interface for VMsvga2GLContext
 	 */
 	task_t getOwningTask() const { return m_owning_task; }
-	void derefSysObject(uint32_t object_id);
+	class VMsvga2Shared* getShared() const { return m_shared; }
 
 	/*
 	 * Methods from IONVDevice

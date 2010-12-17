@@ -34,6 +34,7 @@
 
 struct VendorCommandBufferHeader;
 struct VendorGLStreamInfo;
+struct VMsvga2TextureBuffer;
 class IOMemoryDescriptor;
 
 struct VMsvga2CommandBuffer
@@ -55,7 +56,7 @@ private:
 	class VMsvga2Accel* m_provider;			// offset 0x80
 	int m_log_level;
 											// offset 0x84 - 0x8C: unknown
-	class VMsvga2Device* shared;			// offset 0x8C
+	class VMsvga2Shared* m_shared;			// offset 0x8C
 											// offset 0x90 - 0xB4: unknown 
 	IOMemoryDescriptor* m_type2;			// offset 0xB4
 	size_t m_type2_len;						// offset 0xB8
@@ -68,6 +69,7 @@ private:
 	VMsvga2CommandBuffer m_context_buffer1; // offset 0x130 - 0x154
 	uint32_t m_mem_type;					// offset 0x19C
 	int m_stream_error;						// offset 0x194
+	VMsvga2TextureBuffer* txs[16U];			// offset 0x1B0
 
 	void Cleanup();
 	bool allocCommandBuffer(VMsvga2CommandBuffer*, size_t);
@@ -75,8 +77,12 @@ private:
 	bool allocAllContextBuffers();
 	class VMsvga2Surface* findSurfaceforID(uint32_t surface_id);
 	IOReturn get_status(uint32_t*);
-	void processCommandBuffer();
+	uint32_t processCommandBuffer(struct VendorCommandDescriptor*);
 	void discardCommandBuffer();
+	void removeTextureFromStream(VMsvga2TextureBuffer*);
+	void addTextureToStream(VMsvga2TextureBuffer*);
+	void get_texture(VendorGLStreamInfo*, VMsvga2TextureBuffer*, bool);
+	void write_tex_data(uint32_t, uint32_t*, VMsvga2TextureBuffer*);
 
 public:
 	/*

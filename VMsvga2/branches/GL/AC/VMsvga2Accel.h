@@ -74,7 +74,7 @@ private:
 	unsigned bHaveScreenObject:1;
 	uint64_t m_surface_id_mask;
 	uint64_t m_context_id_mask;
-	uint64_t m_gmr_id_mask;
+	uint64_t m_gmr_id_mask[2];
 	uint32_t m_surface_ids_unmanaged;
 	uint32_t m_context_ids_unmanaged;
 	int volatile m_master_surface_retain_count;
@@ -164,7 +164,7 @@ public:
 					  uint32_t color,
 					  struct IOBlitRectangleStruct const* rects,
 					  size_t rectsSize);
-	IOReturn UpdateFramebufferAutoRing(UInt32 const* rect);	// rect is an array of 4 UInt32 - x, y, width, height
+	IOReturn UpdateFramebufferAutoRing(uint32_t const* rect);	// rect is an array of 4 uint32_t - x, y, width, height
 	IOReturn CopyRegion(uint32_t framebufferIndex,
 						int destX,
 						int destY,
@@ -179,12 +179,13 @@ public:
 	 * Methods for supporting VMsvga2Surface
 	 */
 	struct ExtraInfo {
-		vm_offset_t mem_offset_in_bar1;
+		vm_offset_t mem_offset_in_gmr;
 		vm_size_t mem_pitch;
 		int srcDeltaX;
 		int srcDeltaY;
 		int dstDeltaX;
 		int dstDeltaY;
+		uint32_t mem_gmr_id;
 	};
 	/*
 	 * SVGA3D Methods
@@ -323,6 +324,12 @@ public:
 	void* VRAMRealloc(void* ptr, size_t bytes);
 	void VRAMFree(void* ptr);
 	IOMemoryMap* mapVRAMRangeForTask(task_t task, vm_offset_t offset_in_bar1, vm_size_t size);
+
+	/*
+	 * GMR Allocation
+	 */
+	IOReturn createGMR(uint32_t gmrId, IOMemoryDescriptor* md);
+	IOReturn destroyGMR(uint32_t gmrId);
 };
 
 #endif /* __VMSVGA2ACCEL_H__ */

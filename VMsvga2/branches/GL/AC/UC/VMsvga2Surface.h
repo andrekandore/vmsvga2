@@ -182,6 +182,9 @@ private:
 	 */
 	IOReturn copy_to_client_backing();
 	IOReturn copy_from_client_backing();
+	IOReturn copy_from_screen_to_client_backing(uint32_t framebufferIndex,
+												IOAccelDeviceRegion const* region,
+												void* extra);
 
 	/*
 	 * Private support methods - 3D

@@ -34,6 +34,7 @@
 #include "VMsvga2GLContext.h"
 #include "VMsvga2Surface.h"
 #include "VMsvga2Device.h"
+#include "VMsvga2Shared.h"
 #include "ACMethods.h"
 #include "UCTypes.h"
 
@@ -130,11 +131,22 @@ struct VendorCommandBufferHeader
 	uint32_t begin;
 };
 
-struct VendorGLStreamInfo {
+struct VendorGLStreamInfo {	// start 0x20C
 	uint32_t* p;
-	uint32_t* limit;
-	uint32_t flags; // offset 0x18
-	uint32_t unknown1; // offset 0x1F0
+	uint32_t cmd;
+	uint32_t f0;		// offset 0x8
+	int num_words_done;	// offset 0xC
+	uint32_t f2;		// offset 0x10
+	uint8_t f3;			// offset 0x14
+	uint32_t flags;		// offset 0x18
+	uint32_t* limit;	// added
+};
+
+struct VendorCommandDescriptor {
+	uint32_t* next;
+	uint32_t* f0;
+	uint32_t num_words_done;
+	uint32_t f2;
 };
 
 #pragma mark -
@@ -262,9 +274,9 @@ void unlockAccel(VMsvga2Accel* accel)
 HIDDEN
 void CLASS::Cleanup()
 {
-	if (shared) {
-		shared->release();
-		shared = 0;
+	if (m_shared) {
+		m_shared->release();
+		m_shared = 0;
 	}
 	if (surface_client) {
 		surface_client->release();
@@ -387,10 +399,10 @@ IOReturn CLASS::get_status(uint32_t* status)
 }
 
 HIDDEN
-void CLASS::processCommandBuffer()
+uint32_t CLASS::processCommandBuffer(VendorCommandDescriptor* result)
 {
 	VendorGLStreamInfo cb_iter;
-	uint32_t cmd, upper, commands_processed;
+	uint32_t upper, commands_processed;
 #if 0
 	int i, lim;
 #endif
@@ -407,15 +419,19 @@ void CLASS::processCommandBuffer()
 		GLLog(2, "%s:   command[%d] == %#x\n", __FUNCTION__,
 			  i, m_command_buffer.kernel_ptr->data[i + 8]);
 #endif
+	cb_iter.f0 = 0U;
 	cb_iter.p = &m_command_buffer.kernel_ptr->begin;
 	cb_iter.limit = &m_command_buffer.kernel_ptr->data[0] +  m_command_buffer.size / sizeof(uint32_t);
+	cb_iter.num_words_done = -1;
+	cb_iter.flags = 0U;
+	cb_iter.f2 = 0U;
+	cb_iter.f3 = 1U;
 	commands_processed = 0;
 	m_stream_error = 0;
 	do {
-		cmd = *cb_iter.p;
-		upper = cmd >> 24;
-		cmd &= 0xFFFFFFU;
-		GLLog(2, "%s:   cmd %#x length %u\n", __FUNCTION__, upper, cmd);
+		cb_iter.cmd = *cb_iter.p;
+		upper = cb_iter.cmd >> 24;
+		GLLog(2, "%s:   cmd %#x length %u\n", __FUNCTION__, upper, cb_iter.cmd & 0xFFFFFFU);
 		if (upper <= 10U)
 			(this->*dispatch_process_1[upper])(&cb_iter);
 		else if (upper >= 32U && upper <= 61U)
@@ -423,35 +439,71 @@ void CLASS::processCommandBuffer()
 		if (m_stream_error)
 			break;
 		++commands_processed;
-		cb_iter.p += cmd;
+		cb_iter.cmd &= 0xFFFFFFU;
+		cb_iter.p += cb_iter.cmd;
+		cb_iter.num_words_done += cb_iter.cmd;
 		if (cb_iter.limit <= cb_iter.p)
 			break;
-	} while (cmd);
+	} while (cb_iter.cmd);
 	GLLog(2, "%s:   processed %d stream commands, error == %#x\n", __FUNCTION__, commands_processed, m_stream_error);
+	result->next = &m_command_buffer.kernel_ptr->data[8] + cb_iter.f0 / sizeof(uint32_t);
+	result->f0 = 0; // same as next, but off byte pointer @ m_command_buffer.pad1[1]
+	result->num_words_done = cb_iter.num_words_done;
+	result->f2 = cb_iter.f2;
+	return cb_iter.flags;
 }
 
 HIDDEN
 void CLASS::discardCommandBuffer()
 {
 	VendorGLStreamInfo cb_iter;
-	uint32_t cmd, upper;
+	uint32_t upper;
+	cb_iter.f0 = 0U;
 	cb_iter.p = &m_command_buffer.kernel_ptr->begin;
 	cb_iter.limit = &m_command_buffer.kernel_ptr->data[0] +  m_command_buffer.size / sizeof(uint32_t);
+	cb_iter.num_words_done = -1;
+	cb_iter.flags = 0U;
+	cb_iter.f2 = 0U;
+	cb_iter.f3 = 1U;
 	do {
-		cmd = *cb_iter.p;
-		upper = cmd >> 24;
-		cmd &= 0xFFFFFFU;
+		cb_iter.cmd = *cb_iter.p;
+		upper = cb_iter.cmd >> 24;
+		GLLog(2, "%s:   cmd %#x length %u\n", __FUNCTION__, upper, cb_iter.cmd & 0xFFFFFFU);
 		if (upper <= 10U)
 			(this->*dispatch_discard_1[upper])(&cb_iter);
 		else if (upper >= 32U && upper <= 61U)
 			(this->*dispatch_discard_2[upper - 32U])(&cb_iter);
+		else
+			m_stream_error = 5;
 		/*
 		 * Note: ignores errors
 		 */
-		cb_iter.p += cmd;
+		cb_iter.cmd &= 0xFFFFFFU;
+		cb_iter.p += cb_iter.cmd;
+		cb_iter.num_words_done += cb_iter.cmd;
 		if (cb_iter.limit <= cb_iter.p)
 			break;
-	} while (cmd);
+	} while (cb_iter.cmd);
+}
+
+HIDDEN
+void CLASS::removeTextureFromStream(VMsvga2TextureBuffer*)
+{
+}
+
+HIDDEN
+void CLASS::addTextureToStream(VMsvga2TextureBuffer*)
+{
+}
+
+HIDDEN
+void CLASS::get_texture(VendorGLStreamInfo*, VMsvga2TextureBuffer*, bool)
+{
+}
+
+HIDDEN
+void CLASS::write_tex_data(uint32_t, uint32_t*, VMsvga2TextureBuffer*)
+{
 }
 
 #pragma mark -
@@ -495,6 +547,7 @@ IOReturn CLASS::clientMemoryForType(UInt32 type, IOOptionBits* options, IOMemory
 	IOMemoryDescriptor* md;
 	IOBufferMemoryDescriptor* bmd;
 	size_t d;
+	VendorCommandDescriptor result;
 
 	GLLog(2, "%s(%u, options_out, memory_out)\n", __FUNCTION__, static_cast<unsigned>(type));
 	if (type > 4U || !options || !memory)
@@ -518,7 +571,7 @@ IOReturn CLASS::clientMemoryForType(UInt32 type, IOOptionBits* options, IOMemory
 			 * TBD: Huge amount of code to process previous command buffer
 			 *   A0B7-AB58
 			 */
-			processCommandBuffer();
+			processCommandBuffer(&result);
 			discardCommandBuffer();
 			lockAccel(m_provider);
 			/*
@@ -619,25 +672,23 @@ IOReturn CLASS::clientMemoryForType(UInt32 type, IOOptionBits* options, IOMemory
 	return super::clientMemoryForType(type, options, memory);
 }
 
-/*
- * Note:
- *   Apple's drivers actually connect the "Shared" object, not the
- *   Device UC itself.  The "Shared" class implements the
- *   functionality of the Device UC.
- */
 IOReturn CLASS::connectClient(IOUserClient* client)
 {
 	VMsvga2Device* d;
+	VMsvga2Shared* s;
 	GLLog(2, "%s(%p), name == %s\n", __FUNCTION__, client, client ? client->getName() : "NULL");
 	d = OSDynamicCast(VMsvga2Device, client);
 	if (!d)
 		return kIOReturnError;
 	if (d->getOwningTask() != m_owning_task)
 		return kIOReturnNotPermitted;
-	d->retain();
-	if (shared)
-		shared->release();
-	shared = d;
+	s = d->getShared();
+	if (!s)
+		return kIOReturnNotReady;
+	s->retain();
+	if (m_shared)
+		m_shared->release();
+	m_shared = s;
 	return kIOReturnSuccess;
 }
 
@@ -1182,20 +1233,62 @@ void CLASS::process_token_Flush(VendorGLStreamInfo* info)
 HIDDEN
 void CLASS::discard_token_Texture(VendorGLStreamInfo* info)
 {
-	if (!shared)
+	VMsvga2TextureBuffer* tx;
+	if (!m_shared)
 		return;
-	shared->derefSysObject((info->p)[2]);
+#if 0
+	tx = m_shared->findTextureBuffer((info->p)[2]);
+	if (!tx)
+		return;
+	if (__sync_fetch_and_add(&tx->sys_obj->refcount, -0x10000) == 0x10000)
+		m_shared->delete_texture(tx);
+#else
+	uint32_t* q = info->p + 2;	// edi
+	uint32_t i, bit_mask = info->p[1];	// var_2c
+	for (i = 0U; i != 16U; ++i) {
+		tx = txs[i];
+		if (tx) {
+			removeTextureFromStream(tx);
+			if (__sync_fetch_and_add(&tx->sys_obj->refcount, -1) == 1) {
+				GLLog(2, "%s:     deleting tx %u\n", __FUNCTION__,
+					  tx->sys_obj->object_id);
+				m_shared->delete_texture(tx);
+			} else {
+				GLLog(2, "%s:     refcount for tx %u is %#x\n", __FUNCTION__,
+					  tx->sys_obj->object_id, tx->sys_obj->refcount);
+			}
+
+			txs[i] = 0;
+		}
+		if (!((bit_mask >> i) & 1U))
+			continue;
+		tx = m_shared->findTextureBuffer(*q);
+		if (!tx) {
+			info->cmd = 0U;
+			info->num_words_done = 0U;
+			// m_provider->0x50 -= info->f2;
+			m_stream_error = 2;
+			return;
+		}
+		addTextureToStream(tx);
+		__sync_fetch_and_add(&tx->sys_obj->refcount, -0xFFFF);
+		GLLog(2, "%s:     refcount for tx %u is %#x\n", __FUNCTION__,
+			  tx->sys_obj->object_id, tx->sys_obj->refcount);
+		GLLog(2, "%s:     tx %u params %#x, %#x\n", __FUNCTION__, *q, q[1], q[2]);
+		txs[i] = tx;
+		q += 3;
+	}
+#endif
 }
 
 HIDDEN void CLASS::discard_token_NoTex(VendorGLStreamInfo*) {}
+HIDDEN void CLASS::discard_token_VertexBuffer(VendorGLStreamInfo* info) {}
 
-HIDDEN
-void CLASS::discard_token_VertexBuffer(VendorGLStreamInfo* info)
+HIDDEN void CLASS::discard_token_NoVertexBuffer(VendorGLStreamInfo*)
 {
-	info->unknown1 = 0;
+	// dword ptr @this+0x1F0 = 0U;
 }
 
-HIDDEN void CLASS::discard_token_NoVertexBuffer(VendorGLStreamInfo*) {}
 HIDDEN void CLASS::discard_token_DrawBuffer(VendorGLStreamInfo*) {}
 HIDDEN void CLASS::discard_token_Noop(VendorGLStreamInfo*) {} // Null
 HIDDEN void CLASS::discard_token_TexSubImage2D(VendorGLStreamInfo*) {}
@@ -1207,7 +1300,53 @@ void CLASS::discard_token_AsyncReadDrawBuffer(VendorGLStreamInfo* info)
 	bzero(info->p, 10U * sizeof(uint32_t));
 }
 
-HIDDEN void CLASS::process_token_Texture(VendorGLStreamInfo*) {}
+HIDDEN
+void CLASS::process_token_Texture(VendorGLStreamInfo* info)
+{
+#if 0
+	VMsvga2TextureBuffer* tx;
+	uint32_t* q = info->p + 2;	// var_2c
+	// var_38 = info->p;
+	uint32_t bit_mask = info->p[1];	// var_34, also to this->0x238
+	uint32_t i, count = 0; // var_30
+	for (i = 0U; i != 16U; ++i) {
+		tx = txs[i];
+		if (tx) {
+			removeTextureFromStream(tx);
+			if (__sync_fetch_and_add(&tx->sys_obj->refcount, -1) == 1)
+				m_shared->delete_texture(tx);
+			txs[i] = 0;
+		}
+		if (!((bit_mask >> i) & 1U))
+			continue;
+		tx = m_shared->findTextureBuffer(*q);	// tx now in var_1c
+		if (!tx) {
+			// 1f2ae
+			info->cmd = 0U;
+			info->num_words_done = 0U;
+			// m_provider->0x50 -= info->f2;
+			m_stream_error = 2;
+			return;
+		}
+		++count;
+		addTextureToStream(tx);
+		get_texture(info, tx, true);
+		__sync_fetch_and_add(&tx->sys_obj->refcount, -0xFFFF);
+		// this->0x240 = 0
+		// this->0x244 = q[1];
+		// this->0x248 = q[2];
+		write_tex_data(i, q, tx);
+		txs[i] = tx;
+		q += 3;
+	}
+	// this->0x23C = count
+	if (count)
+		info->p[0] = 0x7D000000U | (3U * count);
+	else
+		info->p[0] = 0;
+#endif
+}
+
 HIDDEN void CLASS::process_token_NoTex(VendorGLStreamInfo*) {}
 HIDDEN void CLASS::process_token_VertexBuffer(VendorGLStreamInfo*) {}
 HIDDEN void CLASS::process_token_NoVertexBuffer(VendorGLStreamInfo*) {}

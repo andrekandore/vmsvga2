@@ -49,6 +49,7 @@
 		E58ACDA810CC439E0051F215 /* EntryPointNames.c in Sources */ = {isa = PBXBuildFile; fileRef = E58ACDA710CC439E0051F215 /* EntryPointNames.c */; };
 		E58AE5721268EC5900ABABF8 /* SendString.c in Sources */ = {isa = PBXBuildFile; fileRef = 7987F8851037020E003B52A2 /* SendString.c */; };
 		E590EA9510CD311F0019BC36 /* SendString.c in Sources */ = {isa = PBXBuildFile; fileRef = 7987F8851037020E003B52A2 /* SendString.c */; settings = {COMPILER_FLAGS = "-mdynamic-no-pic"; }; };
+		E5912BF712B921320028A17D /* VMsvga2Shared.cpp in Sources */ = {isa = PBXBuildFile; fileRef = E5912BF612B921320028A17D /* VMsvga2Shared.cpp */; };
 		E594320012A80FF700F55717 /* IOKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = E52B47CC10B5B4B5002470B4 /* IOKit.framework */; };
 		E59B1DB212ABDD0800F3C4A9 /* GLDData.c in Sources */ = {isa = PBXBuildFile; fileRef = E59B1DB112ABDD0800F3C4A9 /* GLDData.c */; };
 		E59B1DB712ABDD2300F3C4A9 /* GLDCode.c in Sources */ = {isa = PBXBuildFile; fileRef = E59B1DB612ABDD2300F3C4A9 /* GLDCode.c */; };
@@ -148,6 +149,8 @@
 		E588767B1269C9D3001B5608 /* IOSurfaceRoot.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = IOSurfaceRoot.h; sourceTree = "<group>"; };
 		E58ACDA710CC439E0051F215 /* EntryPointNames.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = EntryPointNames.c; sourceTree = "<group>"; };
 		E58ACDA910CC44A60051F215 /* EntryPointNames.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = EntryPointNames.h; sourceTree = "<group>"; };
+		E5912BF512B921320028A17D /* VMsvga2Shared.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = VMsvga2Shared.h; sourceTree = "<group>"; };
+		E5912BF612B921320028A17D /* VMsvga2Shared.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = VMsvga2Shared.cpp; sourceTree = "<group>"; };
 		E592EC7912A83E7E001700AC /* GLDTypes.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = GLDTypes.h; sourceTree = "<group>"; };
 		E5993C7F10A058070021B17F /* svga3d_caps.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = svga3d_caps.h; sourceTree = "<group>"; };
 		E59B1DB012ABDD0800F3C4A9 /* GLDData.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = GLDData.h; sourceTree = "<group>"; };
@@ -275,6 +278,7 @@
 				E5795F5812B398DC00DF5207 /* UCTypes.h */,
 				7919BDDD102B200500E56229 /* VMsvga2Accel.h */,
 				799EFBCE10483D9C003195B5 /* VMsvga2Allocator.h */,
+				E5912BF512B921320028A17D /* VMsvga2Shared.h */,
 				7986F8FF103B138900CD6D69 /* vmw_options_ac.h */,
 			);
 			name = Headers;
@@ -287,6 +291,7 @@
 				E577F63710A089750047C956 /* SVGAScreen.cpp */,
 				7919BDE0102B203500E56229 /* VMsvga2Accel.cpp */,
 				799EFBCF10483D9C003195B5 /* VMsvga2Allocator.cpp */,
+				E5912BF612B921320028A17D /* VMsvga2Shared.cpp */,
 			);
 			name = Source;
 			sourceTree = "<group>";
@@ -549,6 +554,7 @@
 				E503A17D10838E1700D1649D /* VMsvga22DContext.cpp in Sources */,
 				790CE2501084E41B004D109E /* VLog.c in Sources */,
 				E577F63810A089750047C956 /* SVGAScreen.cpp in Sources */,
+				E5912BF712B921320028A17D /* VMsvga2Shared.cpp in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
