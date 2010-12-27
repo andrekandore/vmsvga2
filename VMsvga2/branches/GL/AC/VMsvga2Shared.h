@@ -48,7 +48,7 @@ struct VMsvga2TextureBuffer
 	uint32_t width;					// offset 0x40
 	uint16_t height;				// offset 0x44
 	uint16_t depth;					// offset 0x46
-	uint32_t f1;					// offset 0x48
+	uint32_t f0;					// offset 0x48
 	uint32_t pitch;					// offset 0x4C
 	uint32_t pad2[2];				// offset 0x50
 	uint16_t bytespp;				// offset 0x58
@@ -62,6 +62,11 @@ struct VMsvga2TextureBuffer
 	mach_vm_offset_t agp_addr;		// offset 0x8C
 	vm_size_t agp_size;				// offset 0x94
 									// ends   0xAC
+	uint32_t surface_id;
+	uint32_t gmr_id;
+	uint32_t lastDMAfence;
+	int surface_format;
+	int surface_changed;
 };
 
 class VMsvga2Shared : public OSObject
@@ -124,8 +129,8 @@ public:
 	bool initializeTexture(VMsvga2TextureBuffer*, struct VendorNewTextureDataStruc const*);
 	VMsvga2TextureBuffer* new_surface_texture(uint32_t, uint32_t, mach_vm_address_t*);
 	VMsvga2TextureBuffer* new_iosurface_texture(uint32_t, uint32_t, uint32_t, uint32_t, mach_vm_address_t*);
-	VMsvga2TextureBuffer* new_texture(uint32_t num_vertices,
-									  uint32_t use_obj8,
+	VMsvga2TextureBuffer* new_texture(uint32_t size0,
+									  uint32_t size1,
 									  mach_vm_address_t pixels,
 									  size_t texture_size,
 									  uint32_t read_only,

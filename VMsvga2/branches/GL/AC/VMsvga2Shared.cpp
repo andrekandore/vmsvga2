@@ -27,6 +27,7 @@
  */
 
 #include <IOKit/IOBufferMemoryDescriptor.h>
+#include "VMsvga2Accel.h"
 #include "VMsvga2Shared.h"
 #include "UCTypes.h"
 #include "VLog.h"
@@ -253,6 +254,10 @@ void CLASS::finalize_texture(class VMsvga2Accel* provider, VMsvga2TextureBuffer*
 		texture->md->release();
 		texture->md = 0;
 	}
+	if (static_cast<int>(texture->surface_id) >= 0) {
+		provider->destroySurface(texture->surface_id);
+		provider->FreeSurfaceID(texture->surface_id);
+	}
 }
 
 HIDDEN
@@ -462,6 +467,9 @@ VMsvga2TextureBuffer* CLASS::common_texture_init(uint8_t object_type)
 	sys_obj->type = object_type;
 	sys_obj->in_use = 1U;
 	p->sys_obj_type = object_type;
+	p->surface_id = static_cast<uint32_t>(-1);
+	p->gmr_id = static_cast<uint32_t>(-1);
+	p->surface_format = SVGA3D_FORMAT_INVALID;
 	return p;
 }
 
@@ -534,8 +542,8 @@ VMsvga2TextureBuffer* CLASS::new_iosurface_texture(uint32_t, uint32_t, uint32_t,
 }
 
 HIDDEN
-VMsvga2TextureBuffer* CLASS::new_texture(uint32_t num_vertices,
-										 uint32_t use_obj8,
+VMsvga2TextureBuffer* CLASS::new_texture(uint32_t size0,
+										 uint32_t size1,
 										 mach_vm_address_t pixels,
 										 size_t texture_size,
 										 uint32_t read_only,
@@ -548,7 +556,7 @@ VMsvga2TextureBuffer* CLASS::new_texture(uint32_t num_vertices,
 	vm_size_t total_size, overhead;
 	uint8_t obj_type;
 	SHLog(2, "%s(%#x, %u, %#llx, %lu, %u, out1, out2)\n", __FUNCTION__,
-		  num_vertices, use_obj8, pixels, texture_size, read_only);
+		  size0, size1, pixels, texture_size, read_only);
 	if (pixels && texture_size) {
 		p1 = new_agp_texture(pixels, texture_size, read_only, &agp_sys_obj_client_addr);
 		if (!p1) {
@@ -559,7 +567,7 @@ VMsvga2TextureBuffer* CLASS::new_texture(uint32_t num_vertices,
 		overhead = 0x900U;
 	} else {
 		p1 = 0;
-		if (use_obj8) {
+		if (size1) {
 			obj_type = 8U;
 			overhead = 0x900U;
 		} else {
@@ -567,7 +575,7 @@ VMsvga2TextureBuffer* CLASS::new_texture(uint32_t num_vertices,
 			overhead = 0x80U;
 		}
 	}
-	total_size = (3U * num_vertices + overhead + (PAGE_SIZE - 1U)) & -PAGE_SIZE;
+	total_size = (3U * size0 + overhead + (PAGE_SIZE - 1U)) & -PAGE_SIZE;
 #if 0
 	vm_size_t limit = 3U * (m_provider->0x93C << PAGE_SHIFT) >> 2;
 	if (total_size > limit)
@@ -598,7 +606,7 @@ VMsvga2TextureBuffer* CLASS::new_texture(uint32_t num_vertices,
 		SHLog(1, "%s: createMappingInTask failed\n", __FUNCTION__);
 		goto clean3;
 	}
-	p2->pad2[0] = use_obj8;
+	p2->pad2[0] = size1;
 	if (obj_type == 9U) {
 		p2->linked_agp = p1;
 		__sync_fetch_and_add(&p1->sys_obj->refcount, 1);

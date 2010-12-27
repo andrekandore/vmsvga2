@@ -53,6 +53,7 @@ private:
 	unsigned bDirectBlit:1;
 	unsigned bHaveScreenObject:1;
 	unsigned bSkipWriteLockOnce:1;
+	unsigned bGLMode:1;
 
 	/*
 	 * Locking stuff
@@ -132,12 +133,16 @@ private:
 	} m_video;
 
 	/*
-	 * GL support stuff
+	 * GL stuff
 	 */
 
 	struct {
 		int original_mode_bits;
 		uint32_t region_status[4];
+		uint32_t cid;
+		uint32_t color_sid;		// TBD: support two of these for double-buffering
+		uint32_t depth_sid;
+		uint32_t stencil_sid;
 	} m_gl;
 
 #ifdef TESTING
@@ -220,6 +225,14 @@ private:
 	bool setVideoRegs();
 	void videoReshape();
 
+	/*
+	 * Private support methods - GL
+	 */
+	void InitGL();
+	void CleanupGL();
+	IOReturn flushGLSurface();
+	IOReturn copyGLSurfaceToBacking();
+
 public:
 	/*
 	 * Methods overridden from superclass
@@ -271,6 +284,9 @@ public:
 	 */
 	int getOriginalModeBits() const { return m_gl.original_mode_bits; }
 	void getBoundsForStatus(uint32_t* bounds) const;
+	IOReturn attachGL(uint32_t context_id, int cmb);
+	IOReturn detachGL();
+	void copyFromTexture(uint32_t surface_id, IOAccelBounds const* rect);
 
 	/*
 	 * IOAccelSurfaceConnect

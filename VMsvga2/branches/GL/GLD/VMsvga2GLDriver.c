@@ -615,14 +615,18 @@ GLDReturn gldCreateContextInternal(gld_context_t** struct_out,
 						   void* arg4,
 						   void* arg5)
 {
+#if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ >= 1060
 	uint64_t input;
 	struct sIOGLGetCommandBuffer outputStruct;
+#endif
 	display_info_t* dinfo;
 	gld_context_t* context;
 	GLDReturn rc;
 	kern_return_t kr;
 	uint32_t disp_num;
+#if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ >= 1060
 	size_t outputStructCnt;
+#endif
 
 	GLDLog(2, "%s(struct_out, %p, %p, %p, %p, %p)\n", __FUNCTION__, pixel_format, shared, arg3, arg4, arg5);
 
@@ -650,6 +654,7 @@ GLDReturn gldCreateContextInternal(gld_context_t** struct_out,
 		return kCGLBadCodeModule;
 	}
 	context->command_buffer_ptr = 0;
+#if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ >= 1060
 	input = 0;
 	outputStructCnt = sizeof outputStruct;
 	kr = IOConnectCallMethod(context->context_obj,
@@ -659,6 +664,7 @@ GLDReturn gldCreateContextInternal(gld_context_t** struct_out,
 							 &outputStruct, &outputStructCnt);
 	context->command_buffer_ptr = (uint32_t*) (uintptr_t) outputStruct.addr[0];	// Note: truncation in 32-bits
 	context->command_buffer_size = outputStruct.len[0];
+#endif
 	if (kr != ERR_SUCCESS) {
 #if 0
 		glrKillClient(kr);
@@ -1054,27 +1060,73 @@ GLDReturn gldAttachDrawable(gld_context_t* context, int surface_type, uint32_t c
 	return -1;
 }
 
-GLDReturn gldInitDispatch(void* arg0, void* arg1, void* arg2)
+/*
+ * Notes:
+ *   dispatch_table - pointer to 33-entry dispatch table.
+ *     table is prefilled with pointers to gliDispatchNoop, which returns 0.
+ *   data_out - array of 6 uint32_t, filled from context->f3[3]
+ */
+GLDReturn gldInitDispatch(gld_context_t* context, GLD_GENERIC_DISPATCH* dispatch_table, uint32_t* data_out)
 {
 	typeof(gldInitDispatch) *addr;
+	int rc;
 
-	GLDLog(2, "%s(%p, %p, %p)\n", __FUNCTION__, arg0, arg1, arg2);
+	GLDLog(2, "%s(%p, %p, %p)\n", __FUNCTION__, context, dispatch_table, data_out);
 
 	addr = (typeof(addr)) bndl_ptrs[bndl_index][10];
-	if (addr)
-		return addr(arg0, arg1, arg2);
-	return -1;
+	if (!addr)
+		return -1;
+	rc = addr(context, &remote_dispatch[0], data_out);
+	dispatch_table[0] = (GLD_GENERIC_DISPATCH) glrAccum;
+	dispatch_table[1] = glrClear;
+	dispatch_table[2] = (GLD_GENERIC_DISPATCH) glrReadPixels;
+	dispatch_table[3] = glrDrawPixels;
+	dispatch_table[4] = glrCopyPixels;
+	dispatch_table[5] = glrRenderBitmap;
+	dispatch_table[6] = glrRenderPoints;
+	dispatch_table[7] = glrRenderLines;
+	dispatch_table[8] = glrRenderLineStrip;
+	dispatch_table[9] = glrRenderLineLoop;
+	dispatch_table[10] = glrRenderPolygon;
+	dispatch_table[11] = glrRenderTriangles;
+	dispatch_table[12] = glrRenderTriangleFan;
+	dispatch_table[13] = glrRenderTriangleStrip;
+	dispatch_table[14] = glrRenderQuads;
+	dispatch_table[15] = glrRenderQuadStrip;
+	dispatch_table[16] = 0;
+	dispatch_table[17] = 0;
+	dispatch_table[18] = 0;
+	dispatch_table[19] = 0;
+	dispatch_table[20] = glrRenderPointsPtr;
+	dispatch_table[21] = glrRenderLinesPtr;
+	dispatch_table[22] = glrRenderPolygonPtr;
+	dispatch_table[23] = glrBeginPrimitiveBuffer;
+	dispatch_table[24] = glrEndPrimitiveBuffer;
+	dispatch_table[25] = 0;
+	dispatch_table[26] = 0;
+	dispatch_table[27] = glrHookFinish;
+	dispatch_table[28] = glrHookFlush;
+	dispatch_table[29] = glrHookSwap;
+	dispatch_table[30] = glrSetFence;
+	dispatch_table[31] = (GLD_GENERIC_DISPATCH) glrNoopRenderVertexArray;
+	dispatch_table[32] = 0;
+	return rc;
 }
 
-GLDReturn gldUpdateDispatch(void* arg0, void* arg1, void* arg2)
+GLDReturn gldUpdateDispatch(gld_context_t* context, GLD_GENERIC_DISPATCH* dispatch_table, uint32_t* data_out)
 {
 	typeof(gldUpdateDispatch) *addr;
+	GLDReturn rc;
 
-	GLDLog(2, "%s(%p, %p, %p)\n", __FUNCTION__, arg0, arg1, arg2);
+	GLDLog(2, "%s(%p, %p, %p)\n", __FUNCTION__, context, dispatch_table, data_out);
 
 	addr = (typeof(addr)) bndl_ptrs[bndl_index][11];
-	if (addr)
-		return addr(arg0, arg1, arg2);
+	if (addr) {
+		cb_chkpt(context, 0);
+		rc = addr(context, &remote_dispatch[0], data_out);
+		cb_chkpt(context, 1);
+		return rc;
+	}
 	return -1;
 }
 
@@ -1231,10 +1283,10 @@ GLDReturn gldCreateTexture(gld_shared_t* shared, gld_texture_t** texture, void* 
 	p->client_texture = client_texture;
 	p->f11 = 0;
 	p->obj = 0;
-	p->f0 = 0;
+	p->raw_data = 0;
 	p->tds.type = 8U;
-	p->tds.size = 0;
-	p->tds.f4 = 0;
+	p->tds.size[0] = 0;
+	p->tds.size[1] = 0;
 	p->f6 = &p->f7;
 	p->f7 = 0;
 	p->f8 = &p->f6;

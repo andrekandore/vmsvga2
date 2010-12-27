@@ -27,15 +27,14 @@
  *  SOFTWARE.
  */
 
-#include <IOKit/IOLib.h>
 #include <IOKit/IOBufferMemoryDescriptor.h>
+#include "ACMethods.h"
 #include "VLog.h"
 #include "VMsvga2Accel.h"
-#include "VMsvga2GLContext.h"
-#include "VMsvga2Surface.h"
 #include "VMsvga2Device.h"
+#include "VMsvga2GLContext.h"
 #include "VMsvga2Shared.h"
-#include "ACMethods.h"
+#include "VMsvga2Surface.h"
 #include "UCTypes.h"
 
 #define CLASS VMsvga2GLContext
@@ -49,6 +48,8 @@ OSDefineMetaClassAndStructors(VMsvga2GLContext, IOUserClient);
 #endif
 
 #define HIDDEN __attribute__((visibility("hidden")))
+
+#define MAX_NUM_DECLS 12U
 
 static
 IOExternalMethod iofbFuncsCache[kIOVMGLNumMethods] =
@@ -108,7 +109,7 @@ IOExternalMethod iofbFuncsCache[kIOVMGLNumMethods] =
 };
 
 #pragma mark -
-#pragma mark struct definitions
+#pragma mark Struct Definitions
 #pragma mark -
 
 /*
@@ -126,16 +127,17 @@ struct VendorCommandBufferHeader
 {
 	uint32_t data[4];
 	uint32_t size_dwords;
-	uint32_t options;
+	uint32_t flags;
 	uint32_t stamp;
 	uint32_t begin;
+	uint32_t downstream[0];
 };
 
 struct VendorGLStreamInfo {	// start 0x20C
 	uint32_t* p;
 	uint32_t cmd;
-	uint32_t f0;		// offset 0x8
-	int num_words_done;	// offset 0xC
+	uint32_t dso_bytes;	// offset 0x8, downstream offset [bytes]
+	int ds_count_dwords; // offset 0xC, downstream counter [dwords]
 	uint32_t f2;		// offset 0x10
 	uint8_t f3;			// offset 0x14
 	uint32_t flags;		// offset 0x18
@@ -143,14 +145,33 @@ struct VendorGLStreamInfo {	// start 0x20C
 };
 
 struct VendorCommandDescriptor {
-	uint32_t* next;
-	uint32_t* f0;
-	uint32_t num_words_done;
+	uint32_t* next;		// residual downstream pointer, kernel
+	uint8_t* ds_ptr;	// residual downstream pointer, gart
+	uint32_t ds_count_dwords;	// residual downstream count
 	uint32_t f2;
 };
 
+struct GLDTextureHeader {
+	uint64_t pixels_in_client;	// 0
+	uint32_t offset_in_client;	// 8
+	uint32_t f0;				// 12
+	uint16_t fake_pitch;		// 16 (calculated width * bytespp)
+	uint16_t height;			// 18
+	uint32_t f1;				// 20
+	uint32_t f2;				// 24
+	uint16_t pitch;				// 28 (the real pitch)
+	uint16_t depth;				// 30
+};
+
+template<unsigned N>
+union DefineRegion
+{
+	uint8_t b[sizeof(IOAccelDeviceRegion) + N * sizeof(IOAccelBounds)];
+	IOAccelDeviceRegion r;
+};
+
 #pragma mark -
-#pragma mark Private Dispatch Tables
+#pragma mark Private Dispatch Tables [Apple]
 #pragma mark -
 
 typedef void (CLASS::*dispatch_function_t)(VendorGLStreamInfo*);
@@ -258,7 +279,7 @@ dispatch_function_t dispatch_process_2[] =
 };
 
 #pragma mark -
-#pragma mark Private Methods
+#pragma mark Global Functions
 #pragma mark -
 
 static inline
@@ -271,6 +292,210 @@ void unlockAccel(VMsvga2Accel* accel)
 {
 }
 
+static inline
+uint32_t GMR_VRAM(void)
+{
+	return static_cast<uint32_t>(-2) /* SVGA_GMR_FRAMEBUFFER */;
+}
+
+static inline
+bool isIdValid(uint32_t id)
+{
+	return static_cast<int>(id) >= 0;
+}
+
+void set_region(IOAccelDeviceRegion* rgn,
+				uint32_t x,
+				uint32_t y,
+				uint32_t w,
+				uint32_t h);
+
+static
+IOReturn analyze_vertex_format(uint32_t s2,
+							   uint32_t s4,
+							   SVGA3dVertexDecl* pArray, /* OUT */
+							   size_t* num_decls) /* IN/OUT */
+{
+	size_t i = 0U, d3d_size = 0U;
+	uint32_t tc;
+
+	if (!num_decls)
+		return kIOReturnBadArgument;
+	if (i >= *num_decls)
+		return kIOReturnSuccess;
+	if (!pArray)
+		return kIOReturnBadArgument;
+	bzero(pArray, (*num_decls) * sizeof *pArray);
+	pArray[i].identity.usage = SVGA3D_DECLUSAGE_POSITIONT;
+	pArray[i].array.offset = static_cast<uint32_t>(d3d_size);
+	switch ((s4 >> 6) & 7U) {
+		case 1:	/* XYZ */
+			pArray[i].identity.type = SVGA3D_DECLTYPE_FLOAT3;
+			d3d_size += 3U * sizeof(float);
+			break;
+		case 2: /* XYZW */
+			pArray[i].identity.type = SVGA3D_DECLTYPE_FLOAT4;
+			d3d_size += 4U * sizeof(float);
+			break;
+		case 3: /* XY */
+			pArray[i].identity.type = SVGA3D_DECLTYPE_FLOAT2;
+			d3d_size += 2U * sizeof(float);
+			break;
+		case 4: /* XYW */
+#if 0
+			pArray[i].identity.type = SVGA3D_DECLTYPE_FLOAT4;
+			d3d_size += 4U * sizeof(float);
+			break;
+#else
+			return kIOReturnUnsupported;
+#endif
+		default:
+			return kIOReturnError;
+	}
+	++i;
+	if (i >= *num_decls)
+		goto set_strides;
+	if (s4 & (1U << 10)) {
+		pArray[i].identity.usage = SVGA3D_DECLUSAGE_COLOR;
+		pArray[i].identity.type = SVGA3D_DECLTYPE_D3DCOLOR;
+		pArray[i].array.offset = static_cast<uint32_t>(d3d_size);
+		d3d_size += sizeof(uint32_t);
+		++i;
+		if (i >= *num_decls)
+			goto set_strides;
+	}
+	if (s4 & (1U << 11)) {
+		pArray[i].identity.usage = SVGA3D_DECLUSAGE_COLOR;
+		pArray[i].identity.usageIndex = 1U;
+		pArray[i].identity.type = SVGA3D_DECLTYPE_D3DCOLOR;
+		pArray[i].array.offset = static_cast<uint32_t>(d3d_size);
+		d3d_size += sizeof(uint32_t);
+		++i;
+		if (i >= *num_decls)
+			goto set_strides;
+	}
+	if (s4 & (1U << 12)) {
+		pArray[i].identity.usage = SVGA3D_DECLUSAGE_PSIZE;
+		pArray[i].identity.type = SVGA3D_DECLTYPE_FLOAT1;
+		pArray[i].array.offset = static_cast<uint32_t>(d3d_size);
+		d3d_size += sizeof(float);
+		++i;
+		if (i >= *num_decls)
+			goto set_strides;
+	}
+	for (tc = 0U; tc != 8U; ++tc)
+		switch ((s2 >> (tc * 4)) & 0xFU) {
+			case 0: /* TEXCOORDFMT_2D */
+				pArray[i].identity.usage = SVGA3D_DECLUSAGE_TEXCOORD;
+				pArray[i].identity.usageIndex = tc;
+				pArray[i].identity.type = SVGA3D_DECLTYPE_FLOAT2;
+				pArray[i].array.offset = static_cast<uint32_t>(d3d_size);
+				d3d_size += 2U * sizeof(float);
+				++i;
+				if (i >= *num_decls)
+					goto set_strides;
+				break;
+			case 1: /* TEXCOORDFMT_3D */
+				pArray[i].identity.usage = SVGA3D_DECLUSAGE_TEXCOORD;
+				pArray[i].identity.usageIndex = tc;
+				pArray[i].identity.type = SVGA3D_DECLTYPE_FLOAT3;
+				pArray[i].array.offset = static_cast<uint32_t>(d3d_size);
+				d3d_size += 3U * sizeof(float);
+				++i;
+				if (i >= *num_decls)
+					goto set_strides;
+				break;
+			case 2: /* TEXCOORDFMT_4D */
+				pArray[i].identity.usage = SVGA3D_DECLUSAGE_TEXCOORD;
+				pArray[i].identity.usageIndex = tc;
+				pArray[i].identity.type = SVGA3D_DECLTYPE_FLOAT2 /* SVGA3D_DECLTYPE_FLOAT4 */;
+				pArray[i].array.offset = static_cast<uint32_t>(d3d_size);
+				d3d_size += 4U * sizeof(float);
+				++i;
+				if (i >= *num_decls)
+					goto set_strides;
+				break;
+			case 3: /* TEXCOORDFMT_1D */
+				pArray[i].identity.usage = SVGA3D_DECLUSAGE_TEXCOORD;
+				pArray[i].identity.usageIndex = tc;
+				pArray[i].identity.type = SVGA3D_DECLTYPE_FLOAT1;
+				pArray[i].array.offset = static_cast<uint32_t>(d3d_size);
+				d3d_size += sizeof(float);
+				++i;
+				if (i >= *num_decls)
+					goto set_strides;
+				break;
+			case 4: /* TEXCOORDFMT_2D_16 */
+				pArray[i].identity.usage = SVGA3D_DECLUSAGE_TEXCOORD;
+				pArray[i].identity.usageIndex = tc;
+				pArray[i].identity.type = SVGA3D_DECLTYPE_FLOAT16_2;
+				pArray[i].array.offset = static_cast<uint32_t>(d3d_size);
+				d3d_size += sizeof(uint32_t);
+				++i;
+				if (i >= *num_decls)
+					goto set_strides;
+				break;
+			case 5: /* TEXCOORDFMT_4D_16 */
+				pArray[i].identity.usage = SVGA3D_DECLUSAGE_TEXCOORD;
+				pArray[i].identity.usageIndex = tc;
+				pArray[i].identity.type = SVGA3D_DECLTYPE_FLOAT16_4;
+				pArray[i].array.offset = static_cast<uint32_t>(d3d_size);
+				d3d_size += 2U * sizeof(uint32_t);
+				++i;
+				if (i >= *num_decls)
+					goto set_strides;
+				break;
+			case 15U:
+				break;
+			default:
+				return kIOReturnError;
+		}
+set_strides:
+	*num_decls = i;
+	for (i = 0U; i != *num_decls; ++i)
+		pArray[i].array.stride = static_cast<uint32_t>(d3d_size);
+	return kIOReturnSuccess;
+}
+
+static
+void make_polygon_index_array(uint16_t* arr, uint16_t base_index, uint16_t num_vertices)
+{
+	uint16_t v1, v2;
+	if (!num_vertices)
+		return;
+	v1 = 0U;
+	v2 = num_vertices - 1U;
+	*arr++ = base_index + (v1++);
+	while (v1 < v2) {
+		*arr++ = base_index + (v1++);
+		*arr++ = base_index + (v2--);
+	}
+	if (v1 == v2)
+		*arr = base_index + v1;
+}
+
+static
+void make_diag(float* matrix, float d0, float d1, float d2, float d3)
+{
+	bzero(matrix, 16U * sizeof(float));
+	matrix[0]  = d0;
+	matrix[5]  = d1;
+	matrix[10] = d2;
+	matrix[15] = d3;
+}
+
+#pragma mark -
+#pragma mark Private Methods
+#pragma mark -
+
+HIDDEN
+void CLASS::Init()
+{
+	m_context_id = SVGA_ID_INVALID;
+	m_arrays.sid = SVGA_ID_INVALID;
+	m_arrays.gmr_id = SVGA_ID_INVALID;
+}
+
 HIDDEN
 void CLASS::Cleanup()
 {
@@ -278,9 +503,10 @@ void CLASS::Cleanup()
 		m_shared->release();
 		m_shared = 0;
 	}
-	if (surface_client) {
-		surface_client->release();
-		surface_client = 0;
+	if (m_surface_client) {
+		m_surface_client->detachGL();
+		m_surface_client->release();
+		m_surface_client = 0;
 	}
 	if (m_gc) {
 		m_gc->flushCollection();
@@ -302,6 +528,16 @@ void CLASS::Cleanup()
 	if (m_type2) {
 		m_type2->release();
 		m_type2 = 0;
+	}
+	if (m_provider && isIdValid(m_context_id)) {
+		m_provider->destroyContext(m_context_id);
+		m_provider->FreeContextID(m_context_id);
+		m_context_id = SVGA_ID_INVALID;
+	}
+	purge_arrays();
+	if (m_float_cache) {
+		IOFreeAligned(m_float_cache, 32U * sizeof(float));
+		m_float_cache = 0;
 	}
 }
 
@@ -352,7 +588,7 @@ bool CLASS::allocAllContextBuffers()
 	m_context_buffer0.kernel_ptr = static_cast<VendorCommandBufferHeader*>(bmd->getBytesNoCopy());
 	p = m_context_buffer0.kernel_ptr;
 	bzero(p, sizeof *p);
-	p->options = 1;
+	p->flags = 1;
 	p->data[3] = 1007;
 
 	/*
@@ -369,7 +605,7 @@ bool CLASS::allocAllContextBuffers()
 	m_context_buffer1.kernel_ptr = static_cast<VendorCommandBufferHeader*>(bmd->getBytesNoCopy());
 	p = m_context_buffer1.kernel_ptr;
 	bzero(p, sizeof *p);
-	p->options = 1;
+	p->flags = 1;
 	p->data[3] = 1007;
 	// TBD: allocates another one like this
 	return true;
@@ -414,15 +650,15 @@ uint32_t CLASS::processCommandBuffer(VendorCommandDescriptor* result)
 	for (i = 0; i != 8; ++i)
 		GLLog(2, "%s:   command_buffer_header[%d] == %#x\n", __FUNCTION__,
 			  i, m_command_buffer.kernel_ptr->data[i]);
-	lim = m_command_buffer.kernel_ptr->data[7];
+	lim = m_command_buffer.kernel_ptr->downstream[-1];
 	for (i = 0; i != lim; ++i)
 		GLLog(2, "%s:   command[%d] == %#x\n", __FUNCTION__,
-			  i, m_command_buffer.kernel_ptr->data[i + 8]);
+			  i, m_command_buffer.kernel_ptr->downstream[i]);
 #endif
-	cb_iter.f0 = 0U;
-	cb_iter.p = &m_command_buffer.kernel_ptr->begin;
+	cb_iter.dso_bytes = 0U;
+	cb_iter.p = &m_command_buffer.kernel_ptr->downstream[-1];
 	cb_iter.limit = &m_command_buffer.kernel_ptr->data[0] +  m_command_buffer.size / sizeof(uint32_t);
-	cb_iter.num_words_done = -1;
+	cb_iter.ds_count_dwords = -1;
 	cb_iter.flags = 0U;
 	cb_iter.f2 = 0U;
 	cb_iter.f3 = 1U;
@@ -441,14 +677,14 @@ uint32_t CLASS::processCommandBuffer(VendorCommandDescriptor* result)
 		++commands_processed;
 		cb_iter.cmd &= 0xFFFFFFU;
 		cb_iter.p += cb_iter.cmd;
-		cb_iter.num_words_done += cb_iter.cmd;
+		cb_iter.ds_count_dwords += cb_iter.cmd;
 		if (cb_iter.limit <= cb_iter.p)
 			break;
 	} while (cb_iter.cmd);
 	GLLog(2, "%s:   processed %d stream commands, error == %#x\n", __FUNCTION__, commands_processed, m_stream_error);
-	result->next = &m_command_buffer.kernel_ptr->data[8] + cb_iter.f0 / sizeof(uint32_t);
-	result->f0 = 0; // same as next, but off byte pointer @ m_command_buffer.pad1[1]
-	result->num_words_done = cb_iter.num_words_done;
+	result->next = &m_command_buffer.kernel_ptr->downstream[0] + cb_iter.dso_bytes / sizeof(uint32_t);
+	result->ds_ptr = m_command_buffer.gart_ptr + sizeof(VendorCommandBufferHeader) + cb_iter.dso_bytes;
+	result->ds_count_dwords = cb_iter.ds_count_dwords;
 	result->f2 = cb_iter.f2;
 	return cb_iter.flags;
 }
@@ -458,17 +694,16 @@ void CLASS::discardCommandBuffer()
 {
 	VendorGLStreamInfo cb_iter;
 	uint32_t upper;
-	cb_iter.f0 = 0U;
-	cb_iter.p = &m_command_buffer.kernel_ptr->begin;
+	cb_iter.dso_bytes = 0U;
+	cb_iter.p = &m_command_buffer.kernel_ptr->downstream[-1];
 	cb_iter.limit = &m_command_buffer.kernel_ptr->data[0] +  m_command_buffer.size / sizeof(uint32_t);
-	cb_iter.num_words_done = -1;
+	cb_iter.ds_count_dwords = -1;
 	cb_iter.flags = 0U;
 	cb_iter.f2 = 0U;
 	cb_iter.f3 = 1U;
 	do {
 		cb_iter.cmd = *cb_iter.p;
 		upper = cb_iter.cmd >> 24;
-		GLLog(2, "%s:   cmd %#x length %u\n", __FUNCTION__, upper, cb_iter.cmd & 0xFFFFFFU);
 		if (upper <= 10U)
 			(this->*dispatch_discard_1[upper])(&cb_iter);
 		else if (upper >= 32U && upper <= 61U)
@@ -480,7 +715,7 @@ void CLASS::discardCommandBuffer()
 		 */
 		cb_iter.cmd &= 0xFFFFFFU;
 		cb_iter.p += cb_iter.cmd;
-		cb_iter.num_words_done += cb_iter.cmd;
+		cb_iter.ds_count_dwords += cb_iter.cmd;
 		if (cb_iter.limit <= cb_iter.p)
 			break;
 	} while (cb_iter.cmd);
@@ -489,21 +724,828 @@ void CLASS::discardCommandBuffer()
 HIDDEN
 void CLASS::removeTextureFromStream(VMsvga2TextureBuffer*)
 {
+	/*
+	 * TBD
+	 */
 }
 
 HIDDEN
 void CLASS::addTextureToStream(VMsvga2TextureBuffer*)
 {
+	/*
+	 * TBD
+	 */
 }
 
 HIDDEN
-void CLASS::get_texture(VendorGLStreamInfo*, VMsvga2TextureBuffer*, bool)
+void CLASS::get_texture(VendorGLStreamInfo* info, VMsvga2TextureBuffer* tx, bool flag)
 {
+#if 0
+	VMsvga2TextureBuffer* otx;
+#endif
+	uint32_t wc;
+	if (tx->sys_obj->in_use) {
+		wc = info->ds_count_dwords;
+		if (wc) {
+			if (wc > 2U) {
+#if 0
+				m_provider->0x78C += (wc << 2) - 8U;
+				m_command_buffer.pad2[7] =
+				m_provider->submit_buffer(&m_command_buffer.kernel_ptr.downstream[0] + info->dso_bytes / sizeof(uint32_t),
+										  m_command_buffer.gart_ptr + sizeof(VendorCommandBufferHeader) + info->dso_bytes,
+										  wc - 2U,
+										  __FILE__,
+										  __LINE__);
+#endif
+				m_command_buffer.pad2[7] =
+				submit_buffer(&m_command_buffer.kernel_ptr->downstream[0] + info->dso_bytes / sizeof(uint32_t),
+							  wc - 2U);
+			} 
+			info->dso_bytes += wc * static_cast<uint32_t>(sizeof(uint32_t));
+			info->ds_count_dwords = 0;
+			info->f2 = 0;
+		}
+#if 0
+		alloc_and_load_texture(tx);
+#endif
+#if 0
+		if (flag & !m_command_buffer.gart_ptr)
+			mapTransferToGART(&m_command_buffer);
+#endif
+	}
+#if 0
+	otx = tx;
+	if (otx->sys_obj_type == 2U)
+		otx = otx->linked_agp;
+	if (otx->0x6C) {
+		/*
+		 * TBD: some linked-list chaining
+		 *   on m_provider->0x688, and prev-next pair
+		 *   at otx->0x5C and otx->0x6C
+		 */
+	}
+#endif
 }
 
 HIDDEN
-void CLASS::write_tex_data(uint32_t, uint32_t*, VMsvga2TextureBuffer*)
+void CLASS::write_tex_data(uint32_t i, uint32_t* q, VMsvga2TextureBuffer* tx)
 {
+	/*
+	 * TBD
+	 */
+	int fmt;
+	uint32_t width, pitch;
+	uint16_t height, depth;
+	uint8_t mapsurf, mt;
+	uint32_t d0 = q[1];
+	uint32_t d1 = q[2];
+	width = ((d0 >> 10) & 0x7FFU) + 1U;
+	height = ((d0 >> 21) & 0x7FFU) + 1U;
+	depth = (d1 & 0xFFU) + 1U;
+	pitch = (((d1 >> 21) + 1U) & 0x7FFU) * static_cast<uint32_t>(sizeof(uint32_t));
+	mapsurf = (d0 >> 7) & 0x7U;
+	mt = (d0 >> 3) & 0xFU;
+	GLLog(3, "%s:   tex %u data1 width %u, height %u, MAPSURF %u, MT %u, UF %u, TS %u, TW %u\n", __FUNCTION__,
+		  q[0], width, height, mapsurf, mt,
+		  (d0 >> 2) & 1U,
+		  (d0 >> 1) & 1U,
+		  d0 & 1U);
+	GLLog(3, "%s:   tex %u data2 pitch %u, cube-face-ena %#x, max-lod %#x, mip-layout %u, depth %u\n", __FUNCTION__,
+		  q[0], pitch,
+		  (d1 >> 15) & 0x3FU,
+		  (d1 >> 9) & 0x3FU,
+		  (d1 >> 8) & 1U,
+		  depth);
+	fmt = decipher_format(mapsurf, mt);
+	if (fmt != tx->surface_format ||
+		width != tx->width ||
+		height != tx->height ||
+		depth != tx->depth) {
+		tx->surface_changed = 1;
+	}
+	tx->surface_format = fmt;
+	tx->width = width;
+	tx->height = height;
+	tx->depth = depth;
+	if (pitch)
+		tx->pitch = pitch;
+	else if (!tx->pitch)
+		tx->pitch = width * tx->bytespp;
+}
+
+HIDDEN
+void CLASS::alloc_and_load_texture(VMsvga2TextureBuffer* tx)
+{
+	/*
+	 * TBD
+	 */
+	uint32_t fence;
+	IOMemoryDescriptor* md;
+	DefineRegion<1U> tmpRegion;
+	VMsvga2Accel::ExtraInfo extra;
+	IOByteCount bc;
+	GLDTextureHeader gld_th;
+	VMsvga2TextureBuffer* ltx;
+
+	if (tx->surface_format == SVGA3D_FORMAT_INVALID ||
+		tx->depth > 1U) {
+		GLLog(2, "%s: invalid surface format\n", __FUNCTION__);
+		return;
+	}
+	bzero(&extra, sizeof extra);
+	extra.mem_pitch = tx->pitch;
+	ltx = tx;
+	if (tx->sys_obj_type != 4 && tx->linked_agp) {
+		ltx = tx->linked_agp;
+		extra.mem_offset_in_gmr = static_cast<vm_offset_t>(ltx->agp_offset_in_page);
+	}
+	md = ltx->md;
+	if (!md) {
+		GLLog(2, "%s: no memory descriptor\n", __FUNCTION__);
+		return;
+	}
+	set_region(&tmpRegion.r, 0, 0, tx->width, tx->height);
+	if (static_cast<int>(tx->surface_id) < 0) {
+		tx->surface_id = m_provider->AllocSurfaceID();	// Note: doesn't fail
+		tx->surface_changed = 1;
+	}
+	if (tx->surface_changed) {
+		m_provider->createSurface(tx->surface_id,
+								  SVGA3D_SURFACE_HINT_TEXTURE,
+								  static_cast<SVGA3dSurfaceFormat>(tx->surface_format),
+								  tx->width,
+								  tx->height);		// TBD: check error
+		tx->surface_changed = 0;
+	}
+	extra.mem_gmr_id = m_provider->AllocGMRID();	// TBD: check error
+	md->prepare();
+	if (ltx->sys_obj_type == 8U ||
+		ltx->sys_obj_type == 9U) {	// TBD: is this needed for types 3 as well?
+		bc = md->readBytes(0U, &gld_th, sizeof gld_th);
+		if (bc >= sizeof gld_th) {
+			extra.mem_offset_in_gmr = gld_th.offset_in_client;
+			if (gld_th.pitch) {
+				extra.mem_pitch = gld_th.pitch;
+				tx->pitch = gld_th.pitch;
+			}
+		}
+	}
+	m_provider->createGMR(extra.mem_gmr_id, md);	// TBD: check error
+	GLLog(2, "%s: width == %u, height == %u, gmr_id == %u, pitch == %lu, offset_in_gmr == %#lx\n",
+		  __FUNCTION__,
+		  tx->width, tx->height, extra.mem_gmr_id,
+		  static_cast<size_t>(extra.mem_pitch),
+		  static_cast<size_t>(extra.mem_offset_in_gmr));
+	m_provider->surfaceDMA2D(tx->surface_id,
+							 SVGA3D_WRITE_HOST_VRAM,
+							 &tmpRegion,
+							 &extra,
+							 &fence);	// TBD: check error
+	m_provider->SyncToFence(fence);	// ugh...
+	m_provider->destroyGMR(extra.mem_gmr_id);
+	md->complete();
+	m_provider->FreeGMRID(extra.mem_gmr_id);
+#if 0
+	if (m_surface_client)
+		m_surface_client->copyFromTexture(tx->surface_id, &tmpRegion.r.bounds);
+#endif
+}
+
+HIDDEN
+IOReturn CLASS::bind_texture(uint32_t index, VMsvga2TextureBuffer* tx)
+{
+	SVGA3dTextureState tstate[2];
+	float* f;
+	if (!m_provider)
+		return kIOReturnNotReady;
+	if (index >= 8U || !tx)
+		return kIOReturnBadArgument;
+	/*
+	 * Cache texture size
+	 */
+	f = m_float_cache + index * 4U;
+	f[0] = 1.0F / static_cast<float>(tx->width);
+	f[1] = 1.0F / static_cast<float>(tx->height);
+	f[2] = 1.0F;
+	f[3] = 1.0F;
+	tstate[0].stage = index;
+	tstate[0].name = SVGA3D_TS_BIND_TEXTURE;
+	tstate[0].value = tx->surface_id;
+	tstate[1].stage = index;
+	tstate[1].name = SVGA3D_TS_COLOROP;
+	tstate[1].value = SVGA3D_TC_SELECTARG1;
+	GLLog(3, "%s:   binding texture %u at index %u\n", __FUNCTION__,
+		  tx->sys_obj->object_id, index);
+	return m_provider->setTextureState(m_context_id, 2U, &tstate[0]);
+}
+
+HIDDEN
+void CLASS::setup_drawbuffer_registers(uint32_t* p)
+{
+	/*
+	 * TBD
+	 */
+	p[0] = 0x7D8E0001U; /* 3DSTATE_BUF_INFO_CMD */
+	p[1] = 0U;
+	p[2] = 0U;
+	p[3] = 0x7D8E0001U; /* 3DSTATE_BUF_INFO_CMD */
+	p[4] = 0U;
+	p[5] = 0U;
+	p[6] = 0x7D800003U; /* 3DSTATE_DRAW_RECT_CMD */
+	p[7] = 0U;
+	p[8] = 0U;
+	p[9] = 0U;
+	p[10] = 0U;
+}
+
+HIDDEN
+IOReturn CLASS::alloc_arrays()
+{
+	IOReturn rc;
+	if (!m_provider)
+		return kIOReturnNotReady;
+	if (m_arrays.fence) {
+		m_provider->SyncToFence(m_arrays.fence);
+		m_arrays.fence = 0U;
+	}
+	if (m_arrays.kernel_ptr)
+		return kIOReturnSuccess;
+	m_arrays.sid = m_provider->AllocSurfaceID();
+	rc = m_provider->createSurface(m_arrays.sid,
+								   SVGA3D_SURFACE_HINT_VERTEXBUFFER,
+								   SVGA3D_BUFFER,
+								   16U * PAGE_SIZE,
+								   1U);
+	if (rc != kIOReturnSuccess) {
+		m_provider->FreeSurfaceID(m_arrays.sid);
+		return rc;
+	}
+	m_arrays.kernel_ptr = static_cast<uint8_t*>(m_provider->VRAMMalloc(16U * PAGE_SIZE));
+	if (!m_arrays.kernel_ptr) {
+		purge_arrays();
+		return kIOReturnNoMemory;
+	}
+	m_arrays.offset_in_gmr = m_provider->offsetInVRAM(m_arrays.kernel_ptr);
+	m_arrays.gmr_id = GMR_VRAM();
+	return kIOReturnSuccess;
+}
+
+HIDDEN
+void CLASS::purge_arrays()
+{
+	if (!m_provider)
+		return;
+	if (m_arrays.fence) {
+		m_provider->SyncToFence(m_arrays.fence);
+		m_arrays.fence = 0U;
+	}
+	m_arrays.gmr_id = SVGA_ID_INVALID;
+	if (m_arrays.kernel_ptr) {
+		m_provider->VRAMFree(m_arrays.kernel_ptr);
+		m_arrays.kernel_ptr = 0;
+	}
+	if (isIdValid(m_arrays.sid)) {
+		m_provider->destroySurface(m_arrays.sid);
+		m_provider->FreeSurfaceID(m_arrays.sid);
+		m_arrays.sid = SVGA_ID_INVALID;
+	}
+}
+
+HIDDEN
+IOReturn CLASS::upload_arrays(size_t num_bytes)
+{
+	IOReturn rc;
+	DefineRegion<1U> tmpRegion;
+	VMsvga2Accel::ExtraInfo extra;
+
+	if (!m_provider)
+		return kIOReturnNotReady;
+	bzero(&extra, sizeof extra);
+	set_region(&tmpRegion.r, 0, 0, static_cast<uint32_t>(num_bytes), 1U);
+	extra.mem_gmr_id = m_arrays.gmr_id;
+	extra.mem_offset_in_gmr = m_arrays.offset_in_gmr;
+	/* use 0 pitch */
+	rc = m_provider->surfaceDMA2D(m_arrays.sid,
+								  SVGA3D_WRITE_HOST_VRAM,
+								  &tmpRegion.r,
+								  &extra,
+								  0);
+	return rc;
+}
+
+HIDDEN
+void CLASS::adjust_texture_coords(uint8_t* vertex_array,
+								  size_t num_vertices,
+								  void const* decls,
+								  size_t num_decls)
+{
+	SVGA3dVertexDecl const* _decls = static_cast<SVGA3dVertexDecl const*>(decls);
+	size_t i, j;
+
+	for (i = 0U; i != num_decls; ++i)
+		if (_decls[i].identity.usage == SVGA3D_DECLUSAGE_TEXCOORD &&
+			_decls[i].identity.usageIndex < 8U) {
+			float const* f = m_float_cache + _decls[i].identity.usageIndex * 4U;
+			/*
+			 * Barbarically assume FLOAT4 and adjust
+			 */
+			for (j = 0U; j != num_vertices; ++j) {
+				float* q = reinterpret_cast<float*>(vertex_array + j * _decls[i].array.stride + _decls[i].array.offset);
+				GLLog(3, "%s:   adjusting X == %d, Y == %d, Z == %d, W == %d\n", __FUNCTION__,
+					  static_cast<int>(q[0]), static_cast<int>(q[1]), static_cast<int>(q[2]), static_cast<int>(q[3]));
+				q[0] *= f[0];
+				q[1] *= f[1];
+			}
+		}
+	for (j = 0U; j != num_vertices; ++j) {
+		float const* q = reinterpret_cast<float const*>(vertex_array + j * _decls[0].array.stride + _decls[i].array.offset);
+		GLLog(3, "%s:   vertex coord X == %d, Y == %d, Z == %d, W == %d\n", __FUNCTION__,
+			  static_cast<int>(q[0]), static_cast<int>(q[1]), static_cast<int>(q[2]), static_cast<int>(q[3]));
+	}
+}
+
+#pragma mark -
+#pragma mark Intel Pipeline Processor
+#pragma mark -
+
+HIDDEN
+int CLASS::decipher_format(uint8_t mapsurf, uint8_t mt)
+{
+	switch (mapsurf) {
+		case 1: // MAPSURF_8BIT
+			switch (mt) {
+				case 1: // MT_8BIT_L8
+					return SVGA3D_LUMINANCE8;
+				case 4: // MT_8BIT_A8
+					return SVGA3D_ALPHA8;
+				case 0: // MT_8BIT_I8
+				case 5: // MT_8BIT_MONO8
+					break;
+			}
+			break;
+		case 2: // MAPSURF_16BIT
+			switch (mt) {
+				case 0: // MT_16BIT_RGB565
+					return SVGA3D_R5G6B5;
+				case 1: // MT_16BIT_ARGB1555
+					return SVGA3D_A1R5G5B5;
+				case 2: // MT_16BIT_ARGB4444
+					return SVGA3D_A4R4G4B4;
+				case 3: // MT_16BIT_AY88
+					return SVGA3D_LUMINANCE8_ALPHA8; // hmm...
+				case 5: // MT_16BIT_88DVDU
+					return SVGA3D_V8U8;	// maybe SVGA3D_CxV8U8
+				case 6: // MT_16BIT_BUMP_655LDVDU
+					return SVGA3D_BUMPL6V5U5;
+				case 8: // MT_16BIT_L16
+					return SVGA3D_LUMINANCE16;
+				case 7: // MT_16BIT_I16
+				case 9: // MT_16BIT_A16
+					break;
+			}
+			break;
+		case 3: // MAPSURF_32BIT
+			switch (mt) {
+				case 0: // MT_32BIT_ARGB8888
+					return SVGA3D_A8R8G8B8;
+				case 2: // MT_32BIT_XRGB8888
+					return SVGA3D_X8R8G8B8;
+				case 4: // MT_32BIT_QWVU8888
+					return SVGA3D_Q8W8V8U8;
+				case 7: // MT_32BIT_XLVU8888
+					return SVGA3D_X8L8V8U8;
+				case 8: // MT_32BIT_ARGB2101010
+					return SVGA3D_A2R10G10B10;
+				case 10: // MT_32BIT_AWVU2101010
+					return  SVGA3D_A2W10V10U10;
+				case 11: // MT_32BIT_GR1616
+					return SVGA3D_G16R16;
+				case 12: //  MT_32BIT_VU1616
+					return SVGA3D_V16U16;
+				case 1: // MT_32BIT_ABGR8888
+				case 3: // MT_32BIT_XBGR8888
+				case 5: // MT_32BIT_AXVU8888
+				case 6: // MT_32BIT_LXVU8888
+				case 9: // MT_32BIT_ABGR2101010
+				case 13: // MT_32BIT_xI824
+				case 14: // MT_32BIT_xA824
+				case 15: // MT_32BIT_xL824
+					break;
+			}
+			break;
+		case 5: // MAPSURF_422
+			switch (mt) {
+				case 0: // MT_422_YCRCB_SWAPY
+					return SVGA3D_UYVY;
+				case 1: // MT_422_YCRCB_NORMAL
+					return SVGA3D_YUY2;
+				case 2: // MT_422_YCRCB_SWAPUV
+				case 3: // MT_422_YCRCB_SWAPUVY
+					break;
+			}
+			break;
+		case 6: // MAPSURF_COMPRESSED
+			switch (mt) {
+				case 0: // MT_COMPRESS_DXT1
+					return SVGA3D_DXT1;
+				case 1: // MT_COMPRESS_DXT2_3
+					return SVGA3D_DXT3;
+				case 2: // MT_COMPRESS_DXT4_5
+					return SVGA3D_DXT5;
+				case 3: // MT_COMPRESS_FXT1
+				case 4: // MT_COMPRESS_DXT1_RGB
+					break;
+			}
+			break;
+		case 7: // MAPSURF_4BIT_INDEXED
+			// mt == 7, MT_4BIT_IDX_ARGB8888
+			break;
+	}
+	return SVGA3D_FORMAT_INVALID;
+}
+
+HIDDEN
+int CLASS::translate_clear_mask(uint32_t mask)
+{
+	int out_mask = 0U;
+	if (mask & 4U)
+		out_mask |= SVGA3D_CLEAR_COLOR;
+	if (mask & 2U)
+		out_mask |= SVGA3D_CLEAR_DEPTH;
+	if (mask & 1U)
+		out_mask |= SVGA3D_CLEAR_STENCIL;
+	return out_mask;
+}
+
+HIDDEN
+void CLASS::ip_prim3d_poly(uint32_t const* vertex_data, size_t num_vertex_dwords)
+{
+	size_t i, num_decls, num_vertices, vsize;
+	IOReturn rc;
+	SVGA3dVertexDecl decls[MAX_NUM_DECLS];
+	SVGA3dPrimitiveRange range;
+
+	if (!num_vertex_dwords || !vertex_data)
+		return; // nothing to do
+	num_decls = sizeof decls / sizeof decls[0];
+	rc = analyze_vertex_format(m_intel_state.imm_s[2],
+							   m_intel_state.imm_s[4],
+							   &decls[0],
+							   &num_decls);
+	if (rc != kIOReturnSuccess) {
+		GLLog(1, "%s: analyze_vertex_format return %#x\n", __FUNCTION__, rc);
+		return;
+	}
+	if (!num_decls)
+		return;	// nothing to do
+	GLLog(3, "%s:   num vertex decls == %lu\n", __FUNCTION__, num_decls);
+	rc = alloc_arrays();
+	if (rc != kIOReturnSuccess) {
+		GLLog(1, "%s: alloc_arrays return %#x\n", __FUNCTION__, rc);
+		return;
+	}
+	if (m_arrays.fence) {
+		m_provider->SyncToFence(m_arrays.fence);
+		m_arrays.fence = 0U;
+	}
+	vsize = num_vertex_dwords * sizeof(uint32_t);
+#if 0
+	intel_vertex_size = decls[0].array.stride;
+	if (((m_intel_state.imm_s[4] >> 6) & 7U) == 4U /* XYW */) {
+		/*
+		 * WTF am I even supporting this?
+		 */
+		intel_vertex_size -= static_cast<uint32_t>(sizeof(float));
+		return;	// TBD: expand XYW form to XYZW
+	} else
+		memcpy(m_arrays.kernel_ptr, vertex_data, vsize);
+#else
+	memcpy(m_arrays.kernel_ptr, vertex_data, vsize);
+#endif
+	/*
+	 * Prepare Index Array for a polygon
+	 */
+	num_vertices = vsize / decls[0].array.stride;
+	GLLog(3, "%s:   vertex_size == %u, num_vertices == %lu, copied %lu bytes\n",__FUNCTION__,
+		  decls[0].array.stride, num_vertices, vsize);
+	if (num_vertices < 3U)
+		return; // nothing to do
+	make_polygon_index_array(reinterpret_cast<uint16_t*>(m_arrays.kernel_ptr + vsize),
+							 0U,
+							 static_cast<uint16_t>(num_vertices));
+	adjust_texture_coords(m_arrays.kernel_ptr,
+						  num_vertices,
+						  &decls,
+						  num_decls);
+	rc = upload_arrays(vsize + num_vertices * sizeof(uint16_t));
+	if (rc != kIOReturnSuccess) {
+		GLLog(1, "%s: upload_arrays return %#x\n", __FUNCTION__, rc);
+		return;
+	}
+	range.primType = SVGA3D_PRIMITIVE_TRIANGLESTRIP;
+	range.primitiveCount = static_cast<uint32_t>(num_vertices - 2U);
+	range.indexArray.surfaceId = m_arrays.sid;
+	range.indexArray.offset = static_cast<uint32_t>(vsize);
+	range.indexArray.stride = sizeof(uint16_t);
+	range.indexWidth = sizeof(uint16_t);
+	range.indexBias = 0U;
+	for (i = 0U; i != num_decls; ++i) {
+		decls[i].array.surfaceId = m_arrays.sid;
+		decls[i].rangeHint.last = static_cast<uint32_t>(num_vertices);
+	}
+	rc = m_provider->drawPrimitives(m_context_id,
+									static_cast<uint32_t>(num_decls),
+									1U,
+									&decls[0],
+									&range);
+	if (rc != kIOReturnSuccess)
+		GLLog(1, "%s: drawPrimitives return %#x\n", __FUNCTION__, rc);
+}
+
+HIDDEN
+void CLASS::ip_prim3d_direct(uint32_t prim_kind, uint32_t const* vertex_data, size_t num_vertex_dwords)
+{
+	size_t i, num_decls, num_vertices, vsize;
+	IOReturn rc;
+	SVGA3dVertexDecl decls[MAX_NUM_DECLS];
+	SVGA3dPrimitiveRange range;
+
+	if (!num_vertex_dwords || !vertex_data)
+		return; // nothing to do
+	num_decls = sizeof decls / sizeof decls[0];
+	rc = analyze_vertex_format(m_intel_state.imm_s[2],
+							   m_intel_state.imm_s[4],
+							   &decls[0],
+							   &num_decls);
+	if (rc != kIOReturnSuccess) {
+		GLLog(1, "%s: analyze_vertex_format return %#x\n", __FUNCTION__, rc);
+		return;
+	}
+	if (!num_decls)
+		return;	// nothing to do
+	GLLog(3, "%s:   num vertex decls == %lu\n", __FUNCTION__, num_decls);
+	rc = alloc_arrays();
+	if (rc != kIOReturnSuccess) {
+		GLLog(1, "%s: alloc_arrays return %#x\n", __FUNCTION__, rc);
+		return;
+	}
+	if (m_arrays.fence) {
+		m_provider->SyncToFence(m_arrays.fence);
+		m_arrays.fence = 0U;
+	}
+	vsize = num_vertex_dwords * sizeof(uint32_t);
+	memcpy(m_arrays.kernel_ptr, vertex_data, vsize);
+	num_vertices = vsize / decls[0].array.stride;
+	GLLog(3, "%s:   vertex_size == %u, num_vertices == %lu, copied %lu bytes\n",__FUNCTION__,
+		  decls[0].array.stride, num_vertices, vsize);
+	adjust_texture_coords(m_arrays.kernel_ptr,
+						  num_vertices,
+						  &decls,
+						  num_decls);
+	rc = upload_arrays(vsize);
+	if (rc != kIOReturnSuccess) {
+		GLLog(1, "%s: upload_arrays return %#x\n", __FUNCTION__, rc);
+		return;
+	}
+	switch (prim_kind) {
+		case 0: /* PRIM3D_TRILIST */
+			range.primType = SVGA3D_PRIMITIVE_TRIANGLELIST;
+			range.primitiveCount = static_cast<uint32_t>(num_vertices / 3U);
+			break;
+		case 1: /* PRIM3D_TRISTRIP */
+			range.primType = SVGA3D_PRIMITIVE_TRIANGLESTRIP;
+			range.primitiveCount = static_cast<uint32_t>(num_vertices - 2U);
+			break;
+		case 3: /* PRIM3D_TRIFAN */
+			range.primType = SVGA3D_PRIMITIVE_TRIANGLEFAN;
+			range.primitiveCount = static_cast<uint32_t>(num_vertices - 2U);
+			break;
+		case 5: /* PRIM3D_LINELIST */
+			range.primType = SVGA3D_PRIMITIVE_LINELIST;
+			range.primitiveCount = static_cast<uint32_t>(num_vertices >> 1);
+			break;
+		case 6: /* PRIM3D_LINESTRIP */
+			range.primType = SVGA3D_PRIMITIVE_LINESTRIP;
+			range.primitiveCount = static_cast<uint32_t>(num_vertices - 1U);
+			break;
+		case 8: /* PRIM3D_POINTLIST */
+			range.primType = SVGA3D_PRIMITIVE_POINTLIST;
+			range.primitiveCount = static_cast<uint32_t>(num_vertices);
+			break;
+		default:
+			return;	// error, shouldn't get here
+	}
+	range.indexArray.surfaceId = SVGA_ID_INVALID;
+	range.indexArray.offset = 0U;
+	range.indexArray.stride = sizeof(uint16_t);
+	range.indexWidth = sizeof(uint16_t);
+	range.indexBias = 0U;
+	for (i = 0U; i != num_decls; ++i) {
+		decls[i].array.surfaceId = m_arrays.sid;
+		decls[i].rangeHint.last = static_cast<uint32_t>(num_vertices);
+	}
+	rc = m_provider->drawPrimitives(m_context_id,
+									static_cast<uint32_t>(num_decls),
+									1U,
+									&decls[0],
+									&range);
+	if (rc != kIOReturnSuccess)
+		GLLog(1, "%s: drawPrimitives return %#x\n", __FUNCTION__, rc);
+}
+
+HIDDEN
+uint32_t CLASS::ip_prim3d(uint32_t* p)
+{
+	DefineRegion<1U> tmpRegion;
+	uint32_t cmd = *p, skip = (cmd & 0xFFFFU) + 2U, primkind = (cmd >> 18) & 0x1FU;
+	float const* pf;
+
+	if (cmd & (1U << 23)) {
+		GLLog(1, "%s: indirect primitive\n", __FUNCTION__);
+		return skip;	// Indirect Primitive, not handled
+	}
+	/*
+	 * Direct Primitive
+	 */
+	GLLog(3, "%s:   primkind == %u, s2 == %#x, s4 == %#x\n", __FUNCTION__,
+		  primkind, m_intel_state.imm_s[2], m_intel_state.imm_s[4]);
+	switch (primkind) {
+		case 0: /* PRIM3D_TRILIST */
+		case 1: /* PRIM3D_TRISTRIP */
+		case 3: /* PRIM3D_TRIFAN */
+		case 5: /* PRIM3D_LINELIST */
+		case 6: /* PRIM3D_LINESTRIP */
+		case 8: /* PRIM3D_POINTLIST */
+			ip_prim3d_direct(primkind, &p[1], skip -1U);
+			break;
+		case 4: /* PRIM3D_POLY */
+			ip_prim3d_poly(&p[1], skip - 1U);
+			break;
+		case 10: /* PRIM3D_CLEAR_RECT */
+			if (!(m_intel_state.clear.mask & 7U))
+				break;	// nothing to do
+			pf = reinterpret_cast<float const*>(p + 1);
+			set_region(&tmpRegion.r,
+					   static_cast<uint32_t>(pf[4]),
+					   static_cast<uint32_t>(pf[5]),
+					   static_cast<uint32_t>(pf[0] - pf[4]),
+					   static_cast<uint32_t>(pf[1] - pf[5]));
+#if 0
+			GLLog(3, "%s:     issuing clear cmd, cid == %u, X == %d, Y == %d, W == %d, H == %d, mask == %u\n", __FUNCTION__,
+				  m_context_id,
+				  static_cast<int>(tmpRegion.r.bounds.x),
+				  static_cast<int>(tmpRegion.r.bounds.y),
+				  static_cast<int>(tmpRegion.r.bounds.w),
+				  static_cast<int>(tmpRegion.r.bounds.h),
+				  translate_clear_mask(m_intel_state.clear.mask));
+#endif
+			m_provider->clear(m_context_id,
+							  SVGA3dClearFlag(translate_clear_mask(m_intel_state.clear.mask)),
+							  &tmpRegion.r,
+							  m_intel_state.clear.color,
+							  m_intel_state.clear.depth,
+							  m_intel_state.clear.stencil);
+			break;
+#if 0
+		case 2: /* PRIM3D_TRISTRIP_RVRSE */
+		case 7: /* PRIM3D_RECTLIST */
+		case 9: /* PRIM3D_DIB */
+		case 13: /* PRIM3D_ZONE_INIT */
+			/*
+			 * Not Supported
+			 */
+			break;
+#endif
+	}
+	return skip;
+}
+
+HIDDEN
+uint32_t CLASS::ip_load_immediate(uint32_t* p)
+{
+	uint32_t i, cmd = p[0], skip = (cmd & 0xFU) + 2U, *limit = p + skip;
+	for (i = 0U, ++p; i != 8U && p < limit; ++i)
+		if (cmd & (1U << (4 + i))) {
+			m_intel_state.imm_s[i] = *p++;
+			switch (i) {
+				case 4:
+					SVGA3dRenderState rs[1];
+					uint16_t point_width = (m_intel_state.imm_s[i] >> 23) & 0x1FFU;
+					uint8_t line_width = (m_intel_state.imm_s[i] >> 19) & 15U;
+					uint8_t flat_shade = (m_intel_state.imm_s[i] >> 15) & 15U;
+					uint8_t cull_mode = (m_intel_state.imm_s[i] >> 13) & 3U;
+					uint8_t residual = m_intel_state.imm_s[i] & 0x3FU;
+					GLLog(3, "%s: imm4 - PW %u, LW %u, FS %#x, CM %u, residual %#x", __FUNCTION__,
+						  point_width, line_width, flat_shade, cull_mode, residual);
+					rs[0].state = SVGA3D_RS_CULLMODE;
+					rs[0].uintValue = cull_mode;
+					GLLog(3, "%s: setting cullmode to %u\n", __FUNCTION__, static_cast<uint32_t>(rs[0].uintValue));
+					m_provider->setRenderState(m_context_id, 1U, &rs[0]);
+			}
+		}
+	return skip;
+}
+
+HIDDEN
+uint32_t CLASS::ip_clear_params(uint32_t* p)
+{
+	uint32_t skip = (p[0] & 0xFFFFU) + 2U;
+	if (skip < 7U)
+		return skip;
+	m_intel_state.clear.mask = p[1];
+	/*
+	 * Note: this is for CLEAR_RECT (guess).  ZONE_INIT... who knows.
+	 */
+	m_intel_state.clear.color = p[4];
+	m_intel_state.clear.depth = *reinterpret_cast<float const*>(p + 5);
+	m_intel_state.clear.stencil = p[6];
+	return skip;
+}
+
+HIDDEN
+uint32_t CLASS::submit_buffer(uint32_t* kernel_buffer_ptr, uint32_t size_dwords)
+{
+	uint32_t *p, *limit, cmd, skip;
+	uint8_t opcode_u, opcode_l;
+	/*
+	 * TBD
+	 */
+	GLLog(3, "%s:   offset %d, size %u [in dwords]\n", __FUNCTION__,
+		  static_cast<int>(kernel_buffer_ptr - &m_command_buffer.kernel_ptr->downstream[0]),
+		  size_dwords);
+	p = kernel_buffer_ptr;
+	limit = p + size_dwords;
+	for (; p < limit; p += skip) {
+		cmd = *p;
+		skip = 1U;
+		if (!cmd)
+			continue;
+		opcode_u = cmd >> 24;
+		opcode_l = (cmd >> 16) & 0xFFU;
+		if (opcode_u <= 0xAU || (opcode_u >= 0x20U && opcode_u <= 0x3DU)) {
+			GLLog(3, "%s:   Apple cmd in stream %#x\n", __FUNCTION__, cmd);
+			skip = cmd & 0xFFFFU;
+			if (!skip)
+				++skip;
+			continue;
+		}
+		switch (opcode_u) {
+			case 0x66U: /* 3DSTATE_AA_CMD */
+			case 0x68U: /* 3DSTATE_BACKFACE_STENCIL_OPS */
+			case 0x69U: /* 3DSTATE_BACKFACE_STENCIL_MASKS */
+			case 0x6BU: /* 3DSTATE_INDEPENDENT_ALPHA_BLEND_CMD */
+			case 0x75U: /* 3DSTATE_FOG_COLOR_CMD */
+				continue;
+			case 0x6CU: /* 3DSTATE_MODES_5_CMD */
+				m_intel_state.modes5 = cmd & 0xFFFFFFU;
+#if 0
+				GLLog(3, "%s:   modes5 %#x\n", __FUNCTION__, m_intel_state.modes5);
+#endif
+				continue;
+			case 0x6DU: /* 3DSTATE_MODES_4_CMD */
+				m_intel_state.modes4 = cmd & 0xFFFFFFU;
+#if 0
+				GLLog(3, "%s:   modes4 %#x\n", __FUNCTION__, m_intel_state.modes4);
+#endif
+				continue;
+			case 0x7CU:
+				switch (opcode_l) {
+					case 0x80U: /* 3DSTATE_SCISSOR_ENABLE */
+					case 0x88U: /* 3DSTATE_DEPTH_SUBRECT_DISABLE */
+						continue;
+				}
+				break;
+			case 0x7DU:
+				switch (opcode_l) {
+					case 0x04U: /* 3DSTATE_LOAD_STATE_IMMEDIATE_1 */
+						skip = ip_load_immediate(p);
+						continue;
+					case 0x9CU: /* 3DSTATE_CLEAR_PARAMETERS */
+						skip = ip_clear_params(p);
+						continue;
+					case 0x00U: /* 3DSTATE_MAP_STATE */
+					case 0x01U: /* 3DSTATE_SAMPLER_STATE */
+					case 0x05U: /* 3DSTATE_PIXEL_SHADER_PROGRAM */
+					case 0x06U: /* 3DSTATE_PIXEL_SHADER_CONSTANTS */
+					case 0x80U: /* 3DSTATE_DRAW_RECT_CMD */
+					case 0x81U: /* 3DSTATE_SCISSOR_RECT_0_CMD */
+					case 0x83U: /* 3DSTATE_STIPPLE */
+					case 0x85U: /* 3DSTATE_DST_BUF_VARS_CMD */
+					case 0x88U: /* 3DSTATE_CONST_BLEND_COLOR_CMD */
+					case 0x89U: /* 3DSTATE_FOG_MODE_CMD */
+					case 0x8EU: /* 3DSTATE_BUF_INFO_CMD */
+					case 0x97U: /* 3DSTATE_DEPTH_OFFSET_SCALE */
+						skip = (cmd & 0xFFFFU) + 2U;
+						continue;
+				}
+				break;
+			case 0x7FU: /* PRIM3D */
+				skip = ip_prim3d(p);
+				continue;
+		}
+		GLLog(3, "%s:   Unknown cmd %#x\n", __FUNCTION__, cmd);
+	}
+	return 0U;
 }
 
 #pragma mark -
@@ -548,17 +1590,16 @@ IOReturn CLASS::clientMemoryForType(UInt32 type, IOOptionBits* options, IOMemory
 	IOBufferMemoryDescriptor* bmd;
 	size_t d;
 	VendorCommandDescriptor result;
+	uint32_t pcbRet;
 
 	GLLog(2, "%s(%u, options_out, memory_out)\n", __FUNCTION__, static_cast<unsigned>(type));
 	if (type > 4U || !options || !memory)
 		return kIOReturnBadArgument;
-#if 0
-	if (dword @ this+0x194 != 0) {
-		*options = dword @ this+0x194;
+	if (m_stream_error) {
+		*options = m_stream_error;
 		*memory = 0;
 		return kIOReturnBadArgument;
 	}
-#endif
 	/*
 	 * Notes:
 	 *   Cases 1 & 2 are called from GLD gldCreateContext
@@ -571,8 +1612,23 @@ IOReturn CLASS::clientMemoryForType(UInt32 type, IOOptionBits* options, IOMemory
 			 * TBD: Huge amount of code to process previous command buffer
 			 *   A0B7-AB58
 			 */
-			processCommandBuffer(&result);
+			if (!m_shared)
+				return kIOReturnNotReady;
+			m_shared->lockShared();
+			pcbRet = processCommandBuffer(&result);
+			if (!m_stream_error)
+				submit_buffer(result.next, result.ds_count_dwords);
+#if 0
 			discardCommandBuffer();
+#endif
+			for (d = 0U; d != 16U; ++d)
+				if (m_txs[d]) {
+					removeTextureFromStream(m_txs[d]);
+					if (__sync_fetch_and_add(&m_txs[d]->sys_obj->refcount, -1) == 1)
+						m_shared->delete_texture(m_txs[d]);
+					m_txs[d] = 0;
+				}
+			m_shared->unlockShared();
 			lockAccel(m_provider);
 			/*
 			 * AB58: reinitialize buffer
@@ -585,9 +1641,14 @@ IOReturn CLASS::clientMemoryForType(UInt32 type, IOOptionBits* options, IOMemory
 			*memory = md;
 			p = m_command_buffer.kernel_ptr;
 			initCommandBufferHeader(p, m_command_buffer.size);
-			p->options = 0;				// TBD: from this+0x88
-			p->begin = 1;
-			p->data[8] = 0x1000000U;	// terminating token
+#if 0
+			p->flags = 0;				// TBD: from this+0x88
+#else
+			if (!m_stream_error)
+				p->flags = pcbRet;
+#endif
+			p->downstream[-1] = 1;
+			p->downstream[0] = 1U << 24;// terminating token
 			p->stamp = 0;				// TBD: from this+0x7C
 			unlockAccel(m_provider);
 			// sleepForSwapCompleteNoLock(this+0x84)
@@ -604,7 +1665,7 @@ IOReturn CLASS::clientMemoryForType(UInt32 type, IOOptionBits* options, IOMemory
 			*memory = md;
 			p = m_context_buffer0.kernel_ptr;
 			bzero(p, sizeof *p);
-			p->options = 1;
+			p->flags = 1;
 			p->data[3] = 1007;
 			unlockAccel(m_provider);
 			return kIOReturnSuccess;
@@ -659,9 +1720,9 @@ IOReturn CLASS::clientMemoryForType(UInt32 type, IOOptionBits* options, IOMemory
 			*memory = md;
 			p = m_command_buffer.kernel_ptr;
 			initCommandBufferHeader(p, m_command_buffer.size);
-			p->options = 0;
-			p->begin = 1;
-			p->data[8] = 0x1000000U;	// terminating token
+			p->flags = 0;
+			p->downstream[-1] = 1;
+			p->downstream[0] = 1U << 24;// terminating token
 			p->stamp = 0;				// TBD: from this+0x7C
 			unlockAccel(m_provider);
 			return kIOReturnSuccess;
@@ -716,23 +1777,39 @@ bool CLASS::start(IOService* provider)
 	m_mem_type = 4U;
 	m_gc = OSSet::withCapacity(2U);
 	if (!m_gc) {
+		GLLog(1, "%s: OSSet::withCapacity failed\n", __FUNCTION__);
 		super::stop(provider);
 		return false;
+	}
+	m_float_cache = static_cast<float*>(IOMallocAligned(32U * sizeof(float), 16U));	// SSE-ready
+	if (!m_float_cache) {
+		GLLog(1, "%s: IOMallocAligned failed\n", __FUNCTION__);
+		goto bad;
+	}
+	m_context_id = m_provider->AllocContextID();	// Note: doesn't fail
+	if (m_provider->createContext(m_context_id) != kIOReturnSuccess) {
+		GLLog(1, "%s: Unable to create SVGA3D context\n", __FUNCTION__);
+		m_provider->FreeContextID(m_context_id);
+		m_context_id = SVGA_ID_INVALID;
+		goto bad;
 	}
 	// TBD getVRAMDescriptors
 	if (!allocAllContextBuffers()) {
-		Cleanup();
-		super::stop(provider);
-		return false;
+		GLLog(1, "%s: allocAllContextBuffers failed\n", __FUNCTION__);
+		goto bad;
 	}
 	if (!allocCommandBuffer(&m_command_buffer, 0x10000U)) {
-		Cleanup();
-		super::stop(provider);
-		return false;
+		GLLog(1, "%s: allocCommandBuffer failed\n", __FUNCTION__);
+		goto bad;
 	}
-	m_command_buffer.kernel_ptr->data[5] = 2U;
-	m_command_buffer.kernel_ptr->data[9] = 0x1000000U;
+	m_command_buffer.kernel_ptr->flags = 2U;
+	m_command_buffer.kernel_ptr->downstream[1] = 1U << 24;
 	return true;
+
+bad:
+	Cleanup();
+	super::stop(provider);
+	return false;
 }
 
 bool CLASS::initWithTask(task_t owningTask, void* securityToken, UInt32 type)
@@ -741,6 +1818,7 @@ bool CLASS::initWithTask(task_t owningTask, void* securityToken, UInt32 type)
 	if (!super::initWithTask(owningTask, securityToken, type))
 		return false;
 	m_owning_task = owningTask;
+	Init();
 	return true;
 }
 
@@ -767,7 +1845,34 @@ CLASS* CLASS::withTask(task_t owningTask, void* securityToken, uint32_t type)
 HIDDEN
 IOReturn CLASS::set_surface(uintptr_t surface_id, uintptr_t /* eIOGLContextModeBits */ context_mode_bits, uintptr_t c3, uintptr_t c4)
 {
+	VMsvga2Surface* surface_client;
+	IOReturn rc;
 	GLLog(2, "%s(%#lx, %#lx, %lu, %lu)\n", __FUNCTION__, surface_id, context_mode_bits, c3, c4);
+	if (!surface_id) {
+		if (m_surface_client) {
+			m_surface_client->detachGL();
+			m_surface_client->release();
+			m_surface_client = 0;
+		}
+		return kIOReturnSuccess;
+	}
+	surface_client = findSurfaceforID(static_cast<uint32_t>(surface_id));
+	if (!surface_client)
+		return kIOReturnNotFound;
+	if (surface_client == m_surface_client)
+		return kIOReturnSuccess;
+	surface_client->retain();
+	rc = surface_client->attachGL(m_context_id, static_cast<uint32_t>(context_mode_bits));
+	if (rc != kIOReturnSuccess) {
+		surface_client->release();
+		return rc;
+	}
+	if (m_surface_client) {
+		m_surface_client->detachGL();
+		m_surface_client->release();
+	}
+	m_surface_client = surface_client;
+	GLLog(2, "%s:   surface_client %p\n", __FUNCTION__, m_surface_client);
 	return kIOReturnSuccess;
 }
 
@@ -788,7 +1893,7 @@ IOReturn CLASS::set_swap_interval(intptr_t c1, intptr_t c2)
 HIDDEN
 IOReturn CLASS::get_config(uint32_t* c1, uint32_t* c2, uint32_t* c3)
 {
-	UInt32 const vram_size = m_provider->getVRAMSize();
+	uint32_t const vram_size = m_provider->getVRAMSize();
 
 	*c1 = 0;
 	*c2 = vram_size;
@@ -845,8 +1950,8 @@ IOReturn CLASS::wait_for_stamp(uintptr_t c1)
 
 #if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ < 1060
 HIDDEN
-IOReturn CLASS::new_texture(struct sIOGLNewTextureData const* struct_in,
-							struct sIOGLNewTextureReturnData* struct_out,
+IOReturn CLASS::new_texture(struct VendorNewTextureDataStruc const* struct_in,
+							struct sIONewTextureReturnData* struct_out,
 							size_t struct_in_size,
 							size_t* struct_out_size)
 {
@@ -872,7 +1977,7 @@ IOReturn CLASS::become_global_shared(uintptr_t c1)
 
 #if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ < 1060
 HIDDEN
-IOReturn CLASS::page_off_texture(struct sIOGLContextPageoffTexture const* struct_in, size_t struct_in_size)
+IOReturn CLASS::page_off_texture(struct sIODevicePageoffTexture const* struct_in, size_t struct_in_size)
 {
 	GLLog(2, "%s(struct_in, %lu)\n", __FUNCTION__, struct_in_size);
 	return kIOReturnSuccess;
@@ -899,8 +2004,10 @@ IOReturn CLASS::set_surface_get_config_status(struct sIOGLContextSetSurfaceData 
 											  size_t struct_in_size,
 											  size_t* struct_out_size)
 {
-	VMsvga2Surface* surface_obj = 0;
+	VMsvga2Surface* surface_client;
+#if LOGGING_LEVEL >= 1
 	int i;
+#endif
 	IOReturn rc;
 	eIOAccelSurfaceScaleBits scale_options;
 	IOAccelSurfaceScaling scale;	// var_44
@@ -909,29 +2016,22 @@ IOReturn CLASS::set_surface_get_config_status(struct sIOGLContextSetSurfaceData 
 	if (struct_in_size < sizeof *struct_in ||
 		*struct_out_size < sizeof *struct_out)
 		return kIOReturnBadArgument;
-	for (i = 0; i < 10; ++i)
-		GLLog(2, "%s:   struct_in[%d] == %#x\n", __FUNCTION__, i, reinterpret_cast<uint32_t const*>(struct_in)[i]);
+#if LOGGING_LEVEL >= 1
+	if (m_log_level >= 3)
+		for (i = 0; i < 10; ++i)
+			GLLog(3, "%s:   struct_in[%d] == %#x\n", __FUNCTION__, i, reinterpret_cast<uint32_t const*>(struct_in)[i]);
+#endif
 	*struct_out_size = sizeof *struct_out;
 	bzero(struct_out, sizeof *struct_out);
 	*struct_out_size = sizeof *struct_out;
 	if (struct_in->surface_id &&
 		struct_in->surface_mode != 0xFFFFFFFFU) {
 		lockAccel(m_provider);
-		surface_obj = findSurfaceforID(struct_in->surface_id);
+		surface_client = findSurfaceforID(struct_in->surface_id);
 		unlockAccel(m_provider);
-		if (surface_obj &&
-			((surface_obj->getOriginalModeBits() & 15) != static_cast<int>(struct_in->surface_mode & 15U)))
+		if (surface_client &&
+			((surface_client->getOriginalModeBits() & 15) != static_cast<int>(struct_in->surface_mode & 15U)))
 			return kIOReturnError;
-		/*
-		 * Note: added by me
-		 */
-		if (surface_obj) {
-			if (surface_client)
-				surface_client->release();
-			surface_client = surface_obj;
-			surface_client->retain();
-			GLLog(2, "%s:   surface_client %p\n", __FUNCTION__, surface_client);
-		}
 	}
 	rc = set_surface(struct_in->surface_id,
 					 struct_in->context_mode_bits,
@@ -939,6 +2039,8 @@ IOReturn CLASS::set_surface_get_config_status(struct sIOGLContextSetSurfaceData 
 					 struct_in->dr_options_lo);
 	if (rc != kIOReturnSuccess)
 		return rc;
+	if (!m_surface_client)
+		return kIOReturnError;
 	if (struct_in->set_scale) {
 		if (!(struct_in->scale_options & 1U))
 			return kIOReturnUnsupported;
@@ -952,13 +2054,13 @@ IOReturn CLASS::set_surface_get_config_status(struct sIOGLContextSetSurfaceData 
 		lockAccel(m_provider);
 #if 0
 		while (1) {
-			if (!surface_client) {
+			if (!m_surface_client) {
 				unlockAccel(m_provider);
 				return kIOReturnUnsupported;
 			}
-			if (surface_client->(byte @0x10CA) == 0)
+			if (m_surface_client->(byte @0x10CA) == 0)
 				break;
-			IOLockSleep(/* lock @m_provider+0x960 */, surface_client, 1);
+			IOLockSleep(/* lock @m_provider+0x960 */, m_surface_client, 1);
 		}
 #endif
 		scale_options = static_cast<eIOAccelSurfaceScaleBits>(((struct_in->scale_options >> 2) & 1U) | (struct_in->scale_options & 2U));
@@ -966,7 +2068,7 @@ IOReturn CLASS::set_surface_get_config_status(struct sIOGLContextSetSurfaceData 
 		 * Note: Intel GMA 950 actually calls set_scaling.  set_scale there is a wrapper
 		 *   for set_scaling that validates the struct size and locks the accelerator
 		 */
-		rc = surface_client->set_scale(scale_options, &scale, sizeof scale);
+		rc = m_surface_client->set_scale(scale_options, &scale, sizeof scale);
 		unlockAccel(m_provider);
 		if (rc != kIOReturnSuccess)
 			return rc;
@@ -979,13 +2081,18 @@ IOReturn CLASS::set_surface_get_config_status(struct sIOGLContextSetSurfaceData 
 					&struct_out->config[2]);
 	if (rc != kIOReturnSuccess)
 		return rc;
-	if (!surface_client)
-		return kIOReturnError;
-	surface_client->getBoundsForStatus(&struct_out->inner_width);
+	m_surface_client->getBoundsForStatus(&struct_out->inner_width);
+	/*
+	 * TBD: I don't WTF is with these inner bounds, but they start
+	 *   out as zero, and never get updated.  In fact, the outer
+	 *   bounds don't get updated either.
+	 */
+	struct_out->inner_width = struct_out->outer_width;
+	struct_out->inner_height = struct_out->outer_height;
 	rc = get_status(&struct_out->status);
 	if (rc != kIOReturnSuccess)
 		return rc;
-	struct_out->surface_mode_bits = static_cast<uint32_t>(surface_client->getOriginalModeBits());
+	struct_out->surface_mode_bits = static_cast<uint32_t>(m_surface_client->getOriginalModeBits());
 	for (i = 0; i < 10; ++i)
 		GLLog(2, "%s:   struct_out[%d] == %#x\n", __FUNCTION__, i, reinterpret_cast<uint32_t const*>(struct_out)[i]);
 	return kIOReturnSuccess;
@@ -1025,7 +2132,7 @@ IOReturn CLASS::purge_accelerator(uintptr_t c1)
 
 #if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ < 1060
 HIDDEN
-IOReturn CLASS::get_channel_memory(struct sIOGLChannelMemoryData* struct_out, size_t* struct_out_size)
+IOReturn CLASS::get_channel_memory(struct sIODeviceChannelMemoryData* struct_out, size_t* struct_out_size)
 {
 	GLLog(2, "%s(struct_out, %lu)\n", __FUNCTION__, *struct_out_size);
 	bzero(struct_out, *struct_out_size);
@@ -1103,7 +2210,7 @@ IOReturn CLASS::get_notifiers(uint32_t*, uint32_t*)
 #if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ < 1060
 HIDDEN
 IOReturn CLASS::new_heap_object(struct sNVGLNewHeapObjectData const* struct_in,
-								struct sIOGLNewTextureReturnData* struct_out,
+								struct sIONewTextureReturnData* struct_out,
 								size_t struct_in_size,
 								size_t* struct_out_size)
 {
@@ -1204,7 +2311,7 @@ IOReturn CLASS::ForceTextureLargePages(uintptr_t c1)
 #endif
 
 #pragma mark -
-#pragma mark Dispatch Funtions
+#pragma mark Dispatch Funtions [Apple]
 #pragma mark -
 
 HIDDEN void CLASS::process_token_Noop(VendorGLStreamInfo*) {} // Null
@@ -1234,51 +2341,32 @@ HIDDEN
 void CLASS::discard_token_Texture(VendorGLStreamInfo* info)
 {
 	VMsvga2TextureBuffer* tx;
-	if (!m_shared)
-		return;
-#if 0
-	tx = m_shared->findTextureBuffer((info->p)[2]);
-	if (!tx)
-		return;
-	if (__sync_fetch_and_add(&tx->sys_obj->refcount, -0x10000) == 0x10000)
-		m_shared->delete_texture(tx);
-#else
-	uint32_t* q = info->p + 2;	// edi
-	uint32_t i, bit_mask = info->p[1];	// var_2c
+	uint32_t *q, i, bit_mask;
+	q = &info->p[2];	// edi
+	bit_mask = info->p[1];	// var_2c
 	for (i = 0U; i != 16U; ++i) {
-		tx = txs[i];
+		tx = m_txs[i];
 		if (tx) {
 			removeTextureFromStream(tx);
-			if (__sync_fetch_and_add(&tx->sys_obj->refcount, -1) == 1) {
-				GLLog(2, "%s:     deleting tx %u\n", __FUNCTION__,
-					  tx->sys_obj->object_id);
+			if (__sync_fetch_and_add(&tx->sys_obj->refcount, -1) == 1)
 				m_shared->delete_texture(tx);
-			} else {
-				GLLog(2, "%s:     refcount for tx %u is %#x\n", __FUNCTION__,
-					  tx->sys_obj->object_id, tx->sys_obj->refcount);
-			}
-
-			txs[i] = 0;
+			m_txs[i] = 0;
 		}
 		if (!((bit_mask >> i) & 1U))
 			continue;
 		tx = m_shared->findTextureBuffer(*q);
 		if (!tx) {
 			info->cmd = 0U;
-			info->num_words_done = 0U;
+			info->ds_count_dwords = 0U;
 			// m_provider->0x50 -= info->f2;
 			m_stream_error = 2;
 			return;
 		}
 		addTextureToStream(tx);
 		__sync_fetch_and_add(&tx->sys_obj->refcount, -0xFFFF);
-		GLLog(2, "%s:     refcount for tx %u is %#x\n", __FUNCTION__,
-			  tx->sys_obj->object_id, tx->sys_obj->refcount);
-		GLLog(2, "%s:     tx %u params %#x, %#x\n", __FUNCTION__, *q, q[1], q[2]);
-		txs[i] = tx;
+		m_txs[i] = tx;
 		q += 3;
 	}
-#endif
 }
 
 HIDDEN void CLASS::discard_token_NoTex(VendorGLStreamInfo*) {}
@@ -1289,7 +2377,40 @@ HIDDEN void CLASS::discard_token_NoVertexBuffer(VendorGLStreamInfo*)
 	// dword ptr @this+0x1F0 = 0U;
 }
 
-HIDDEN void CLASS::discard_token_DrawBuffer(VendorGLStreamInfo*) {}
+HIDDEN
+void CLASS::discard_token_DrawBuffer(VendorGLStreamInfo* info)
+{
+#if 0
+	switch (info->p[1]) {
+		case 1:
+			// this->0xA8 = 0;
+			break;
+		case 7:
+			// this->0xA8 = 2;
+			break;
+		case 8:
+			// this->0xA8 = 3;
+			break;
+		default:
+			// this->0xA8 = 1;
+			break;
+	}
+	if (!(this->0x90 & 0x20U))
+		return;
+	switch (info->p[1]) {
+		case 7:
+			// this->0xAA = 5;
+			break;
+		case 8:
+			// this->0xAA = 6;
+			break;
+		default:
+			// this->0xAA = 4;
+			break;
+	}
+#endif
+}
+
 HIDDEN void CLASS::discard_token_Noop(VendorGLStreamInfo*) {} // Null
 HIDDEN void CLASS::discard_token_TexSubImage2D(VendorGLStreamInfo*) {}
 HIDDEN void CLASS::discard_token_CopyPixelsDst(VendorGLStreamInfo*) {}
@@ -1303,27 +2424,27 @@ void CLASS::discard_token_AsyncReadDrawBuffer(VendorGLStreamInfo* info)
 HIDDEN
 void CLASS::process_token_Texture(VendorGLStreamInfo* info)
 {
-#if 0
 	VMsvga2TextureBuffer* tx;
-	uint32_t* q = info->p + 2;	// var_2c
-	// var_38 = info->p;
-	uint32_t bit_mask = info->p[1];	// var_34, also to this->0x238
-	uint32_t i, count = 0; // var_30
+	uint32_t *p, *q, bit_mask, i, count;
+	p = info->p; // var_38
+	q = &info->p[2];	// var_2c
+	bit_mask = p[1];	// var_34
+//	this->0x238 = bit_mask;
+	count = 0; // var_30
 	for (i = 0U; i != 16U; ++i) {
-		tx = txs[i];
+		tx = m_txs[i];
 		if (tx) {
 			removeTextureFromStream(tx);
 			if (__sync_fetch_and_add(&tx->sys_obj->refcount, -1) == 1)
 				m_shared->delete_texture(tx);
-			txs[i] = 0;
+			m_txs[i] = 0;
 		}
 		if (!((bit_mask >> i) & 1U))
 			continue;
 		tx = m_shared->findTextureBuffer(*q);	// tx now in var_1c
 		if (!tx) {
-			// 1f2ae
 			info->cmd = 0U;
-			info->num_words_done = 0U;
+			info->ds_count_dwords = 0U;
 			// m_provider->0x50 -= info->f2;
 			m_stream_error = 2;
 			return;
@@ -1336,34 +2457,77 @@ void CLASS::process_token_Texture(VendorGLStreamInfo* info)
 		// this->0x244 = q[1];
 		// this->0x248 = q[2];
 		write_tex_data(i, q, tx);
-		txs[i] = tx;
+		alloc_and_load_texture(tx);
+		m_txs[i] = tx;
+		bind_texture(i, tx);
 		q += 3;
 	}
-	// this->0x23C = count
 	if (count)
-		info->p[0] = 0x7D000000U | (3U * count);
+		*p = 0x7D000000U | (3U * count); /* 3DSTATE_MAP_STATE */
 	else
-		info->p[0] = 0;
-#endif
+		*p = 0;
 }
 
-HIDDEN void CLASS::process_token_NoTex(VendorGLStreamInfo*) {}
-HIDDEN void CLASS::process_token_VertexBuffer(VendorGLStreamInfo*) {}
-HIDDEN void CLASS::process_token_NoVertexBuffer(VendorGLStreamInfo*) {}
-HIDDEN void CLASS::process_token_DrawBuffer(VendorGLStreamInfo*) {}
-HIDDEN void CLASS::process_token_SetFence(VendorGLStreamInfo*) {}
-HIDDEN void CLASS::process_token_TexSubImage2D(VendorGLStreamInfo*) {}
-HIDDEN void CLASS::process_token_CopyPixelsDst(VendorGLStreamInfo*) {}
-HIDDEN void CLASS::process_token_CopyPixelsSrc(VendorGLStreamInfo*) {}
-HIDDEN void CLASS::process_token_CopyPixelsSrcFBO(VendorGLStreamInfo*) {}
+HIDDEN void CLASS::process_token_NoTex(VendorGLStreamInfo* info) { discard_token_NoTex(info); }
+HIDDEN void CLASS::process_token_VertexBuffer(VendorGLStreamInfo* info) { discard_token_VertexBuffer(info); }
+HIDDEN void CLASS::process_token_NoVertexBuffer(VendorGLStreamInfo* info) { discard_token_NoVertexBuffer(info); }
+
+HIDDEN
+void CLASS::process_token_DrawBuffer(VendorGLStreamInfo* info)
+{
+#if 0
+	if (this->0x204) {
+		this->0xA8 = info->p[1] == 17 ? 1 : info->p[1];
+		this->0xAA = this->0x1F8 != 0 ? 1 : this->0xA8;
+		goto finish;
+	}
+	if (!m_surface_client)
+		goto finish;
+	switch (info->p[1]) {
+		case 1:
+			// this->0xA8 = 0;
+			break;
+		case 7:
+			// this->0xA8 = 2;
+			break;
+		case 8:
+			// this->0xA8 = 3;
+			break;
+		default:
+			// this->0xA8 = 1;
+			break;
+	}
+	switch (info->p[1]) {
+		case 7:
+			// this->0xAA = 5;
+			break;
+		case 8:
+			// this->0xAA = 6;
+			break;
+		default:
+			// this->0xAA = 4;
+			break;
+	}
+finish:
+#endif
+	setup_drawbuffer_registers(info->p);
+}
+
+HIDDEN void CLASS::process_token_SetFence(VendorGLStreamInfo* info) { discard_token_Noop(info); }
+HIDDEN void CLASS::process_token_TexSubImage2D(VendorGLStreamInfo* info) { discard_token_TexSubImage2D(info); }
+HIDDEN void CLASS::process_token_CopyPixelsDst(VendorGLStreamInfo* info) { discard_token_CopyPixelsDst(info); }
+HIDDEN void CLASS::process_token_CopyPixelsSrc(VendorGLStreamInfo* info) { discard_token_Noop(info); }
+HIDDEN void CLASS::process_token_CopyPixelsSrcFBO(VendorGLStreamInfo* info) { discard_token_Noop(info); }
 
 HIDDEN
 void CLASS::process_token_DrawRect(VendorGLStreamInfo* info)
 {
-	*(info->p) = 0x7D800003U;
+	*(info->p) = 0x7D800003U; /* 3DSTATE_DRAW_RECT_CMD */
 #if 0
 	memcpy(&info->p[1], this->0x304U, 4U * sizeof(uint32_t));
+#else
+	bzero(&info->p[1], 4U * sizeof(uint32_t));
 #endif
 }
 
-HIDDEN void CLASS::process_token_AsyncReadDrawBuffer(VendorGLStreamInfo*) {}
+HIDDEN void CLASS::process_token_AsyncReadDrawBuffer(VendorGLStreamInfo* info) { discard_token_AsyncReadDrawBuffer(info); }

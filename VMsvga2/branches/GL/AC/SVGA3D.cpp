@@ -419,8 +419,10 @@ bool CLASS::BeginDrawPrimitives(uint32_t cid,                  // IN
 	declArray = reinterpret_cast<SVGA3dVertexDecl*>(&cmd[1]);
 	rangeArray = reinterpret_cast<SVGA3dPrimitiveRange*>(&declArray[numVertexDecls]);
 
+#if 0
 	bzero(declArray, declSize);
 	bzero(rangeArray, rangeSize);
+#endif
 
 	*decls = declArray;
 	*ranges = rangeArray;

@@ -172,6 +172,12 @@ uint32_t GMR_VRAM(void)
 	return static_cast<uint32_t>(-2) /* SVGA_GMR_FRAMEBUFFER */;
 }
 
+static inline
+bool isIdValid(uint32_t id)
+{
+	return static_cast<int>(id) >= 0;
+}
+
 #pragma mark -
 #pragma mark IOUserClient Methods
 #pragma mark -
@@ -344,7 +350,8 @@ HIDDEN
 void CLASS::Init()
 {
 	m_log_level = LOGGING_LEVEL;
-	m_video.stream_id = static_cast<uint32_t>(-1);
+	m_video.stream_id = SVGA_ID_INVALID;
+	InitGL();
 }
 
 HIDDEN
@@ -352,6 +359,7 @@ void CLASS::Cleanup()
 {
 	if (m_provider) {
 		Cleanup3D();
+		CleanupGL();
 		surface_video_off();
 	}
 	releaseBacking();
@@ -1175,6 +1183,72 @@ void CLASS::videoReshape()
 }
 
 #pragma mark -
+#pragma mark Private Support Methods - GL
+#pragma mark -
+
+HIDDEN
+void CLASS::InitGL()
+{
+	m_gl.cid = SVGA_ID_INVALID;
+	m_gl.color_sid = SVGA_ID_INVALID;
+	m_gl.depth_sid = SVGA_ID_INVALID;
+	m_gl.stencil_sid = SVGA_ID_INVALID;
+}
+
+HIDDEN
+void CLASS::CleanupGL()
+{
+	if (isIdValid(m_gl.color_sid)) {
+		m_provider->destroySurface(m_gl.color_sid);
+		m_provider->FreeSurfaceID(m_gl.color_sid);
+		m_gl.color_sid = SVGA_ID_INVALID;
+	}
+	if (isIdValid(m_gl.depth_sid)) {
+		m_provider->destroySurface(m_gl.depth_sid);
+		m_provider->FreeSurfaceID(m_gl.depth_sid);
+		m_gl.depth_sid = SVGA_ID_INVALID;
+	}
+	if (isIdValid(m_gl.stencil_sid)) {
+		m_provider->destroySurface(m_gl.stencil_sid);
+		m_provider->FreeSurfaceID(m_gl.stencil_sid);
+		m_gl.stencil_sid = SVGA_ID_INVALID;
+	}
+}
+
+HIDDEN
+IOReturn CLASS::flushGLSurface()
+{
+	return m_provider->blitSurfaceToScreen(m_gl.color_sid,
+										   m_framebufferIndex,
+										   &m_scale.buffer,
+										   m_last_region);
+}
+
+HIDDEN
+IOReturn CLASS::copyGLSurfaceToBacking()
+{
+	DefineRegion<1U> tmpRegion;
+	VMsvga2Accel::ExtraInfo extra;
+	uint32_t fence;
+
+	/*
+	 * TBD: error checking
+	 */
+	bzero(&extra, sizeof extra);
+	set_region(&tmpRegion.r, 0, 0, m_scale.buffer.w, m_scale.buffer.h);
+	extra.mem_gmr_id = GMR_VRAM();
+	extra.mem_offset_in_gmr = m_backing.offset + m_scale.reserved[2];
+	extra.mem_pitch = m_scale.reserved[1];
+	m_provider->surfaceDMA2D(m_gl.color_sid,
+							 SVGA3D_READ_HOST_VRAM,
+							 &tmpRegion.r,
+							 &extra,
+							 &fence);
+	m_provider->SyncToFence(fence);
+	return kIOReturnSuccess;
+}
+
+#pragma mark -
 #pragma mark IONVSurface Methods
 #pragma mark -
 
@@ -1196,6 +1270,11 @@ IOReturn CLASS::surface_read_lock_options(eIOAccelSurfaceLockBits options, IOAcc
 		return kIOReturnNoMemory;
 	}
 	calculateSurfaceInformation(info);
+	/*
+	 * Note: Added for GL
+	 */
+	if (bGLMode)
+		return copyGLSurfaceToBacking();
 	return kIOReturnSuccess;
 }
 
@@ -1331,6 +1410,9 @@ IOReturn CLASS::set_id_mode(uintptr_t wID, eIOAccelSurfaceModeBits modebits)
 			return kIOReturnUnsupported;
 	}
 	m_wID = static_cast<uint32_t>(wID);
+	/*
+	 * Note: Added for GL
+	 */
 	m_gl.original_mode_bits = modebits;
 	bHaveID = true;
 	return kIOReturnSuccess;
@@ -1377,6 +1459,11 @@ IOReturn CLASS::surface_flush(uintptr_t framebufferMask, IOOptionBits options)
 	if (!(framebufferMask & static_cast<uintptr_t>(1U << m_framebufferIndex)))
 		return kIOReturnSuccess;	// Note: nothing to do
 #endif
+	/*
+	 * Note: Added for GL
+	 */
+	if (bGLMode)
+		return flushGLSurface();
 	if (isClientBackingValid())
 		copy_from_client_backing();
 	if (bHaveScreenObject) {
@@ -1643,6 +1730,9 @@ IOReturn CLASS::set_shape_backing_length_ext(eIOAccelSurfaceShapeBits options,
 	}
 	m_last_region = static_cast<IOAccelDeviceRegion const*>(m_last_shape->getBytesNoCopy());
 	m_framebufferIndex = static_cast<uint32_t>(framebufferIndex);
+	/*
+	 * TBD: handle resizing in GL mode
+	 */
 	if (options & kIOAccelSurfaceShapeIdentityScaleBit) {
 		if (m_wID != 1U ||
 			checkOptionAC(VMW_OPTION_AC_PACKED_BACKING)) {
@@ -1679,7 +1769,7 @@ IOReturn CLASS::set_shape_backing_length_ext(eIOAccelSurfaceShapeBits options,
 HIDDEN
 IOReturn CLASS::context_set_surface(uint32_t vmware_pixel_format, uint32_t apple_pixel_format)
 {
-	SFLog(2, "%s(%#x, %#x)\n", __FUNCTION__, FMT_U(vmware_pixel_format), FMT_U(apple_pixel_format));
+	SFLog(2, "%s(%#x, %#x)\n", __FUNCTION__, vmware_pixel_format, apple_pixel_format);
 
 	if (!vmware_pixel_format) {
 		surface_video_off();
@@ -1715,7 +1805,7 @@ IOReturn CLASS::context_set_surface(uint32_t vmware_pixel_format, uint32_t apple
 HIDDEN
 IOReturn CLASS::context_scale_surface(IOOptionBits options, uint32_t width, uint32_t height)
 {
-	SFLog(2, "%s(%#x, %u, %u)\n", __FUNCTION__, FMT_U(options), FMT_U(width), FMT_U(height));
+	SFLog(2, "%s(%#x, %u, %u)\n", __FUNCTION__, FMT_U(options), width, height);
 
 	if (!(options & kIOBlitFixedSource))
 		return kIOReturnSuccess;
@@ -1795,6 +1885,10 @@ IOReturn CLASS::copy_framebuffer_region_to_self(uint32_t framebufferIndex,
 		return kIOReturnNotReady;
 	if (bVideoMode) {
 		SFLog(1, "%s: called for YUV surface - unsupported\n", __FUNCTION__);
+		return kIOReturnUnsupported;
+	}
+	if (bGLMode) {
+		SFLog(1, "%s: called for GL surface - unsupported\n", __FUNCTION__);
 		return kIOReturnUnsupported;
 	}
 	if (m_surfaceFormat != SVGA3D_X8R8G8B8) {
@@ -1894,7 +1988,7 @@ IOReturn CLASS::copy_self_region_to_framebuffer(uint32_t framebufferIndex,
 												size_t regionSize)
 {
 	SFLog(1, "%s: Copy from surface(%#x) to framebuffer(%u) - unsupported\n", __FUNCTION__,
-		  FMT_U(m_wID), FMT_U(framebufferIndex));
+		  m_wID, framebufferIndex);
 	if (!region || regionSize < IOACCEL_SIZEOF_DEVICE_REGION(region))
 		return kIOReturnBadArgument;
 	return kIOReturnUnsupported;
@@ -1928,12 +2022,23 @@ IOReturn CLASS::copy_surface_region_to_self(class VMsvga2Surface* source_surface
 		return kIOReturnBadArgument;
 	if (!bHaveID || !isSourceValid())
 		return kIOReturnNotReady;
+	if (bGLMode) {
+		SFLog(1, "%s: called for GL target surface - unsupported\n", __FUNCTION__);
+		return kIOReturnUnsupported;
+	}
 	if (!source_surface->bHaveID || !source_surface->isBackingValid())
 		return kIOReturnNotReady;
 	if (m_surfaceFormat != source_surface->m_surfaceFormat ||
 		m_bytes_per_pixel != source_surface->m_bytes_per_pixel) {
 		SFLog(1, "%s: called for source surface format %d, dest surface format %d - unsupported\n",
 			  __FUNCTION__, source_surface->m_surfaceFormat, m_surfaceFormat);
+		return kIOReturnUnsupported;
+	}
+	if (source_surface->bGLMode) {
+		/*
+		 * TBD: blit from the GL surface to backing
+		 */
+		SFLog(1, "%s: called for GL source surface - unsupported\n", __FUNCTION__);
 		return kIOReturnUnsupported;
 	}
 	/*
@@ -2012,7 +2117,7 @@ IOReturn CLASS::surface_flush_video(uint32_t* swapFlags)
 	if (m_video.unit.enabled)
 		return m_provider->VideoSetRegsInRange(m_video.stream_id, 0, 0, 0, &m_backing.last_DMA_fence);
 	m_video.stream_id = m_provider->AllocStreamID();
-	if (m_video.stream_id == static_cast<uint32_t>(-1))
+	if (!isIdValid(m_video.stream_id))
 		return kIOReturnNoResources;
 	setVideoRegs();
 	setVideoDest();
@@ -2035,4 +2140,128 @@ void CLASS::getBoundsForStatus(uint32_t* bounds) const
 	if (!bounds)
 		return;
 	memcpy(bounds, &m_gl.region_status[0], 4 * sizeof(uint32_t));
+}
+
+HIDDEN
+IOReturn CLASS::attachGL(uint32_t context_id, int cmb)
+{
+	IOReturn rc;
+	SVGA3dRenderState renderState;
+
+	if (bGLMode)
+		return kIOReturnBusy;
+	if (!m_provider || !isSourceValid())
+		return kIOReturnNotReady;
+	if (!isIdValid(m_gl.color_sid))
+		m_gl.color_sid = m_provider->AllocSurfaceID();
+	rc = m_provider->createSurface(m_gl.color_sid,
+								   SVGA3D_SURFACE_HINT_RENDERTARGET,
+								   m_surfaceFormat,
+								   m_scale.buffer.w,
+								   m_scale.buffer.h);
+	if (rc != kIOReturnSuccess) {
+		m_provider->FreeSurfaceID(m_gl.color_sid);
+		m_gl.color_sid = SVGA_ID_INVALID;
+		return rc;
+	}
+#if 0
+	if (!isIdValid(m_gl.depth_sid))
+		m_gl.depth_sid = m_provider->AllocSurfaceID();
+	rc = m_provider->createSurface(m_gl.depth_sid,
+								   SVGA3D_SURFACE_HINT_DEPTHSTENCIL,
+								   SVGA3D_Z_D16,
+								   m_scale.buffer.w,
+								   m_scale.buffer.h);
+	if (rc != kIOReturnSuccess) {
+		m_provider->FreeSurfaceID(m_gl.depth_sid);
+		m_gl.depth_sid = SVGA_ID_INVALID;
+		CleanupGL();
+		return rc;
+	}
+#endif
+#if 0
+	SFLog(3, "%s: Attaching render target, cid == %u, sid == %u, width == %u, height == %u\n", __FUNCTION__,
+		  context_id, m_gl.color_sid, m_scale.buffer.w, m_scale.buffer.h);
+#endif
+	rc = m_provider->setRenderTarget(context_id, SVGA3D_RT_COLOR0, m_gl.color_sid);
+	if (rc != kIOReturnSuccess) {
+		CleanupGL();
+		return rc;
+	}
+#if 0
+	rc = m_provider->setRenderTarget(context_id, SVGA3D_RT_DEPTH, m_gl.depth_sid);
+	if (rc != kIOReturnSuccess) {
+		CleanupGL();
+		return rc;
+	}
+#endif
+	m_gl.cid = context_id;
+	bGLMode = true;
+	/*
+	 * Initialization taken from VMware Examples
+	 *   Without the ViewPort setting, nothing paints
+	 *
+	 * Note: assumes m_scale.buffer.x and .y == 0
+	 */
+	m_provider->setViewPort(context_id, &m_scale.buffer);
+#if 0
+	m_provider->setZRange(context_id, 0.0F, 1.0F);
+#endif
+	renderState.state = SVGA3D_RS_SHADEMODE;
+	renderState.uintValue = SVGA3D_SHADEMODE_SMOOTH;
+	m_provider->setRenderState(context_id, 1U, &renderState);
+	return kIOReturnSuccess;
+}
+
+HIDDEN
+IOReturn CLASS::detachGL()
+{
+	SFLog(3, "%s()\n", __FUNCTION__);
+	if (!bGLMode)
+		return kIOReturnSuccess;
+	if (!m_provider)
+		return kIOReturnNotReady;
+	m_provider->setRenderTarget(m_gl.cid, SVGA3D_RT_COLOR0, SVGA_ID_INVALID);
+	m_provider->setRenderTarget(m_gl.cid, SVGA3D_RT_DEPTH, SVGA_ID_INVALID);
+#if 0
+	copyGLSurfaceToBacking();
+	CleanupGL();	/* This crashes the VMware backend... why? */
+	bGLMode = false;
+#endif
+	return kIOReturnSuccess;
+}
+
+HIDDEN
+void CLASS::copyFromTexture(uint32_t surface_id, IOAccelBounds const* rect)
+{
+	DefineRegion<1U> tmpRegion;
+	VMsvga2Accel::ExtraInfo extra;
+
+	if (!bGLMode)
+		return;
+	/*
+	 * Note: assumes m_scale.buffer.x and .y == 0
+	 */
+	bzero(&extra, sizeof extra);
+	tmpRegion.r.num_rects = 1U;
+	memcpy(&tmpRegion.r.bounds, rect, sizeof *rect);
+	memcpy(&tmpRegion.r.rect[0], rect, sizeof *rect);
+	m_provider->createSurface(m_gl.color_sid,		// TBD: prevent unneeded recreate, by resizing in time
+							  SVGA3dSurfaceFlags(SVGA3D_SURFACE_HINT_RENDERTARGET),
+							  m_surfaceFormat,
+							  m_scale.buffer.w,
+							  m_scale.buffer.h);
+	if (rect->w != m_scale.buffer.w ||
+		rect->h != m_scale.buffer.h) {
+		m_provider->surfaceStretch(surface_id,
+								   m_gl.color_sid,
+								   SVGA3D_STRETCH_BLT_LINEAR,
+								   rect,
+								   &m_scale.buffer);
+	} else {
+		m_provider->surfaceCopy(surface_id,
+								m_gl.color_sid,
+								&tmpRegion.r,
+								&extra);
+	}
 }

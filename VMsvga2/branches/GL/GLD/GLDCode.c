@@ -27,6 +27,7 @@
  */
 
 #include <dlfcn.h>
+#include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
 #include <IOKit/IOKitLib.h>
@@ -37,6 +38,13 @@
 #include "GLDCode.h"
 #include "GLDData.h"
 #include "ACMethods.h"
+#include "VLog.h"
+
+#if LOGGING_LEVEL >= 1
+#define GLDLog(log_level, ...) do { if (log_level <= logLevel) VLog("GLD: ", ##__VA_ARGS__); } while(false)
+#else
+#define GLDLog(log_level, ...)
+#endif
 
 #pragma GCC visibility push(hidden)
 
@@ -403,11 +411,11 @@ int glrGetKernelTextureAGPRef(gld_shared_t* shared,
 #endif
 	// skip to 14489
 	texture->obj = 0;
-	texture->f0 = 0;
+	texture->raw_data = 0;
 	texture->tds.type = 6;
 	texture->tds.pixels[0] = (uintptr_t) pixels1;
 	texture->tds.pixels[1] = (uintptr_t) pixels2;
-	texture->tds.size = texture_size;
+	texture->tds.size[0] = texture_size;
 	texture->tds.version = *MKOFS(uint8_t, 0x78, 0x80, client_texture);
 	texture->tds.flags[0] = *MKOFS(uint8_t, 0x76, 0x7E, client_texture);
 	texture->tds.flags[1] = *MKOFS(uint8_t, 0x75, 0x7D, client_texture);
@@ -416,7 +424,7 @@ int glrGetKernelTextureAGPRef(gld_shared_t* shared,
 	texture->tds.width = 0;	// taken from client_texture
 	texture->tds.height = 0; // taken from client_texture
 	texture->tds.depth = 1; // taken from client_texture
-	texture->tds.f3[0] = 0;
+	texture->tds.read_only = 0;
 	texture->tds.pitch = 0; // calculated... TBD
 	outputStructCnt = sizeof outputStruct;
 	kr = IOConnectCallMethod(shared->obj,
@@ -458,6 +466,305 @@ void glrWriteAllHardwareState(gld_context_t* context)
 	mem1[4] = count;
 	if (mem1[3] < count)
 		exit(1);
+}
+
+#define GLD_DEFINE_GENERIC_DISPATCH(name, index) \
+void name(gld_context_t* context) \
+{ \
+void *args = __builtin_apply_args(), *ret; \
+GLDLog(2, "%s()\n", __FUNCTION__); \
+if (remote_dispatch[index]) { \
+ret = __builtin_apply(remote_dispatch[index], args, 64); \
+__builtin_return(ret); \
+} \
+}
+
+void glrAccum(gld_context_t* context, uint32_t mode, float accum)
+{
+	typeof(glrAccum) *addr;
+	GLDLog(2, "%s(%p, %u, %f)\n", __FUNCTION__, context, mode, accum);
+	cb_chkpt(context, 0);
+	addr = (typeof(addr)) remote_dispatch[0];
+	if (addr)
+		addr(context, mode, accum);
+	cb_chkpt(context, 1);
+}
+
+/*
+ * GL_COLOR_BUFFER_BIT, GL_DEPTH_BUFFER_BIT, GL_ACCUM_BUFFER_BIT, GL_STENCIL_BUFFER_BIT
+ */
+void glrClear(gld_context_t* context, uint32_t mask)
+{
+	typeof(glrClear) *addr;
+	GLDLog(2, "%s(%p, %#x)\n", __FUNCTION__, context, mask);
+	cb_chkpt(context, 0);
+	addr = (typeof(addr)) remote_dispatch[1];
+	if (addr)
+		addr(context, mask);
+	cb_chkpt(context, 1);
+}
+
+int glrReadPixels(gld_context_t* context,
+				  uint32_t arg1,
+				  uint32_t arg2,
+				  uint32_t arg3,
+				  uint32_t arg4,
+				  uint32_t arg5,
+				  uint32_t arg6,
+				  size_t arg7,
+				  uint32_t arg8,
+				  void* arg9)
+{
+	typeof(glrReadPixels) *addr;
+	int rc = 0;
+	GLDLog(2, "%s(%p, %u, %u, %u, %u, %u, %u, %lu, %u, %p)\n", __FUNCTION__, context, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9);
+	cb_chkpt(context, 0);
+	addr = (typeof(addr)) remote_dispatch[2];
+	if (addr)
+		rc = addr(context, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9);
+	cb_chkpt(context, 1);
+	return rc;
+}
+
+GLD_DEFINE_GENERIC_DISPATCH(glrDrawPixels, 3)
+GLD_DEFINE_GENERIC_DISPATCH(glrCopyPixels, 4)
+GLD_DEFINE_GENERIC_DISPATCH(glrRenderBitmap, 5)
+
+void glrRenderPoints(gld_context_t* context, void* client_vertex_array, uint32_t num_vertices)
+{
+	typeof(glrRenderPoints) *addr;
+	GLDLog(2, "%s(%p, %p, %u)\n", __FUNCTION__, context, client_vertex_array, num_vertices);
+	cb_chkpt(context, 0);
+	addr = (typeof(addr)) remote_dispatch[6];
+	if (addr)
+		addr(context, client_vertex_array, num_vertices);
+	cb_chkpt(context, 1);
+}
+
+void glrRenderLines(gld_context_t* context, void* client_vertex_array, uint32_t num_vertices)
+{
+	typeof(glrRenderLines) *addr;
+	GLDLog(2, "%s(%p, %p, %u)\n", __FUNCTION__, context, client_vertex_array, num_vertices);
+	cb_chkpt(context, 0);
+	addr = (typeof(addr)) remote_dispatch[7];
+	if (addr)
+		addr(context, client_vertex_array, num_vertices);
+	cb_chkpt(context, 1);
+}
+
+void glrRenderLineStrip(gld_context_t* context, void* client_vertex_array, uint32_t num_vertices, uint32_t mode)
+{
+	typeof(glrRenderLineStrip) *addr;
+	GLDLog(2, "%s(%p, %p, %u, %u)\n", __FUNCTION__, context, client_vertex_array, num_vertices, mode);
+	cb_chkpt(context, 0);
+	addr = (typeof(addr)) remote_dispatch[8];
+	if (addr)
+		addr(context, client_vertex_array, num_vertices, mode);
+	cb_chkpt(context, 1);
+}
+
+void glrRenderLineLoop(gld_context_t* context, void* client_vertex_array, uint32_t num_vertices, uint32_t mode)
+{
+	typeof(glrRenderLineLoop) *addr;
+	GLDLog(2, "%s(%p, %p, %u, %u)\n", __FUNCTION__, context, client_vertex_array, num_vertices, mode);
+	cb_chkpt(context, 0);
+	addr = (typeof(addr)) remote_dispatch[9];
+	if (addr)
+		addr(context, client_vertex_array, num_vertices, mode);
+	cb_chkpt(context, 1);
+}
+
+void glrRenderPolygon(gld_context_t* context, void* client_vertex_array, uint32_t num_vertices, uint32_t mode)
+{
+	typeof(glrRenderPolygon) *addr;
+	GLDLog(2, "%s(%p, %p, %u, %u)\n", __FUNCTION__, context, client_vertex_array, num_vertices, mode);
+	cb_chkpt(context, 0);
+	addr = (typeof(addr)) remote_dispatch[10];
+	if (addr)
+		addr(context, client_vertex_array, num_vertices, mode);
+	cb_chkpt(context, 1);
+}
+
+void glrRenderTriangles(gld_context_t* context, void* client_vertex_array, uint32_t num_vertices, uint32_t mode)
+{
+	typeof(glrRenderTriangles) *addr;
+	GLDLog(2, "%s(%p, %p, %u, %u)\n", __FUNCTION__, context, client_vertex_array, num_vertices, mode);
+	cb_chkpt(context, 0);
+	addr = (typeof(addr)) remote_dispatch[11];
+	if (addr)
+		addr(context, client_vertex_array, num_vertices, mode);
+	cb_chkpt(context, 1);
+}
+
+void glrRenderTriangleFan(gld_context_t* context, void* client_vertex_array, uint32_t num_vertices, uint32_t arg3, uint32_t mode)
+{
+	typeof(glrRenderTriangleFan) *addr;
+	GLDLog(2, "%s(%p, %p, %u, %u)\n", __FUNCTION__, context, client_vertex_array, num_vertices, arg3, mode);
+	cb_chkpt(context, 0);
+	addr = (typeof(addr)) remote_dispatch[12];
+	if (addr)
+		addr(context, client_vertex_array, num_vertices, arg3, mode);
+	cb_chkpt(context, 1);
+}
+
+void glrRenderTriangleStrip(gld_context_t* context, void* client_vertex_array, uint32_t num_vertices, uint32_t mode)
+{
+	typeof(glrRenderTriangleStrip) *addr;
+	GLDLog(2, "%s(%p, %p, %u, %u)\n", __FUNCTION__, context, client_vertex_array, num_vertices, mode);
+	cb_chkpt(context, 0);
+	addr = (typeof(addr)) remote_dispatch[13];
+	if (addr)
+		addr(context, client_vertex_array, num_vertices, mode);
+	cb_chkpt(context, 1);
+}
+
+void glrRenderQuads(gld_context_t* context, void* client_vertex_array, uint32_t num_vertices, uint32_t mode)
+{
+	typeof(glrRenderQuads) *addr;
+	GLDLog(2, "%s(%p, %p, %u, %u)\n", __FUNCTION__, context, client_vertex_array, num_vertices, mode);
+	cb_chkpt(context, 0);
+	addr = (typeof(addr)) remote_dispatch[14];
+	if (addr)
+		addr(context, client_vertex_array, num_vertices, mode);
+	cb_chkpt(context, 1);
+}
+
+void glrRenderQuadStrip(gld_context_t* context, void* client_vertex_array, uint32_t num_vertices, uint32_t mode)
+{
+	typeof(glrRenderQuadStrip) *addr;
+	GLDLog(2, "%s(%p, %p, %u, %u)\n", __FUNCTION__, context, client_vertex_array, num_vertices, mode);
+	cb_chkpt(context, 0);
+	addr = (typeof(addr)) remote_dispatch[15];
+	if (addr)
+		addr(context, client_vertex_array, num_vertices, mode);
+	cb_chkpt(context, 1);
+}
+
+void glrRenderPointsPtr(gld_context_t* context, void* client_vertex_array, uint32_t num_vertices)
+{
+	typeof(glrRenderPointsPtr) *addr;
+	GLDLog(2, "%s(%p, %p, %u)\n", __FUNCTION__, context, client_vertex_array, num_vertices);
+	cb_chkpt(context, 0);
+	addr = (typeof(addr)) remote_dispatch[20];
+	if (addr)
+		addr(context, client_vertex_array, num_vertices);
+	cb_chkpt(context, 1);
+}
+
+void glrRenderLinesPtr(gld_context_t* context, void* client_vertex_array, uint32_t num_vertices, uint32_t mode)
+{
+	typeof(glrRenderLinesPtr) *addr;
+	GLDLog(2, "%s(%p, %p, %u, %u)\n", __FUNCTION__, context, client_vertex_array, num_vertices, mode);
+	cb_chkpt(context, 0);
+	addr = (typeof(addr)) remote_dispatch[21];
+	if (addr)
+		addr(context, client_vertex_array, num_vertices, mode);
+	cb_chkpt(context, 1);
+}
+
+void glrRenderPolygonPtr(gld_context_t* context, void* client_vertex_array, uint32_t num_vertices, uint32_t mode)
+{
+	typeof(glrRenderPolygonPtr) *addr;
+	GLDLog(2, "%s(%p, %p, %u, %u)\n", __FUNCTION__, context, client_vertex_array, num_vertices, mode);
+	cb_chkpt(context, 0);
+	addr = (typeof(addr)) remote_dispatch[22];
+	if (addr)
+		addr(context, client_vertex_array, num_vertices, mode);
+	cb_chkpt(context, 1);
+}
+
+void glrBeginPrimitiveBuffer(gld_context_t* context, uint32_t arg1, void* arg2)
+{
+	typeof(glrBeginPrimitiveBuffer) *addr;
+	GLDLog(2, "%s(%p, %u, %p)\n", __FUNCTION__, context, arg1, arg2);
+	cb_chkpt(context, 0);
+	addr = (typeof(addr)) remote_dispatch[23];
+	if (addr)
+		addr(context, arg1, arg2);
+	cb_chkpt(context, 1);
+}
+
+void glrEndPrimitiveBuffer(gld_context_t* context, void* arg1, void* arg2, uint32_t arg3)
+{
+	typeof(glrEndPrimitiveBuffer) *addr;
+	GLDLog(2, "%s(%p, %p, %p, %u)\n", __FUNCTION__, context, arg1, arg2, arg3);
+	cb_chkpt(context, 0);
+	addr = (typeof(addr)) remote_dispatch[24];
+	if (addr)
+		addr(context, arg1, arg2, arg3);
+	cb_chkpt(context, 1);
+}
+
+void glrHookFinish(gld_context_t* context)
+{
+	typeof(glrHookFinish) *addr;
+	GLDLog(2, "%s(%p)\n", __FUNCTION__, context);
+	cb_chkpt(context, 0);
+	addr = (typeof(addr)) remote_dispatch[27];
+	if (addr)
+		addr(context);
+	cb_chkpt(context, 1);
+}
+
+void glrHookFlush(gld_context_t* context)
+{
+	typeof(glrHookFlush) *addr;
+	GLDLog(2, "%s(%p)\n", __FUNCTION__, context);
+	cb_chkpt(context, 0);
+	addr = (typeof(addr)) remote_dispatch[28];
+	if (addr)
+		addr(context);
+	cb_chkpt(context, 1);
+}
+
+void glrHookSwap(gld_context_t* context)
+{
+	typeof(glrHookSwap) *addr;
+	GLDLog(2, "%s(%p)\n", __FUNCTION__, context);
+	cb_chkpt(context, 0);
+	addr = (typeof(addr)) remote_dispatch[29];
+	if (addr)
+		addr(context);
+	cb_chkpt(context, 1);
+}
+
+void glrSetFence(gld_context_t* context, void* arg1)
+{
+	typeof(glrSetFence) *addr;
+	GLDLog(2, "%s(%p, %p)\n", __FUNCTION__, context, arg1);
+	cb_chkpt(context, 0);
+	addr = (typeof(addr)) remote_dispatch[30];
+	if (addr)
+		addr(context, arg1);
+	cb_chkpt(context, 1);
+}
+
+int glrNoopRenderVertexArray(gld_context_t* context)
+{
+	/*
+	 * Dispatch index 31
+	 */
+	GLDLog(2, "%s(%p)\n", __FUNCTION__, context);
+	return 0;
+}
+
+void cb_chkpt(gld_context_t* context, int v)
+{
+	static uint32_t* remember = 0;
+	ptrdiff_t num_done;
+	if (!v) {
+		if (remember && remember != context->cb_iter[1]) {
+			num_done = context->cb_iter[1] - remember;
+			if (num_done > 0)
+				GLDLog(2, "      %s: skipped %ld dwords\n", __FUNCTION__, (long) num_done);
+		}
+		remember = context->cb_iter[1];
+		return;
+	}
+	num_done = context->cb_iter[1] - remember;
+	remember = context->cb_iter[1];
+	if (num_done > 0)
+		GLDLog(2, "      %s: added %ld dwords\n", __FUNCTION__, (long) num_done);
 }
 
 #pragma GCC visibility pop

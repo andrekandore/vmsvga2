@@ -44,6 +44,7 @@ extern "C" {
 typedef int GLDReturn;
 
 typedef GLDReturn (*GLD_GENERIC_FUNC)(void*, void*, void*, void*, void*, void*);
+typedef void (*GLD_GENERIC_DISPATCH)();
 
 typedef int (*PIODataFlush)();
 typedef int (*PIODataBindSurface)(uint32_t arg0,
@@ -233,7 +234,7 @@ typedef struct _gld_shared_t {
 } gld_shared_t;
 
 typedef struct _gld_texture_t {
-	void* f0;       // (0, 0)
+	void* raw_data; // (0, 0)
 	struct VendorNewTextureDataStruc tds;
 	                // (4, 8)
 	void* f6;       // (4C, 50)

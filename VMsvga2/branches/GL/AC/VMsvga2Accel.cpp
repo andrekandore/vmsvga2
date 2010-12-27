@@ -558,6 +558,13 @@ bool CLASS::start(IOService* provider)
 	}
 	if (checkOptionAC(VMW_OPTION_AC_NO_YUV))
 		ACLog(1, "YUV Off\n");
+	if (!HaveGLBaseline()) {
+		/*
+		 * Disable GL User Clients
+		 */
+		vmw_options_ac &= ~(VMW_OPTION_AC_GL_CONTEXT | VMW_OPTION_AC_GLD | VMW_OPTION_AC_QE);
+		ACLog(1, "Disabling OpenGL support due to lack of baseline capabilities\n");
+	}
 	plug = getProperty(kIOCFPlugInTypesKey);
 	if (plug)
 		m_framebuffer->setProperty(kIOCFPlugInTypesKey, plug);
@@ -1254,29 +1261,30 @@ IOReturn CLASS::setupRenderContext(uint32_t cid,
 }
 #else
 HIDDEN
-IOReturn CLASS::setupRenderContext(uint32_t cid,
-								   uint32_t color_sid)
+IOReturn CLASS::setRenderTarget(uint32_t cid,
+								SVGA3dRenderTargetType rtype,
+								uint32_t sid)
 {
-	SVGA3dSurfaceImageId colorImage;
+	SVGA3dSurfaceImageId imageId;
 
 	if (!bHaveSVGA3D)
 		return kIOReturnNoDevice;
-	bzero(&colorImage, sizeof(SVGA3dSurfaceImageId));
-	colorImage.sid = color_sid;
+	bzero(&imageId, sizeof imageId);
+	imageId.sid = sid;
 	m_framebuffer->lockDevice();
-	svga3d.SetRenderTarget(cid, SVGA3D_RT_COLOR0, &colorImage);
+	svga3d.SetRenderTarget(cid, rtype, &imageId);
 	m_framebuffer->unlockDevice();
 	return kIOReturnSuccess;
 }
 #endif
 
 HIDDEN
-IOReturn CLASS::clearContext(uint32_t cid,
-							 SVGA3dClearFlag flags,
-							 void /* IOAccelDeviceRegion */ const* region,
-							 uint32_t color,
-							 float depth,
-							 uint32_t stencil)
+IOReturn CLASS::clear(uint32_t cid,
+					  SVGA3dClearFlag flags,
+					  void /* IOAccelDeviceRegion */ const* region,
+					  uint32_t color,
+					  float depth,
+					  uint32_t stencil)
 {
 	bool rc;
 	uint32_t i, numRects;
@@ -1352,16 +1360,124 @@ bool CLASS::createClearSurface(uint32_t sid,
 		destroySurface(sid);
 		return false;
 	}
-	setupRenderContext(cid, sid);
+	setRenderTarget(cid, SVGA3D_RT_COLOR0, sid);
 	set_region(&tmpRegion.r, 0, 0, width, height);
-	clearContext(cid,
-				 static_cast<SVGA3dClearFlag>(SVGA3D_CLEAR_COLOR),
-				 &tmpRegion.r,
-				 color,
-				 1.0F,
-				 0);
+	clear(cid,
+		  static_cast<SVGA3dClearFlag>(SVGA3D_CLEAR_COLOR),
+		  &tmpRegion.r,
+		  color,
+		  1.0F,
+		  0);
 	destroyContext(cid);
 	return true;
+}
+
+HIDDEN
+IOReturn CLASS::drawPrimitives(uint32_t cid,
+							   uint32_t numVertexDecls,
+							   uint32_t numRanges,
+							   SVGA3dVertexDecl const* decls,
+							   SVGA3dPrimitiveRange const* ranges)
+{
+	SVGA3dVertexDecl* ds;
+	SVGA3dPrimitiveRange* rs;
+	if (!bHaveSVGA3D)
+		return kIOReturnNoDevice;
+	m_framebuffer->lockDevice();
+	if (!svga3d.BeginDrawPrimitives(cid,
+									&ds,
+									numVertexDecls,
+									&rs,
+									numRanges))
+		goto exit;
+	memcpy(ds, decls, numVertexDecls * sizeof *decls);
+	memcpy(rs, ranges, numRanges * sizeof *ranges);
+	m_svga->FIFOCommitAll();
+exit:
+	m_framebuffer->unlockDevice();
+	return kIOReturnSuccess;
+}
+
+HIDDEN
+IOReturn CLASS::setTextureState(uint32_t cid,
+								uint32_t numStates,
+								SVGA3dTextureState const* states)
+{
+	SVGA3dTextureState* st;
+	if (!bHaveSVGA3D)
+		return kIOReturnNoDevice;
+	m_framebuffer->lockDevice();
+	if (!svga3d.BeginSetTextureState(cid,
+									 &st,
+									 numStates))
+		goto exit;
+	memcpy(st, states, numStates * sizeof *states);
+	m_svga->FIFOCommitAll();
+exit:
+	m_framebuffer->unlockDevice();
+	return kIOReturnSuccess;
+}
+
+HIDDEN
+IOReturn CLASS::setRenderState(uint32_t cid,
+							   uint32_t numStates,
+							   SVGA3dRenderState const* states)
+{
+	SVGA3dRenderState* st;
+	if (!bHaveSVGA3D)
+		return kIOReturnNoDevice;
+	m_framebuffer->lockDevice();
+	if (!svga3d.BeginSetRenderState(cid,
+									&st,
+									numStates))
+		goto exit;
+	memcpy(st, states, numStates * sizeof *states);
+	m_svga->FIFOCommitAll();
+exit:
+	m_framebuffer->unlockDevice();
+	return kIOReturnSuccess;
+}
+
+HIDDEN
+IOReturn CLASS::setViewPort(uint32_t cid, void /* IOAccelBounds */ const* rect)
+{
+	IOAccelBounds const* _rect;
+	SVGA3dRect __rect;
+	if (!rect)
+		return kIOReturnBadArgument;
+	if (!bHaveSVGA3D)
+		return kIOReturnNoDevice;
+	_rect = static_cast<IOAccelBounds const*>(rect);
+	__rect.x = _rect->x;
+	__rect.y = _rect->y;
+	__rect.w = _rect->w;
+	__rect.h = _rect->h;
+	m_framebuffer->lockDevice();
+	svga3d.SetViewport(cid, &__rect);
+	m_framebuffer->unlockDevice();
+	return kIOReturnSuccess;
+}
+
+HIDDEN
+IOReturn CLASS::setZRange(uint32_t cid, float zMin, float zMax)
+{
+	if (!bHaveSVGA3D)
+		return kIOReturnNoDevice;
+	m_framebuffer->lockDevice();
+	svga3d.SetZRange(cid, zMin, zMax);
+	m_framebuffer->unlockDevice();
+	return kIOReturnSuccess;
+}
+
+HIDDEN
+IOReturn CLASS::setTransform(uint32_t cid, SVGA3dTransformType type, float const* matrix)
+{
+	if (!bHaveSVGA3D)
+		return kIOReturnNoDevice;
+	m_framebuffer->lockDevice();
+	svga3d.SetTransform(cid, type, matrix);
+	m_framebuffer->unlockDevice();
+	return kIOReturnSuccess;
 }
 
 #pragma mark -
@@ -1458,6 +1574,7 @@ IOReturn CLASS::blitSurfaceToScreen(uint32_t src_sid,
 	SVGA3dSurfaceImageId srcImage;
 	SVGASignedRect srcRect;
 	SVGASignedRect destRect;
+	SVGASignedPoint shift;
 	SVGASignedRect* clipRects;
 	IOAccelDeviceRegion const* rgn;
 	IOAccelBounds const* s_rect;
@@ -1471,6 +1588,8 @@ IOReturn CLASS::blitSurfaceToScreen(uint32_t src_sid,
 	srcImage.sid = src_sid;
 	convert_rect(s_rect, &srcRect);
 	convert_rect(&rgn->bounds, &destRect);
+	shift.x = -destRect.left;
+	shift.y = -destRect.top;
 	m_framebuffer->lockDevice();
 	rc = svga3d.BeginBlitSurfaceToScreen(&srcImage,
 										 &srcRect,
@@ -1481,7 +1600,7 @@ IOReturn CLASS::blitSurfaceToScreen(uint32_t src_sid,
 	if (!rc)
 		goto exit;
 	for (i = 0; i < numRects; ++i)
-		convert_rect(&rgn->rect[i], &clipRects[i]);
+		convert_rect(&rgn->rect[i], &clipRects[i], &shift);
 	m_svga->FIFOCommitAll();
 	m_svga->RingDoorBell();
 exit:
@@ -1680,6 +1799,26 @@ uint32_t CLASS::getVRAMSize() const
 	if (m_bar1)
 		return static_cast<uint32_t>(m_bar1->getLength());
 	return 134217728U;
+}
+
+HIDDEN
+vm_offset_t CLASS::offsetInVRAM(void* vram_ptr)
+{
+	/*
+	 * Note: skip locking the framebuffer device here, seems fairly safe.
+	 */
+	if (m_framebuffer)
+		return reinterpret_cast<vm_offset_t>(vram_ptr) - m_framebuffer->getVRAMPtr();
+	return 0U;
+}
+
+HIDDEN
+bool CLASS::HaveGLBaseline() const
+{
+	return m_svga &&
+		bHaveSVGA3D &&
+		bHaveScreenObject &&	// TBD: may be removed in the future
+		m_svga->HasCapability(SVGA_CAP_GMR);
 }
 
 #pragma mark -
@@ -1882,6 +2021,10 @@ IOMemoryMap* CLASS::mapVRAMRangeForTask(task_t task, vm_offset_t offset_in_bar1,
 #pragma mark GMR Allocation
 #pragma mark -
 
+#if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ < 1060
+#define getPhysicalSegment(x, y, z) getPhysicalSegment64(x, y)
+#endif
+
 HIDDEN
 IOReturn CLASS::createGMR(uint32_t gmrId, IOMemoryDescriptor* md)
 {
@@ -1968,6 +2111,10 @@ IOReturn CLASS::createGMR(uint32_t gmrId, IOMemoryDescriptor* md)
 	helper->release();
 	return kIOReturnSuccess;
 }
+
+#if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ < 1060
+#undef getPhysicalSegment
+#endif
 
 HIDDEN
 IOReturn CLASS::destroyGMR(uint32_t gmrId)

@@ -42,11 +42,11 @@ struct VendorNewTextureDataStruc
 	uint32_t width;		// offset 0x08
 	uint16_t height;	// offset 0x0C
 	uint16_t depth;		// offset 0x0E
-	uint32_t f1;		// offset 0x10
+	uint32_t f0;		// offset 0x10
 	uint32_t pitch;		// offset 0x14
-	uint32_t f3[4];		// offset 0x18
-	uint32_t size;		// offset 0x28
-	uint32_t f4;		// offset 0x2C
+	uint32_t read_only;	// offset 0x18
+	uint32_t f1[3];		// offset 0x1C
+	uint32_t size[2];	// offset 0x28
 	uint64_t pixels[3]; // offset 0x30
 						// ends   0x48
 };

@@ -57,8 +57,8 @@ GLDReturn gldCreateContext(gld_context_t** struct_out,
 GLDReturn gldReclaimContext(gld_context_t* context);
 GLDReturn gldDestroyContext(gld_context_t* context);
 GLDReturn gldAttachDrawable(gld_context_t* context, int surface_type, uint32_t const* client_data, uint32_t options);
-GLDReturn gldInitDispatch(void* arg0, void* arg1, void* arg2);
-GLDReturn gldUpdateDispatch(void* arg0, void* arg1, void* arg2);
+GLDReturn gldInitDispatch(gld_context_t* context, GLD_GENERIC_DISPATCH* dispatch_table, uint32_t* data_out);
+GLDReturn gldUpdateDispatch(gld_context_t* context, GLD_GENERIC_DISPATCH* dispatch_table, uint32_t* data_out);
 char const* gldGetString(uint32_t GLDisplayMask, int string_code);
 GLDReturn gldGetError(gld_context_t* context);
 GLDReturn gldSetInteger(gld_context_t* context, int arg1, void* arg2);

@@ -221,15 +221,16 @@ public:
 								uint32_t width,
 								uint32_t height);
 #else
-	IOReturn setupRenderContext(uint32_t cid,
-								uint32_t color_sid);
+	IOReturn setRenderTarget(uint32_t cid,
+							 SVGA3dRenderTargetType rtype,
+							 uint32_t sid);
 #endif
-	IOReturn clearContext(uint32_t cid,
-						  SVGA3dClearFlag flags,
-						  void /* IOAccelDeviceRegion */ const* region,
-						  uint32_t color,
-						  float depth,
-						  uint32_t stencil);
+	IOReturn clear(uint32_t cid,
+				   SVGA3dClearFlag flags,
+				   void /* IOAccelDeviceRegion */ const* region,
+				   uint32_t color,
+				   float depth,
+				   uint32_t stencil);
 	IOReturn createContext(uint32_t cid);
 	IOReturn destroyContext(uint32_t cid);
 	bool createClearSurface(uint32_t sid,
@@ -237,7 +238,22 @@ public:
 							SVGA3dSurfaceFormat format,
 							uint32_t width,
 							uint32_t height,
-							uint32_t color = 0);
+							uint32_t color = 0U);
+	IOReturn drawPrimitives(uint32_t cid,
+							uint32_t numVertexDecls,
+							uint32_t numRanges,
+							SVGA3dVertexDecl const* decls,
+							SVGA3dPrimitiveRange const* ranges);
+	IOReturn setTextureState(uint32_t cid,
+							 uint32_t numStates,
+							 SVGA3dTextureState const* states);
+	IOReturn setRenderState(uint32_t cid,
+							uint32_t numStates,
+							SVGA3dRenderState const* states);
+	IOReturn setViewPort(uint32_t cid,
+						 void /* IOAccelBounds */ const* rect);
+	IOReturn setZRange(uint32_t cid, float zMin, float zMax);
+	IOReturn setTransform(uint32_t cid, SVGA3dTransformType type, float const* matrix);
 
 	/*
 	 * Screen Methods
@@ -286,11 +302,13 @@ public:
 	bool Have3D() const { return bHaveSVGA3D != 0; }
 	bool HaveScreen() const { return bHaveScreenObject != 0; }
 	bool HaveFrontBuffer() const { return bHaveScreenObject != 0 || bHaveSVGA3D != 0; }
+	bool HaveGLBaseline() const;
 #if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ >= 1060
 	unsigned getSurfaceRootUUID() const { return m_surface_root_uuid; }
 #endif
 	IOMemoryDescriptor* getChannelMemory() const { return m_channel_memory; }
 	uint32_t getVRAMSize() const;
+	vm_offset_t offsetInVRAM(void* vram_ptr);
 
 	/*
 	 * Video Support

@@ -42,6 +42,8 @@ extern void* bndl_handle[2];
 
 extern GLD_GENERIC_FUNC bndl_ptrs[2][NUM_ENTRIES];
 
+extern GLD_GENERIC_DISPATCH remote_dispatch[33];
+
 #if LOGGING_LEVEL >= 1
 extern int logLevel;
 #endif

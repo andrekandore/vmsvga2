@@ -66,6 +66,38 @@ int glrGetKernelTextureAGPRef(gld_shared_t* shared,
 							  uint32_t texture_size);
 void glrWriteAllHardwareState(gld_context_t* context);
 
+void cb_chkpt(gld_context_t*, int);
+
+/*
+ * Dispatch functions
+ */
+void glrAccum(gld_context_t*, uint32_t, float);
+void glrClear(gld_context_t*, uint32_t);
+int glrReadPixels(gld_context_t*, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, size_t, uint32_t, void*);
+void glrDrawPixels(gld_context_t*);
+void glrCopyPixels(gld_context_t*);
+void glrRenderBitmap(gld_context_t*);
+void glrRenderPoints(gld_context_t*, void*, uint32_t);
+void glrRenderLines(gld_context_t*, void*, uint32_t);
+void glrRenderLineStrip(gld_context_t*, void*, uint32_t, uint32_t);
+void glrRenderLineLoop(gld_context_t*, void*, uint32_t, uint32_t);
+void glrRenderPolygon(gld_context_t*, void*, uint32_t, uint32_t);
+void glrRenderTriangles(gld_context_t*, void*, uint32_t, uint32_t);
+void glrRenderTriangleFan(gld_context_t*, void*, uint32_t, uint32_t, uint32_t);
+void glrRenderTriangleStrip(gld_context_t*, void*, uint32_t, uint32_t);
+void glrRenderQuads(gld_context_t*, void*, uint32_t, uint32_t);
+void glrRenderQuadStrip(gld_context_t*, void*, uint32_t, uint32_t);
+void glrRenderPointsPtr(gld_context_t*, void*, uint32_t);
+void glrRenderLinesPtr(gld_context_t*, void*, uint32_t, uint32_t);
+void glrRenderPolygonPtr(gld_context_t*, void*, uint32_t, uint32_t);
+void glrBeginPrimitiveBuffer(gld_context_t*, uint32_t, void*);
+void glrEndPrimitiveBuffer(gld_context_t*, void*, void*, uint32_t);
+void glrHookFinish(gld_context_t*);
+void glrHookFlush(gld_context_t*);
+void glrHookSwap(gld_context_t*);
+void glrSetFence(gld_context_t*, void*);
+int glrNoopRenderVertexArray(gld_context_t*);
+
 #ifdef __cplusplus
 }
 #endif

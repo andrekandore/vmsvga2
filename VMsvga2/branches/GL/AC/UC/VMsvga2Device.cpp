@@ -289,8 +289,8 @@ IOReturn CLASS::new_texture(struct VendorNewTextureDataStruc const* struct_in,
 #endif
 	switch (struct_in->type) {
 		case 1:
-			p = m_shared->new_surface_texture(struct_in->size,
-											  struct_in->f4,
+			p = m_shared->new_surface_texture(struct_in->size[0],
+											  struct_in->size[1],
 											  &struct_out->addr);
 			if (!p) {
 				m_shared->unlockShared();
@@ -298,8 +298,8 @@ IOReturn CLASS::new_texture(struct VendorNewTextureDataStruc const* struct_in,
 			}
 			break;
 		case 2:
-			p = m_shared->new_iosurface_texture(struct_in->size,
-												struct_in->f4,
+			p = m_shared->new_iosurface_texture(struct_in->size[0],
+												struct_in->size[1],
 												static_cast<uint32_t>(struct_in->pixels[0]),
 												static_cast<uint32_t>(struct_in->pixels[0] >> 32),
 												&struct_out->addr);
@@ -309,11 +309,11 @@ IOReturn CLASS::new_texture(struct VendorNewTextureDataStruc const* struct_in,
 			}
 			break;
 		case 3:
-			p = m_shared->new_texture(struct_in->size,
+			p = m_shared->new_texture(struct_in->size[0],
 									  0,
 									  0ULL,
 									  0,
-									  struct_in->f3[0],
+									  struct_in->read_only,
 									  &struct_out->data,
 									  &struct_out->addr);
 			if (!p) {
@@ -324,8 +324,8 @@ IOReturn CLASS::new_texture(struct VendorNewTextureDataStruc const* struct_in,
 		case 6:
 			p = m_shared->new_agpref_texture(struct_in->pixels[0],
 											 struct_in->pixels[1],
-											 struct_in->size,
-											 struct_in->f3[0],
+											 struct_in->size[0],
+											 struct_in->read_only,
 											 &struct_out->addr);
 			if (!p) {
 				m_shared->unlockShared();
@@ -335,11 +335,11 @@ IOReturn CLASS::new_texture(struct VendorNewTextureDataStruc const* struct_in,
 				struct_out->data = p->linked_agp->agp_addr;
 			break;
 		case 8:
-			p = m_shared->new_texture(struct_in->size,
-									  struct_in->f4,
+			p = m_shared->new_texture(struct_in->size[0],
+									  struct_in->size[1],
 									  0ULL,
 									  0,
-									  struct_in->f3[0],
+									  struct_in->read_only,
 									  &struct_out->data,
 									  &struct_out->addr);
 			if (!p) {
@@ -348,11 +348,11 @@ IOReturn CLASS::new_texture(struct VendorNewTextureDataStruc const* struct_in,
 			}
 			break;
 		case 9:
-			p = m_shared->new_texture(struct_in->size,
-									  struct_in->f4,
+			p = m_shared->new_texture(struct_in->size[0],
+									  struct_in->size[1],
 									  struct_in->pixels[1],
 									  static_cast<uint32_t>(struct_in->pixels[0]),
-									  struct_in->f3[0],
+									  struct_in->read_only,
 									  &struct_out->data,
 									  &struct_out->addr);
 			if (!p) {
@@ -371,7 +371,7 @@ IOReturn CLASS::new_texture(struct VendorNewTextureDataStruc const* struct_in,
 	p->width = struct_in->width;
 	p->height = struct_in->height;
 	p->depth = struct_in->depth;
-	p->f1 = struct_in->f1;
+	p->f0 = struct_in->f0;
 	p->pitch = struct_in->pitch;
 	p->bytespp = struct_in->bytespp;
 	if (!m_shared->initializeTexture(p, struct_in)) {

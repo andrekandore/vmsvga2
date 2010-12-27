@@ -39,7 +39,8 @@ class IOMemoryDescriptor;
 
 struct VMsvga2CommandBuffer
 {
-	uint32_t pad1[2];
+	uint32_t pad1;
+	uint8_t* gart_ptr;
 	IOMemoryDescriptor* md;
 	uint32_t pad2[8];
 	VendorCommandBufferHeader* kernel_ptr;
@@ -54,7 +55,6 @@ private:
 	task_t m_owning_task;					// offset 0x78
 											// offset 0x7C: unknown
 	class VMsvga2Accel* m_provider;			// offset 0x80
-	int m_log_level;
 											// offset 0x84 - 0x8C: unknown
 	class VMsvga2Shared* m_shared;			// offset 0x8C
 											// offset 0x90 - 0xB4: unknown 
@@ -62,15 +62,52 @@ private:
 	size_t m_type2_len;						// offset 0xB8
 	VendorCommandBufferHeader* m_type2_ptr; // offset 0xBC
 											// offset 0xC0: uknown
-	class VMsvga2Surface* surface_client;	// offset 0xC4
+	class VMsvga2Surface* m_surface_client;	// offset 0xC4
 	VMsvga2CommandBuffer m_command_buffer;	// offset 0xC8 - 0xFC
 	class OSSet* m_gc;						// offset 0xFC
 	VMsvga2CommandBuffer m_context_buffer0; // offset 0x100 - 0x134
 	VMsvga2CommandBuffer m_context_buffer1; // offset 0x130 - 0x154
 	uint32_t m_mem_type;					// offset 0x19C
 	int m_stream_error;						// offset 0x194
-	VMsvga2TextureBuffer* txs[16U];			// offset 0x1B0
+	VMsvga2TextureBuffer* m_txs[16U];		// offset 0x1B0
 
+	/*
+	 * VMsvga2 Specific
+	 */
+	int m_log_level;
+	uint32_t m_context_id;
+	float* m_float_cache;
+
+	/*
+	 * Buffers for vertex/index arrays (need GMRs)
+	 */
+	struct {
+		uint8_t* kernel_ptr;
+		size_t offset_in_gmr;
+		uint32_t sid;
+		uint32_t gmr_id;
+		uint32_t fence;
+	} m_arrays;
+
+	/*
+	 * Intel 915 Emulator State
+	 */
+	struct {
+		uint32_t imm_s[8];
+		uint32_t modes4;
+		uint32_t modes5;
+		struct {
+			uint32_t mask;
+			uint32_t color;
+			float depth;
+			uint32_t stencil;
+		} clear;
+	} m_intel_state;
+
+	/*
+	 * Private Methods
+	 */
+	void Init();
 	void Cleanup();
 	bool allocCommandBuffer(VMsvga2CommandBuffer*, size_t);
 	void initCommandBufferHeader(VendorCommandBufferHeader*, size_t);
@@ -83,10 +120,32 @@ private:
 	void addTextureToStream(VMsvga2TextureBuffer*);
 	void get_texture(VendorGLStreamInfo*, VMsvga2TextureBuffer*, bool);
 	void write_tex_data(uint32_t, uint32_t*, VMsvga2TextureBuffer*);
+	void alloc_and_load_texture(VMsvga2TextureBuffer*);
+	IOReturn bind_texture(uint32_t index, VMsvga2TextureBuffer* tx);
+	void setup_drawbuffer_registers(uint32_t*);
+	IOReturn alloc_arrays();
+	void purge_arrays();
+	IOReturn upload_arrays(size_t num_bytes);
+	void adjust_texture_coords(uint8_t* vertex_array,
+							   size_t num_vertices,
+							   void const* decls,
+							   size_t num_decls);
+
+	/*
+	 * Intel Pipeline processor
+	 */
+	static int decipher_format(uint8_t mapsurf, uint8_t mt);
+	static int translate_clear_mask(uint32_t mask);
+	void ip_prim3d_poly(uint32_t const* vertex_data, size_t num_vertex_dwords);
+	void ip_prim3d_direct(uint32_t prim_kind, uint32_t const* vertex_data, size_t num_vertex_dwords);
+	uint32_t ip_prim3d(uint32_t* p);
+	uint32_t ip_load_immediate(uint32_t* p);
+	uint32_t ip_clear_params(uint32_t* p);
+	uint32_t submit_buffer(uint32_t* kernel_buffer_ptr, uint32_t size_dwords);
 
 public:
 	/*
-	 * Command buffer process & discard methods
+	 * Command buffer process & discard methods [Apple]
 	 */
 	/*
 	 * Tokens 0 - 10
