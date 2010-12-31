@@ -77,8 +77,8 @@ GLDReturn gldLoadTexture(gld_context_t* context, gld_texture_t* texture);
 void gldUnbindTexture(gld_context_t* context, gld_texture_t* texture);
 void gldReclaimTexture(gld_shared_t* shared, gld_texture_t* texture);
 void gldDestroyTexture(gld_shared_t* shared, gld_texture_t* texture);
-GLDReturn gldCopyTexSubImage(void* arg0,
-							 void* arg1,
+GLDReturn gldCopyTexSubImage(gld_context_t* context,
+							 gld_texture_t* texture,
 							 int arg2,
 							 int arg3,
 							 int arg4,
@@ -88,8 +88,8 @@ GLDReturn gldCopyTexSubImage(void* arg0,
 							 int arg8,
 							 int arg9,
 							 int arg10);
-GLDReturn gldModifyTexSubImage(void* arg0,
-							   void* arg1,
+GLDReturn gldModifyTexSubImage(gld_context_t* context,
+							   gld_texture_t* texture,
 							   int arg2,
 							   int arg3,
 							   int arg4,
@@ -100,9 +100,9 @@ GLDReturn gldModifyTexSubImage(void* arg0,
 							   int arg9,
 							   int arg10,
 							   int arg11,
-							   int arg12,
+							   void* arg12,
 							   int arg13,
-							   int arg14);
+							   void* arg14);
 GLD_DECLARE_GENERIC(gldCreateTextureLevel);
 GLDReturn gldGetTextureLevelInfo(void* arg0, void* arg1, void* arg2, int arg3, int arg4, void* arg5);
 GLDReturn gldGetTextureLevelImage(void* arg0, void* arg1, int arg2, int arg3);

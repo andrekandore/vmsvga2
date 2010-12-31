@@ -215,10 +215,10 @@ IOReturn CLASS::get_config(uint32_t* c1, uint32_t* c2, uint32_t* c3, uint32_t* c
 {
 	uint32_t const vram_size = m_provider->getVRAMSize();
 
-	*c1 = 0;
+	*c1 = 0;	// used by GLD to discern Intel 915/965/Ironlake(HD)
 	*c2 = static_cast<uint32_t>(m_provider->getLogLevelGLD()) & 7U;		// TBD: is this safe?
-	*c3 = vram_size;
-	*c4 = vram_size;
+	*c3 = vram_size;	// total VRAM size
+	*c4 = vram_size;	// total memory available for textures (no accounting by VMsvga2)
 #if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ >= 1060
 	*c5 = m_provider->getSurfaceRootUUID();
 #else

@@ -138,11 +138,11 @@ private:
 
 	struct {
 		int original_mode_bits;
-		uint32_t region_status[4];
+		IOAccelSize rt_size;	// render target size
 		uint32_t cid;
 		uint32_t color_sid;		// TBD: support two of these for double-buffering
 		uint32_t depth_sid;
-		uint32_t stencil_sid;
+		uint8_t volatile rt_dirty;
 	} m_gl;
 
 #ifdef TESTING
@@ -283,10 +283,11 @@ public:
 	 * Interface for VMsvga2GLContext
 	 */
 	int getOriginalModeBits() const { return m_gl.original_mode_bits; }
-	void getBoundsForStatus(uint32_t* bounds) const;
+	void getBoundsForGL(uint32_t* inner_width, uint32_t* inner_height, uint32_t* outer_width, uint32_t* outer_height) const;
 	IOReturn attachGL(uint32_t context_id, int cmb);
+	IOReturn resizeGL();
 	IOReturn detachGL();
-	void copyFromTexture(uint32_t surface_id, IOAccelBounds const* rect);
+	void touchRenderTarget();
 
 	/*
 	 * IOAccelSurfaceConnect

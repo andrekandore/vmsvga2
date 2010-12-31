@@ -187,6 +187,13 @@ public:
 		int dstDeltaY;
 		uint32_t mem_gmr_id;
 	};
+	struct ExtraInfoEx {
+		vm_offset_t mem_offset_in_gmr;
+		vm_size_t mem_pitch;
+		vm_size_t mem_limit;
+		uint32_t mem_gmr_id;
+		uint32_t suffix_flags;
+	};
 	/*
 	 * SVGA3D Methods
 	 */
@@ -252,8 +259,21 @@ public:
 							SVGA3dRenderState const* states);
 	IOReturn setViewPort(uint32_t cid,
 						 void /* IOAccelBounds */ const* rect);
+	IOReturn SetScissorRect(uint32_t cid,
+							void /* IOAccelBounds */ const* rect);
 	IOReturn setZRange(uint32_t cid, float zMin, float zMax);
+	IOReturn SetClipPlane(uint32_t cid, uint32_t index, float const* plane);	// plane points to 4 floats (eq. Ax+By+Cz+D = 0)
 	IOReturn setTransform(uint32_t cid, SVGA3dTransformType type, float const* matrix);
+	IOReturn surfaceDMA3DEx(uint32_t sid,
+							SVGA3dTransferType transfer,
+							SVGA3dCopyBox const* copyBox,
+							ExtraInfoEx const* extra,
+							uint32_t* fence = 0);
+	IOReturn createTexture(uint32_t sid,
+						   SVGA3dSurfaceFormat surfaceFormat,
+						   uint32_t width,
+						   uint32_t height,
+						   uint32_t depth);
 
 	/*
 	 * Screen Methods

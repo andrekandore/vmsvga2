@@ -152,6 +152,13 @@ public:
 	bool DestroyShader(uint32_t cid, uint32_t shid, SVGA3dShaderType type);
 	IOReturn SetShaderConst(uint32_t cid, uint32_t reg, SVGA3dShaderType type, SVGA3dShaderConstType ctype, void const* value);
 	bool SetShader(uint32_t cid, SVGA3dShaderType type, uint32_t shid);
+
+	/*
+	 * Query
+	 */
+	bool BeginQuery(uint32_t cid, SVGA3dQueryType qtype);
+	bool EndQuery(uint32_t cid, SVGA3dQueryType qtype, uint32_t gmrid, uint32_t offset_in_gmr);
+	bool WaitForQuery(uint32_t cid, SVGA3dQueryType qtype, uint32_t gmrid, uint32_t offset_in_gmr);
 };
 
 #endif /* __SVGA3D_H__ */

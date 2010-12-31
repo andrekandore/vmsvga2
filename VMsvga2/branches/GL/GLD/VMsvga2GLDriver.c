@@ -109,7 +109,7 @@ void gldInitializeLibrary(io_service_t const* pServices,
 	char const* bndl_names[] = { BNDL1, BNDL2 };
 	int i, j;
 
-	GLDLog(1, "%s(%p, %p, %#x, %p, %p)\n", __FUNCTION__, pServices, pServiceFlags, GLDisplayMask, IODataFlush, IODataBindSurface);
+	GLDLog(2, "%s(%p, %p, %#x, %p, %p)\n", __FUNCTION__, pServices, pServiceFlags, GLDisplayMask, IODataFlush, IODataBindSurface);
 
 	for (j = 0; j != 2; ++j) {
 		bndl_handle[j] = dlopen(bndl_names[j], 0);
@@ -177,7 +177,7 @@ void gldInitializeLibrarySelf(io_service_t const* pServices,
 	}
 	glr_io_data.lastDisplay = last_display;
 	dinfo = (display_info_t*) malloc(num_displays * sizeof *dinfo);
-	GLDLog(1, "  %s: display_info @%p\n", __FUNCTION__, dinfo);
+	GLDLog(2, "  %s: display_info @%p\n", __FUNCTION__, dinfo);
 	for (display_num = 0U; display_num != num_displays; ++display_num) {
 		connect = 0;
 		dinfo[display_num].service = services[display_num];
@@ -236,7 +236,7 @@ void gldTerminateLibrary(void)
 	typeof(gldTerminateLibrary) *addr;
 	int j;
 
-	GLDLog(1, "%s()\n", __FUNCTION__);
+	GLDLog(2, "%s()\n", __FUNCTION__);
 
 	glr_io_data.pServices = 0;
 	glr_io_data.pServiceFlags = 0;
@@ -1395,8 +1395,8 @@ void gldDestroyTexture(gld_shared_t* shared, gld_texture_t* texture)
 /*
  * It's a mad mad mad world
  */
-GLDReturn gldCopyTexSubImage(void* arg0,
-							 void* arg1,
+GLDReturn gldCopyTexSubImage(gld_context_t* context,
+							 gld_texture_t* texture,
 							 int arg2,
 							 int arg3,
 							 int arg4,
@@ -1410,16 +1410,16 @@ GLDReturn gldCopyTexSubImage(void* arg0,
 	typeof(gldCopyTexSubImage) *addr;
 
 	GLDLog(2, "%s(%p, %p, %d, %d, %d, %d, %d, %d, %d, %d, %d)\n", __FUNCTION__,
-		   arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10);
+		   context, texture, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10);
 
 	addr = (typeof(addr)) bndl_ptrs[bndl_index][76];
 	if (addr)
-		return addr(arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10);
+		return addr(context, texture, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10);
 	return -1;
 }
 
-GLDReturn gldModifyTexSubImage(void* arg0,
-							   void* arg1,
+GLDReturn gldModifyTexSubImage(gld_context_t* context,
+							   gld_texture_t* texture,
 							   int arg2,
 							   int arg3,
 							   int arg4,
@@ -1430,18 +1430,23 @@ GLDReturn gldModifyTexSubImage(void* arg0,
 							   int arg9,
 							   int arg10,
 							   int arg11,
-							   int arg12,
+							   void* arg12,
 							   int arg13,
-							   int arg14)
+							   void* arg14)
 {
 	typeof(gldModifyTexSubImage) *addr;
+	GLDReturn rc;
 
-	GLDLog(2, "%s(%p, %p, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d)\n", __FUNCTION__,
-		   arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, arg11, arg12, arg13, arg14);
+	GLDLog(2, "%s(%p, %p, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %p, %d, %p)\n", __FUNCTION__,
+		   context, texture, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, arg11, arg12, arg13, arg14);
 
 	addr = (typeof(addr)) bndl_ptrs[bndl_index][77];
-	if (addr)
-		return addr(arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, arg11, arg12, arg13, arg14);
+	if (addr) {
+		cb_chkpt(context, 0);
+		rc = addr(context, texture, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, arg11, arg12, arg13, arg14);
+		cb_chkpt(context, 1);
+		return rc;
+	}
 	return -1;
 }
 
@@ -1503,9 +1508,14 @@ GLDReturn gldLoadBuffer(void)
 
 GLDReturn gldFlushBuffer(gld_shared_t* shared, gld_buffer_t* buffer, void* arg2, int arg3)
 {
+#if 0
 	uint8_t* p;
+#else
+	typeof(gldFlushBuffer) *addr;
+#endif
 
 	GLDLog(2, "%s(%p, %p, %p, %d)\n", __FUNCTION__, shared, buffer, arg2, arg3);
+#if 0
 	p = buffer->f1;
 	if ((*p) & 1U)
 		return kCGLNoError;
@@ -1513,6 +1523,12 @@ GLDReturn gldFlushBuffer(gld_shared_t* shared, gld_buffer_t* buffer, void* arg2,
 		glrFlushMemory(0, arg2, arg3);
 	*p &= (~2);
 	return kCGLNoError;
+#else
+	addr = (typeof(addr)) bndl_ptrs[bndl_index][36];
+	if (addr)
+		return addr(shared, buffer, arg2, arg3);
+	return -1;
+#endif
 }
 
 void gldPageoffBuffer(gld_shared_t* shared, void* arg1, gld_buffer_t* buffer)
@@ -1706,8 +1722,10 @@ GLDReturn gldUnbindPipelineProgram(gld_context_t* context, gld_pipeline_program_
 
 GLDReturn gldDestroyPipelineProgram(gld_shared_t* shared, gld_pipeline_program_t* pp)
 {
+	typeof(gldDestroyPipelineProgram) *addr;
 	GLDLog(2, "%s(%p, %p)\n", __FUNCTION__, shared, pp);
 
+#if 0
 	if (pp->f2[0]) {
 		glrReleaseVendShrPipeProg(shared, pp->f2[0]);
 		pp->f2[0] = 0;
@@ -1727,6 +1745,12 @@ GLDReturn gldDestroyPipelineProgram(gld_shared_t* shared, gld_pipeline_program_t
 	glrDeleteSysPipelineProgram(shared, pp);
 	free(pp);
 	return kCGLNoError;
+#else
+	addr = (typeof(addr)) bndl_ptrs[bndl_index][54];
+	if (addr)
+		return addr(shared, pp);
+	return -1;
+#endif
 }
 
 GLDReturn gldCreateProgram(gld_shared_t* shared, gld_program_t** struct_out, void* arg2, void* arg3)

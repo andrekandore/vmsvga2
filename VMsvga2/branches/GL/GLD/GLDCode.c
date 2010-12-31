@@ -188,9 +188,9 @@ void glrFlushSysObject(gld_context_t* context, gld_sys_object_t* obj, int arg2)
 	if (arg2) {
 		if (arg2 == 1)
 			switch (obj->type) {
+				case 6:
 				case 8:
 				case 9:
-				case 14:
 					break;
 				default:
 					return;

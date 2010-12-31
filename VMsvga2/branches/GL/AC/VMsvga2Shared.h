@@ -36,8 +36,11 @@ struct GLDSysObject;
 
 struct VMsvga2TextureBuffer
 {
+									// offset 0 - unknown
 	uint32_t provider_flag;			// offset 0x4
 	IOMemoryDescriptor* md;			// offset 0x8
+	uint16_t ofs_0xC;				// offset 0xC
+	uint16_t counter14;				// offset 0xE
 	IOMemoryMap* client_map;		// offset 0x28
 	GLDSysObject* sys_obj;			// offset 0x2C
 	mach_vm_address_t sys_obj_client_addr;	// offset 0x30

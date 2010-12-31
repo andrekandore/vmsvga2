@@ -61,15 +61,18 @@ private:
 	IOMemoryDescriptor* m_type2;			// offset 0xB4
 	size_t m_type2_len;						// offset 0xB8
 	VendorCommandBufferHeader* m_type2_ptr; // offset 0xBC
-											// offset 0xC0: uknown
+											// offset 0xC0: unknown
 	class VMsvga2Surface* m_surface_client;	// offset 0xC4
 	VMsvga2CommandBuffer m_command_buffer;	// offset 0xC8 - 0xFC
 	class OSSet* m_gc;						// offset 0xFC
 	VMsvga2CommandBuffer m_context_buffer0; // offset 0x100 - 0x134
 	VMsvga2CommandBuffer m_context_buffer1; // offset 0x130 - 0x154
-	uint32_t m_mem_type;					// offset 0x19C
+											// offset 0x154 - 0x194: unknown
 	int m_stream_error;						// offset 0x194
+											// offset 0x198: unknown
+	uint32_t m_mem_type;					// offset 0x19C
 	VMsvga2TextureBuffer* m_txs[16U];		// offset 0x1B0
+	VMsvga2TextureBuffer* m_tx_vb;			// offset 0x1F0
 
 	/*
 	 * VMsvga2 Specific
@@ -83,6 +86,7 @@ private:
 	 */
 	struct {
 		uint8_t* kernel_ptr;
+		size_t size_bytes;
 		size_t offset_in_gmr;
 		uint32_t sid;
 		uint32_t gmr_id;
@@ -96,6 +100,7 @@ private:
 		uint32_t imm_s[8];
 		uint32_t modes4;
 		uint32_t modes5;
+		uint32_t param_cache_mask;
 		struct {
 			uint32_t mask;
 			uint32_t color;
@@ -118,12 +123,15 @@ private:
 	void discardCommandBuffer();
 	void removeTextureFromStream(VMsvga2TextureBuffer*);
 	void addTextureToStream(VMsvga2TextureBuffer*);
+	void submit_midbuffer(VendorGLStreamInfo*);
 	void get_texture(VendorGLStreamInfo*, VMsvga2TextureBuffer*, bool);
+	void dirtyTexture(VMsvga2TextureBuffer*, uint32_t, uint32_t);
+	void get_tex_data(VMsvga2TextureBuffer*, uint32_t*, uint32_t*);
 	void write_tex_data(uint32_t, uint32_t*, VMsvga2TextureBuffer*);
 	void alloc_and_load_texture(VMsvga2TextureBuffer*);
 	IOReturn bind_texture(uint32_t index, VMsvga2TextureBuffer* tx);
 	void setup_drawbuffer_registers(uint32_t*);
-	IOReturn alloc_arrays();
+	IOReturn alloc_arrays(size_t num_bytes);
 	void purge_arrays();
 	IOReturn upload_arrays(size_t num_bytes);
 	void adjust_texture_coords(uint8_t* vertex_array,
@@ -136,11 +144,15 @@ private:
 	 */
 	static int decipher_format(uint8_t mapsurf, uint8_t mt);
 	static int translate_clear_mask(uint32_t mask);
+	void ipp_discard_renderstate(void);
 	void ip_prim3d_poly(uint32_t const* vertex_data, size_t num_vertex_dwords);
 	void ip_prim3d_direct(uint32_t prim_kind, uint32_t const* vertex_data, size_t num_vertex_dwords);
 	uint32_t ip_prim3d(uint32_t* p);
 	uint32_t ip_load_immediate(uint32_t* p);
 	uint32_t ip_clear_params(uint32_t* p);
+	uint32_t decode_mi(uint32_t* p);
+	uint32_t decode_2d(uint32_t* p);
+	uint32_t decode_3d(uint32_t* p);
 	uint32_t submit_buffer(uint32_t* kernel_buffer_ptr, uint32_t size_dwords);
 
 public:

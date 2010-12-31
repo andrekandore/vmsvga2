@@ -257,6 +257,7 @@ void CLASS::finalize_texture(class VMsvga2Accel* provider, VMsvga2TextureBuffer*
 	if (static_cast<int>(texture->surface_id) >= 0) {
 		provider->destroySurface(texture->surface_id);
 		provider->FreeSurfaceID(texture->surface_id);
+		texture->surface_id = SVGA_ID_INVALID;
 	}
 }
 

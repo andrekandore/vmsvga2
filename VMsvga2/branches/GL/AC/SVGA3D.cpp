@@ -169,7 +169,9 @@ bool CLASS::BeginSurfaceDMAwithSuffix(SVGA3dGuestImage const *guestImage,
 	cmd->transfer = transfer;
 	*boxes = reinterpret_cast<SVGA3dCopyBox*>(&cmd[1]);
 
+#if 0
 	bzero(*boxes, boxesSize);
+#endif
 	suffix = reinterpret_cast<SVGA3dCmdSurfaceDMASuffix*>(&(*boxes)[numBoxes]);
 	suffix->suffixSize = static_cast<uint32_t>(sizeof *suffix);
 	suffix->maximumOffset = maximumOffset,
@@ -481,6 +483,18 @@ bool CLASS::SetViewport(uint32_t cid,        // IN
 	return true;
 }
 
+bool CLASS::SetScissorRect(uint32_t cid, SVGA3dRect const* rect)
+{
+	SVGA3dCmdSetScissorRect *cmd;
+	cmd = static_cast<SVGA3dCmdSetScissorRect*>(FIFOReserve(SVGA_3D_CMD_SETSCISSORRECT, sizeof *cmd));
+	if (!cmd)
+		return false;
+	cmd->cid = cid;
+	cmd->rect = *rect;
+	m_svga->FIFOCommitAll();
+	return true;
+}
+
 bool CLASS::SetZRange(uint32_t cid,// IN
 					  float zMin,  // IN
 					  float zMax)  // IN
@@ -492,6 +506,19 @@ bool CLASS::SetZRange(uint32_t cid,// IN
 	cmd->cid = cid;
 	cmd->zRange.min = zMin;
 	cmd->zRange.max = zMax;
+	m_svga->FIFOCommitAll();
+	return true;
+}
+
+bool CLASS::SetClipPlane(uint32_t cid, uint32_t index, float const* plane)
+{
+	SVGA3dCmdSetClipPlane *cmd;
+	cmd = static_cast<SVGA3dCmdSetClipPlane*>(FIFOReserve(SVGA_3D_CMD_SETCLIPPLANE, sizeof *cmd));
+	if (!cmd)
+		return false;
+	cmd->cid = cid;
+	cmd->index = index;
+	memcpy(&cmd->plane[0], plane, 4U * sizeof(float));
 	m_svga->FIFOCommitAll();
 	return true;
 }
@@ -551,5 +578,42 @@ bool CLASS::BeginBlitSurfaceToScreen(SVGA3dSurfaceImageId const* srcImage,
 
 	if (clipRects)
 		*clipRects = reinterpret_cast<SVGASignedRect*>(&cmd[1]);
+	return true;
+}
+
+bool CLASS::BeginQuery(uint32_t cid, SVGA3dQueryType qtype)
+{
+	SVGA3dCmdBeginQuery* cmd = static_cast<SVGA3dCmdBeginQuery*>(FIFOReserve(SVGA_3D_CMD_BEGIN_QUERY, sizeof *cmd));
+	if (!cmd)
+		return false;
+	cmd->cid = cid;
+	cmd->type = qtype;
+	m_svga->FIFOCommitAll();
+	return true;
+}
+
+bool CLASS::EndQuery(uint32_t cid, SVGA3dQueryType qtype, uint32_t gmrid, uint32_t offset_in_gmr)
+{
+	SVGA3dCmdEndQuery* cmd = static_cast<SVGA3dCmdEndQuery*>(FIFOReserve(SVGA_3D_CMD_END_QUERY, sizeof *cmd));
+	if (!cmd)
+		return false;
+	cmd->cid = cid;
+	cmd->type = qtype;
+	cmd->guestResult.gmrId = gmrid;
+	cmd->guestResult.offset = offset_in_gmr;
+	m_svga->FIFOCommitAll();
+	return true;
+}
+
+bool CLASS::WaitForQuery(uint32_t cid, SVGA3dQueryType qtype, uint32_t gmrid, uint32_t offset_in_gmr)
+{
+	SVGA3dCmdWaitForQuery* cmd = static_cast<SVGA3dCmdWaitForQuery*>(FIFOReserve(SVGA_3D_CMD_WAIT_FOR_QUERY, sizeof *cmd));
+	if (!cmd)
+		return false;
+	cmd->cid = cid;
+	cmd->type = qtype;
+	cmd->guestResult.gmrId = gmrid;
+	cmd->guestResult.offset = offset_in_gmr;
+	m_svga->FIFOCommitAll();
 	return true;
 }

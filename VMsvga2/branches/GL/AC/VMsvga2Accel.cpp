@@ -354,7 +354,7 @@ void CLASS::processOptions()
 		setProperty("VMwareSVGAGALogLevel", static_cast<uint64_t>(m_log_level_ga), 32U);
 	}
 	if (PE_parse_boot_argn("vmw_log_gld", &boot_arg, sizeof boot_arg)) {
-		m_log_level_gld = static_cast<SInt>(boot_arg);
+		m_log_level_gld = static_cast<int>(boot_arg);
 		setProperty("VMwareSVGAGLDLogLevel", static_cast<uint64_t>(m_log_level_gld), 32U);
 	}
 }
@@ -1005,10 +1005,10 @@ IOReturn CLASS::createSurface(uint32_t sid,
 	rc = svga3d.BeginDefineSurface(sid, surfaceFlags, surfaceFormat, &faces, &mipSizes, 1U);
 	if (!rc)
 		goto exit;
-	faces[0].numMipLevels = 1;
+	faces[0].numMipLevels = 1U;
 	mipSizes[0].width = width;
 	mipSizes[0].height = height;
-	mipSizes[0].depth = 1;
+	mipSizes[0].depth = 1U;
 	m_svga->FIFOCommitAll();
 exit:
 	m_framebuffer->unlockDevice();
@@ -1459,6 +1459,26 @@ IOReturn CLASS::setViewPort(uint32_t cid, void /* IOAccelBounds */ const* rect)
 }
 
 HIDDEN
+IOReturn CLASS::SetScissorRect(uint32_t cid, void /* IOAccelBounds */ const* rect)
+{
+	IOAccelBounds const* _rect;
+	SVGA3dRect __rect;
+	if (!rect)
+		return kIOReturnBadArgument;
+	if (!bHaveSVGA3D)
+		return kIOReturnNoDevice;
+	_rect = static_cast<IOAccelBounds const*>(rect);
+	__rect.x = _rect->x;
+	__rect.y = _rect->y;
+	__rect.w = _rect->w;
+	__rect.h = _rect->h;
+	m_framebuffer->lockDevice();
+	svga3d.SetScissorRect(cid, &__rect);
+	m_framebuffer->unlockDevice();
+	return kIOReturnSuccess;
+}
+
+HIDDEN
 IOReturn CLASS::setZRange(uint32_t cid, float zMin, float zMax)
 {
 	if (!bHaveSVGA3D)
@@ -1470,12 +1490,95 @@ IOReturn CLASS::setZRange(uint32_t cid, float zMin, float zMax)
 }
 
 HIDDEN
+IOReturn CLASS::SetClipPlane(uint32_t cid, uint32_t index, float const* plane)
+{
+	if (!plane)
+		return kIOReturnBadArgument;
+	if (!bHaveSVGA3D)
+		return kIOReturnNoDevice;
+	m_framebuffer->lockDevice();
+	svga3d.SetClipPlane(cid, index, plane);
+	m_framebuffer->unlockDevice();
+	return kIOReturnSuccess;
+}
+
+HIDDEN
 IOReturn CLASS::setTransform(uint32_t cid, SVGA3dTransformType type, float const* matrix)
 {
 	if (!bHaveSVGA3D)
 		return kIOReturnNoDevice;
 	m_framebuffer->lockDevice();
 	svga3d.SetTransform(cid, type, matrix);
+	m_framebuffer->unlockDevice();
+	return kIOReturnSuccess;
+}
+
+HIDDEN
+IOReturn CLASS::surfaceDMA3DEx(uint32_t sid,
+							   SVGA3dTransferType transfer,
+							   SVGA3dCopyBox const* copyBox,
+							   ExtraInfoEx const* extra,
+							   uint32_t* fence)
+{
+	bool rc;
+	SVGA3dSurfaceDMAFlags flags;
+	SVGA3dCopyBox* copyBoxes;
+	SVGA3dGuestImage guestImage;
+	SVGA3dSurfaceImageId hostImage;
+
+	if (!extra || !copyBox)
+		return kIOReturnBadArgument;
+	if (!bHaveSVGA3D)
+		return kIOReturnNoDevice;
+	hostImage.sid = sid;
+	hostImage.face = 0;
+	hostImage.mipmap = 0;
+	guestImage.ptr.gmrId = extra->mem_gmr_id;
+	guestImage.ptr.offset = static_cast<uint32_t>(extra->mem_offset_in_gmr);
+	guestImage.pitch = static_cast<uint32_t>(extra->mem_pitch);
+	memcpy(&flags, &extra->suffix_flags, sizeof(uint32_t));
+	m_framebuffer->lockDevice();
+	rc = svga3d.BeginSurfaceDMAwithSuffix(&guestImage,
+										  &hostImage,
+										  transfer,
+										  &copyBoxes,
+										  1U,
+										  static_cast<uint32_t>(extra->mem_limit),
+										  flags);
+	if (!rc)
+		goto exit;
+	memcpy(&copyBoxes[0], copyBox, sizeof *copyBox);
+	m_svga->FIFOCommitAll();
+	if (fence)
+		*fence = m_svga->InsertFence();
+exit:
+	m_framebuffer->unlockDevice();
+	return kIOReturnSuccess;
+}
+
+HIDDEN
+IOReturn CLASS::createTexture(uint32_t sid,
+							  SVGA3dSurfaceFormat surfaceFormat,
+							  uint32_t width,
+							  uint32_t height,
+							  uint32_t depth)
+{
+	bool rc;
+	SVGA3dSize* mipSizes;
+	SVGA3dSurfaceFace* faces;
+
+	if (!bHaveSVGA3D)
+		return kIOReturnNoDevice;
+	m_framebuffer->lockDevice();
+	rc = svga3d.BeginDefineSurface(sid, SVGA3D_SURFACE_HINT_TEXTURE, surfaceFormat, &faces, &mipSizes, 1U);
+	if (!rc)
+		goto exit;
+	faces[0].numMipLevels = 1U;
+	mipSizes[0].width = width;
+	mipSizes[0].height = height;
+	mipSizes[0].depth = depth;
+	m_svga->FIFOCommitAll();
+exit:
 	m_framebuffer->unlockDevice();
 	return kIOReturnSuccess;
 }
