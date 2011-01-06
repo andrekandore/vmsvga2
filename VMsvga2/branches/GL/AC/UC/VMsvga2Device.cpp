@@ -33,6 +33,7 @@
 #include "VMsvga2Accel.h"
 #include "VMsvga2Device.h"
 #include "VMsvga2Shared.h"
+#include "VMsvga2Surface.h"
 #include "ACMethods.h"
 #include "UCTypes.h"
 
@@ -215,8 +216,12 @@ IOReturn CLASS::get_config(uint32_t* c1, uint32_t* c2, uint32_t* c3, uint32_t* c
 {
 	uint32_t const vram_size = m_provider->getVRAMSize();
 
-	*c1 = 0;	// used by GLD to discern Intel 915/965/Ironlake(HD)
+	*c1 = 0U;	// used by GLD to discern Intel 915/965/Ironlake(HD)
+#if 0
 	*c2 = static_cast<uint32_t>(m_provider->getLogLevelGLD()) & 7U;		// TBD: is this safe?
+#else
+	*c2 = 1U;	// set GLD logging to error level
+#endif
 	*c3 = vram_size;	// total VRAM size
 	*c4 = vram_size;	// total memory available for textures (no accounting by VMsvga2)
 #if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ >= 1060
@@ -229,13 +234,50 @@ IOReturn CLASS::get_config(uint32_t* c1, uint32_t* c2, uint32_t* c3, uint32_t* c
 }
 
 HIDDEN
-IOReturn CLASS::get_surface_info(uintptr_t c1, uint32_t* c2, uint32_t* c3, uint32_t* c4)
+IOReturn CLASS::get_surface_info(uintptr_t surface_id, uint32_t* mode_bits, uint32_t* width, uint32_t* height)
 {
-	*c2 = 0x4061U;
-	*c3 = 0x4062U;
-	*c4 = 0x4063U;
-	DVLog(2, "%s(%lu, *%u, *%u, *%u)\n", __FUNCTION__, c1, *c2, *c3, *c4);
+	VMsvga2Surface* surface_client;
+	uint32_t inner_width, inner_height, outer_width, outer_height;
+
+	if (!m_provider)
+		return kIOReturnNotReady;
+	if (!surface_id)
+		goto bad_exit;
+	surface_client = m_provider->findSurfaceForID(static_cast<uint32_t>(surface_id));
+	if (!surface_client)
+		goto bad_exit;
+	*mode_bits = static_cast<uint32_t>(surface_client->getOriginalModeBits());
+#if 0
+	uint32_t some_mask = surface_client->0x10F0;
+	if (some_mask & 8U)
+		*mode_bits |= 0x200U;
+	else if (some_mask & 4U)
+		*mode_bits |= 0x100U;
+#endif
+	surface_client->getBoundsForGL(&inner_width,
+								   &inner_height,
+								   &outer_width,
+								   &outer_height);
+#if 0
+	if (inner_width != outer_width || inner_height != outer_height) {
+		*width  = inner_width;
+		*height = inner_height;
+	} else {
+		*width  = surface_client->0xE14->width;
+		*height = surface_client->0xE14->height;	// zero extended
+	}
+#else
+	*width  = outer_width;
+	*height = outer_height;
+#endif
+	DVLog(2, "%s(%#lx, *%#x, *%u, *%u)\n", __FUNCTION__, surface_id, *mode_bits, *width, *height);
 	return kIOReturnSuccess;
+
+bad_exit:
+	*mode_bits = 0U;
+	*width = 0U;
+	*height = 0U;
+	return kIOReturnBadArgument;
 }
 
 HIDDEN
@@ -250,6 +292,9 @@ HIDDEN
 IOReturn CLASS::wait_for_stamp(uintptr_t c1)
 {
 	DVLog(2, "%s(%lu)\n", __FUNCTION__, c1);
+	/*
+	 * TBD
+	 */
 	return kIOReturnSuccess;
 }
 
@@ -259,9 +304,6 @@ IOReturn CLASS::new_texture(struct VendorNewTextureDataStruc const* struct_in,
 							size_t struct_in_size,
 							size_t* struct_out_size)
 {
-#if LOGGING_LEVEL >= 1
-	int i;
-#endif
 	VMsvga2TextureBuffer* p = 0;
 
 	DVLog(2, "%s(struct_in, struct_out, %lu, %lu)\n", __FUNCTION__, struct_in_size, *struct_out_size);
@@ -272,15 +314,32 @@ IOReturn CLASS::new_texture(struct VendorNewTextureDataStruc const* struct_in,
 		return kIOReturnNotReady;
 #if LOGGING_LEVEL >= 1
 	if (m_log_level >= 3) {
-		for (i = 0; i < 12; ++i)
-			DVLog(3, "%s:   struct_t[%d] == %#x\n", __FUNCTION__, i, reinterpret_cast<uint32_t const*>(struct_in)[i]);
-		for (i = 0; i < 3; ++i)
-			DVLog(3, "%s:   struct_t[%d] == %#llx\n", __FUNCTION__, i + 12, struct_in->pixels[i]);
+		DVLog(3, "%s:   type == %u, num_faces == %u, num_mipmaps == %u, min_mipmap == %u, bytespp == %u\n", __FUNCTION__,
+			  struct_in->type, struct_in->num_faces, struct_in->num_mipmaps, struct_in->min_mipmap, struct_in->bytespp);
+		DVLog(3, "%s:   width == %u, height == %u, depth == %u, f0 == %#x, pitch == %u, read_only == %u\n", __FUNCTION__,
+			  struct_in->width, struct_in->height, struct_in->depth, struct_in->f0, struct_in->pitch, struct_in->read_only);
+		DVLog(3, "%s:   f1... %#x, %#x, %#x\n", __FUNCTION__,
+			  struct_in->f1[0], struct_in->f1[1], struct_in->f1[2]);
+		DVLog(3, "%s:   size... %u, %u\n", __FUNCTION__,
+			  struct_in->size[0], struct_in->size[1]);
+		DVLog(3, "%s:   pixels... %#llx, %#llx, %#llx\n", __FUNCTION__,
+			  struct_in->pixels[0], struct_in->pixels[1], struct_in->pixels[2]);
 	}
 #endif
-	if (struct_in->version != 1U &&
-		struct_in->version != 6U)
+	if (struct_in->num_faces != 1U &&
+		struct_in->num_faces != 6U)
 		return kIOReturnBadArgument;
+	/*
+	 * Only support 1 face, 1 mipmap for now
+	 */
+	if (struct_in->num_faces != 1U ||
+		struct_in->min_mipmap != 0U) {
+		DVLog(1, "%s: num_faces == %u, num_mipmaps == %u, min_mipmap == %u Unsupported\n", __FUNCTION__,
+			  struct_in->num_faces, struct_in->num_mipmaps, struct_in->min_mipmap);
+		return kIOReturnUnsupported;
+	}
+	if (struct_in->num_mipmaps > 1U)
+		DVLog(3, "%s: num_mipmaps == %u, will only load mipmap 0\n", __FUNCTION__, struct_in->num_mipmaps);
 	*struct_out_size = sizeof *struct_out;
 	bzero(struct_out, sizeof *struct_out);
 	m_shared->lockShared();
@@ -288,73 +347,73 @@ IOReturn CLASS::new_texture(struct VendorNewTextureDataStruc const* struct_in,
 	m_provider->acceleratorWaitEnabled();
 #endif
 	switch (struct_in->type) {
-		case 1:
+		case TEX_TYPE_SURFACE:
 			p = m_shared->new_surface_texture(struct_in->size[0],
 											  struct_in->size[1],
-											  &struct_out->addr);
+											  &struct_out->sys_obj_addr);
 			if (!p) {
 				m_shared->unlockShared();
 				return kIOReturnNoResources;
 			}
 			break;
-		case 2:
+		case TEX_TYPE_IOSURFACE:
 			p = m_shared->new_iosurface_texture(struct_in->size[0],
 												struct_in->size[1],
 												static_cast<uint32_t>(struct_in->pixels[0]),
 												static_cast<uint32_t>(struct_in->pixels[0] >> 32),
-												&struct_out->addr);
+												&struct_out->sys_obj_addr);
 			if (!p) {
 				m_shared->unlockShared();
 				return kIOReturnNoResources;
 			}
 			break;
-		case 3:
+		case TEX_TYPE_VB:
 			p = m_shared->new_texture(struct_in->size[0],
 									  0,
 									  0ULL,
 									  0,
 									  struct_in->read_only,
-									  &struct_out->data,
-									  &struct_out->addr);
+									  &struct_out->tx_data,
+									  &struct_out->sys_obj_addr);
 			if (!p) {
 				m_shared->unlockShared();
 				return kIOReturnNoResources;
 			}
 			break;
-		case 6:
+		case TEX_TYPE_AGPREF:
 			p = m_shared->new_agpref_texture(struct_in->pixels[0],
 											 struct_in->pixels[1],
 											 struct_in->size[0],
 											 struct_in->read_only,
-											 &struct_out->addr);
+											 &struct_out->sys_obj_addr);
 			if (!p) {
 				m_shared->unlockShared();
 				return kIOReturnNoResources;
 			}
 			if (p->linked_agp)
-				struct_out->data = p->linked_agp->agp_addr;
+				struct_out->tx_data = p->linked_agp->agp_addr;
 			break;
-		case 8:
+		case TEX_TYPE_STD:
 			p = m_shared->new_texture(struct_in->size[0],
 									  struct_in->size[1],
 									  0ULL,
 									  0,
 									  struct_in->read_only,
-									  &struct_out->data,
-									  &struct_out->addr);
+									  &struct_out->tx_data,
+									  &struct_out->sys_obj_addr);
 			if (!p) {
 				m_shared->unlockShared();
 				return kIOReturnNoResources;
 			}
 			break;
-		case 9:
+		case TEX_TYPE_OOB:
 			p = m_shared->new_texture(struct_in->size[0],
 									  struct_in->size[1],
 									  struct_in->pixels[1],
 									  static_cast<uint32_t>(struct_in->pixels[0]),
 									  struct_in->read_only,
-									  &struct_out->data,
-									  &struct_out->addr);
+									  &struct_out->tx_data,
+									  &struct_out->sys_obj_addr);
 			if (!p) {
 				m_shared->unlockShared();
 				return kIOReturnNoResources;
@@ -365,9 +424,9 @@ IOReturn CLASS::new_texture(struct VendorNewTextureDataStruc const* struct_in,
 			m_shared->unlockShared();
 			return kIOReturnNoResources;
 	}
-	p->version = struct_in->version;
-	p->flags[0] = struct_in->flags[0];
-	p->flags[1] = struct_in->flags[1];
+	p->num_faces = struct_in->num_faces;
+	p->num_mipmaps = struct_in->num_mipmaps;
+	p->min_mipmap = struct_in->min_mipmap;
 	p->width = struct_in->width;
 	p->height = struct_in->height;
 	p->depth = struct_in->depth;
@@ -382,8 +441,8 @@ IOReturn CLASS::new_texture(struct VendorNewTextureDataStruc const* struct_in,
 #if LOGGING_LEVEL >= 1
 	if (m_log_level >= 3) {
 		DVLog(2, "%s:   struct_out.pad == %#x\n", __FUNCTION__, struct_out->pad);
-		DVLog(2, "%s:   struct_out.data == %#llx\n", __FUNCTION__, struct_out->data);
-		DVLog(2, "%s:   struct_out.addr == %#llx\n", __FUNCTION__, struct_out->addr);
+		DVLog(2, "%s:   struct_out.tx_data == %#llx\n", __FUNCTION__, struct_out->tx_data);
+		DVLog(2, "%s:   struct_out.sys_obj_addr == %#llx\n", __FUNCTION__, struct_out->sys_obj_addr);
 	}
 #endif
 	return kIOReturnSuccess;
@@ -409,6 +468,9 @@ IOReturn CLASS::page_off_texture(struct sIODevicePageoffTexture const* struct_in
 {
 	DVLog(2, "%s(struct_in, %lu)\n", __FUNCTION__, struct_in_size);
 	DVLog(2, "%s:   struct_in { %#x, %#x }\n", __FUNCTION__, struct_in->data[0], struct_in->data[1]);
+	/*
+	 * TBD
+	 */
 	return kIOReturnSuccess;
 }
 

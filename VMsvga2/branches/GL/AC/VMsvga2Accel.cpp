@@ -3,7 +3,7 @@
  *  VMsvga2Accel
  *
  *  Created by Zenith432 on July 29th 2009.
- *  Copyright 2009-2010 Zenith432. All rights reserved.
+ *  Copyright 2009-2011 Zenith432. All rights reserved.
  *
  *  Permission is hereby granted, free of charge, to any person
  *  obtaining a copy of this software and associated documentation
@@ -1459,7 +1459,7 @@ IOReturn CLASS::setViewPort(uint32_t cid, void /* IOAccelBounds */ const* rect)
 }
 
 HIDDEN
-IOReturn CLASS::SetScissorRect(uint32_t cid, void /* IOAccelBounds */ const* rect)
+IOReturn CLASS::setScissorRect(uint32_t cid, void /* IOAccelBounds */ const* rect)
 {
 	IOAccelBounds const* _rect;
 	SVGA3dRect __rect;
@@ -1490,7 +1490,7 @@ IOReturn CLASS::setZRange(uint32_t cid, float zMin, float zMax)
 }
 
 HIDDEN
-IOReturn CLASS::SetClipPlane(uint32_t cid, uint32_t index, float const* plane)
+IOReturn CLASS::setClipPlane(uint32_t cid, uint32_t index, float const* plane)
 {
 	if (!plane)
 		return kIOReturnBadArgument;
@@ -1920,8 +1920,18 @@ bool CLASS::HaveGLBaseline() const
 {
 	return m_svga &&
 		bHaveSVGA3D &&
-		bHaveScreenObject &&	// TBD: may be removed in the future
 		m_svga->HasCapability(SVGA_CAP_GMR);
+}
+
+HIDDEN
+VMsvga2Surface* CLASS::findSurfaceForID(uint32_t surface_id)
+{
+	FindSurface fs;
+
+	bzero(&fs, sizeof fs);
+	fs.cgsSurfaceID = surface_id;
+	messageClients(kIOMessageFindSurface, &fs, sizeof fs);
+	return OSDynamicCast(VMsvga2Surface, fs.client);
 }
 
 #pragma mark -

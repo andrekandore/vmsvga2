@@ -3,7 +3,7 @@
  *  VMsvga2GLDriver
  *
  *  Created by Zenith432 on December 2nd 2010.
- *  Copyright 2010 Zenith432. All rights reserved.
+ *  Copyright 2010-2011 Zenith432. All rights reserved.
  *
  *  Permission is hereby granted, free of charge, to any person
  *  obtaining a copy of this software and associated documentation
@@ -76,9 +76,10 @@ typedef struct _glr_io_data_t {
 
 typedef struct _RendererInfo
 {
-	uint32_t	rendererID;		// offset 0x10 (Note: upper byte is something else, probably a display mask)
+	void* pad;
+	uint32_t	rendererID;		// offset (4, 8) (Note: upper byte is display number (starting 1))
 
-	// DWORD of bit flags at offset 0x14
+	// DWORD of bit flags at offset (8, 0xC)
 	unsigned bWindow:1;			// can run in windowed mode
 	unsigned bFullScreen:1;		// can run fullscreen
 	unsigned bOffScreen:1;		// can render to offscreen client memory
@@ -97,21 +98,23 @@ typedef struct _RendererInfo
 	unsigned pFragProc:1;		// Fragment Proc capable
 	unsigned pAcceleratedCompute:1;	// supports compute acceleration
 
-	uint32_t bufferModes;		// offset 0x18, see Buffer modes in CGLTypes.h
-	uint32_t colorModes;		// offset 0x1C, see Color and accumulation buffer formats in CGLTypes.h
-	uint32_t accumModes;		// offset 0x20, see Color and accumulation buffer formats in CGLTypes.h
-	uint32_t depthModes;		// offset 0x24, see Depth and stencil buffer depths in CGLTypes.h
-	uint32_t stencilModes;		// offset 0x28, see Depth and stencil buffer depths in CGLTypes.h
-	uint32_t displayMask;		// offset 0x2C
-	uint16_t maxAuxBuffers;		// offset 0x30, maximum number of auxilliary buffers
-	uint16_t maxSampleBuffers;	// offset 0x32, maximum number of sample buffers
-	uint16_t maxSamples;		// offset 0x34, maximum number of samples
-	uint16_t sampleAlpha;		// offset 0x36, support for alpha sampling
-	uint32_t sampleModes;		// offset 0x38, see Sampling modes in CGLTypes.h
-
-	uint32_t vramSize;			// offset 0x54 (in megabytes)
-	uint32_t textureMemory;		// offset 0x5C (in megabytes)
-	// end point 0x90
+	uint32_t bufferModes;		// offset (0x0C, 0x10), see Buffer modes in CGLTypes.h
+	uint32_t colorModes;		// offset( 0x10, 0x14), see Color and accumulation buffer formats in CGLTypes.h
+	uint32_t accumModes;		// offset (0x14, 0x18), see Color and accumulation buffer formats in CGLTypes.h
+	uint32_t depthModes;		// offset (0x18, 0x1C), see Depth and stencil buffer depths in CGLTypes.h
+	uint32_t stencilModes;		// offset (0x1C, 0x20), see Depth and stencil buffer depths in CGLTypes.h
+	uint32_t displayMask;		// offset (0x20, 0x24)
+	uint16_t maxAuxBuffers;		// offset (0x24, 0x28), maximum number of auxilliary buffers
+	uint16_t maxSampleBuffers;	// offset (0x26, 0x2A), maximum number of sample buffers
+	uint16_t maxSamples;		// offset (0x28, 0x2C), maximum number of samples
+	uint8_t  sampleAlpha;		// offset (0x2A, 0x2E), support for alpha sampling
+	uint32_t sampleModes;		// offset (0x2C, 0x30), see Sampling modes in CGLTypes.h
+	uint32_t unknown0[6];		// offset (0x30, 0x34)
+	uint32_t vramSize;			// offset (0x48, 0x4C) (in megabytes)
+	uint32_t unknown1;			// offset (0x4C, 0x50)
+	uint32_t textureMemory;		// offset (0x50, 0x54) (in megabytes)
+	uint32_t unknown2[12];		// offset (0x54, 0x58)
+								// ends   (0x84, 0x88)
 } RendererInfo;
 
 typedef struct _PixelFormat

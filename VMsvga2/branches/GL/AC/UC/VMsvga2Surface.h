@@ -3,7 +3,7 @@
  *  VMsvga2Accel
  *
  *  Created by Zenith432 on July 29th 2009.
- *  Copyright 2009-2010 Zenith432. All rights reserved.
+ *  Copyright 2009-2011 Zenith432. All rights reserved.
  *
  *  Permission is hereby granted, free of charge, to any person
  *  obtaining a copy of this software and associated documentation
@@ -142,6 +142,7 @@ private:
 		uint32_t cid;
 		uint32_t color_sid;		// TBD: support two of these for double-buffering
 		uint32_t depth_sid;
+		int ds_format;
 		uint8_t volatile rt_dirty;
 	} m_gl;
 
@@ -283,7 +284,9 @@ public:
 	 * Interface for VMsvga2GLContext
 	 */
 	int getOriginalModeBits() const { return m_gl.original_mode_bits; }
+	int getSurfaceFormat() const { return m_surfaceFormat; }
 	void getBoundsForGL(uint32_t* inner_width, uint32_t* inner_height, uint32_t* outer_width, uint32_t* outer_height) const;
+	bool getDataForGLBind(uint32_t* surface_id, uint32_t* width, uint32_t* height);
 	IOReturn attachGL(uint32_t context_id, int cmb);
 	IOReturn resizeGL();
 	IOReturn detachGL();

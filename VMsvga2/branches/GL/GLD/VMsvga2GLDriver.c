@@ -3,7 +3,7 @@
  *  VMsvga2GLDriver
  *
  *  Created by Zenith432 on December 6th 2009.
- *  Copyright 2009-2010 Zenith432. All rights reserved.
+ *  Copyright 2009-2011 Zenith432. All rights reserved.
  *
  *  Permission is hereby granted, free of charge, to any person
  *  obtaining a copy of this software and associated documentation
@@ -74,7 +74,7 @@
  *
  * Later
  *   Need autonomic:
- *     gldGetRendererInfo, gldReclaimContext, gldInitDispatch, gldUpdateDispatch, gldGetInteger
+ *     gldReclaimContext, gldInitDispatch, gldUpdateDispatch, gldGetInteger
  *     gldTestObject, gldFinishObject, gldGenerateTexMipmaps, gldLoadTexture
  *     gldGetTextureLevelInfo, gldGetTextureLevelImage, gldPageoffBuffer
  *     gldGetMemoryPlugin, gldSetMemoryPlugin, gldTestMemoryPlugin, gldFlushMemoryPlugin, gldDestroyMemoryPlugin
@@ -111,7 +111,7 @@ void gldInitializeLibrary(io_service_t const* pServices,
 
 	GLDLog(2, "%s(%p, %p, %#x, %p, %p)\n", __FUNCTION__, pServices, pServiceFlags, GLDisplayMask, IODataFlush, IODataBindSurface);
 
-	for (j = 0; j != 2; ++j) {
+	for (j = 0; j != 1; ++j) {
 		bndl_handle[j] = dlopen(bndl_names[j], 0);
 		if (!bndl_handle[j])
 			continue;
@@ -126,10 +126,10 @@ void gldInitializeLibrary(io_service_t const* pServices,
 		}
 	}
 
-	if (bndl_handle[0])
-		bndl_index = 0;
-	else
+#if 0
+	if (!bndl_handle[0] && bndl_handle[1])
 		bndl_index = 1;
+#endif
 
 	load_libs();
 	gldInitializeLibrarySelf(pServices, pServiceFlags, GLDisplayMask, IODataFlush, IODataBindSurface);
@@ -251,7 +251,7 @@ void gldTerminateLibrary(void)
 	glr_io_data.num_displays = 0;
 
 	unload_libs();
-	for (j = 0; j != 2; ++j) {
+	for (j = 0; j != 1; ++j) {
 		if (!bndl_handle[j])
 			continue;
 		addr = (typeof(addr)) dlsym(bndl_handle[j], "gldTerminateLibrary");
@@ -282,14 +282,13 @@ _Bool gldGetVersion(int* arg0, int* arg1, int* arg2, int* arg3)
 	return 1;
 }
 
-GLDReturn gldGetRendererInfo(void* struct_out, uint32_t GLDisplayMask)
+#if 0
+GLDReturn gldGetRendererInfo(RendererInfo* struct_out, uint32_t GLDisplayMask)
 {
 	typeof(gldGetRendererInfo) *addr;
-	int i;
 	GLDReturn rc;
-	uint32_t* p;
 
-	GLDLog(2, "%s(%p, %#x)\n", __FUNCTION__, struct_out, GLDisplayMask);
+	GLDLog(2, "%s(struct_out, %#x)\n", __FUNCTION__, GLDisplayMask);
 
 	addr = (typeof(addr)) bndl_ptrs[0][1];
 	if (addr) {
@@ -297,18 +296,68 @@ GLDReturn gldGetRendererInfo(void* struct_out, uint32_t GLDisplayMask)
 		GLDLog(2, "  %s: returns %d\n", __FUNCTION__, rc);
 		if (rc != kCGLNoError)
 			return rc;
-		p = (uint32_t *) (((long*) struct_out) + 1);
 #if 0
-		*p = ((*p) & 0xFFFF0000U) | 0x4000U;
-		p[1] = 0x17CDU;
-		p[17] = 64;
-		p[19] = 64;
+		struct_out->rendererID = ((struct_out->rendererID) & 0xFF000000U) | (kCGLRendererIntel900ID & 0xFFFFU);
+		(&struct_out->rendererID)[1] = 0x17CDU;
+		struct_out->vramSize = 64U;
+		struct_out->textureMemory = 64U;
 #endif
-		for (i = 0; i < 32; ++i)
-			GLDLog(2, "  %s: [%d] == %#x\n", __FUNCTION__, i, p[i]);
+#if LOGGING_LEVEL >= 1
+		if (logLevel >= 3) {
+			int i;
+			for (i = 0; i < 32; ++i)
+				GLDLog(3, "  %s: [%d] == %#x\n", __FUNCTION__, i, (&struct_out->rendererID)[i]);
+		}
+#endif
 		return kCGLNoError;
 	}
 	return -1;
+}
+#endif
+
+GLDReturn gldGetRendererInfo(RendererInfo* struct_out, uint32_t GLDisplayMask)
+{
+	uint32_t i;
+	display_info_t* dinfo;
+
+	GLDLog(2, "%s(struct_out, %#x)\n", __FUNCTION__, GLDisplayMask);
+
+	for (i = 0U; i != glr_io_data.num_displays; ++i) {
+		dinfo = &glr_io_data.dinfo[i];
+		if (!(GLDisplayMask & dinfo->mask))
+			continue;
+		if (GLDisplayMask & ~dinfo->mask)
+			break;
+		bzero(struct_out, sizeof *struct_out);
+		struct_out->rendererID = (kCGLRendererIntel900ID & 0xFFFFU) | ((i + 1U) << 24);
+		struct_out->displayMask = dinfo->mask;
+#if 0
+		FLAGS = 0xB58BU;
+#endif
+		struct_out->bWindow = 1U;
+		struct_out->bFullScreen = 1U;
+		struct_out->bBackingStore = 1U;
+		struct_out->bUnknown1 = 1U;
+		struct_out->bAccelerated = 1U;
+		struct_out->bCompliant = 1U;
+		struct_out->bQuartzExtreme = 1U;
+		struct_out->bPBuffer = 1U;
+#if 0
+		struct_out->pFragProc = 1U;	// Not Yet...
+#endif
+		struct_out->bufferModes = kCGLDoubleBufferBit | kCGLSingleBufferBit | kCGLMonoscopicBit;
+		struct_out->colorModes = kCGLARGB8888Bit | kCGLARGB1555Bit;
+		struct_out->accumModes = kCGLRGBA16161616Bit | kCGLARGB8888Bit;
+		struct_out->depthModes = kCGL32Bit | kCGL24Bit | kCGL16Bit | kCGL0Bit; // Note: Intel 950 GMA removes kCGL32Bit
+		struct_out->stencilModes = kCGL8Bit | kCGL0Bit;
+#if 0
+		struct_out->maxAuxBuffers = 2U;
+#endif
+		struct_out->vramSize = dinfo->config[3] >> 20U;
+		struct_out->textureMemory = dinfo->config[2] >> 20U;
+		return kCGLNoError;
+	}
+	return kCGLBadDisplay;
 }
 
 static
@@ -483,27 +532,34 @@ GLDReturn gldChoosePixelFormatInternal(PixelFormat** struct_out, int const* attr
 GLDReturn gldChoosePixelFormat(PixelFormat** struct_out, int const* attributes)
 {
 	typeof(gldChoosePixelFormat) *addr;
-	int i;
 	GLDReturn rc;
-	uint32_t* p;
 
 	GLDLog(2, "%s(struct_out, %p)\n", __FUNCTION__, attributes);
 
-	for (i = 0; attributes[i] != 0; ++i)
-		GLDLog(2, "  %s: attribute %d\n", __FUNCTION__, attributes[i]);
+#if LOGGING_LEVEL >= 1
+	if (logLevel >= 3) {
+		int i;
+		for (i = 0; attributes[i] != 0; ++i)
+			GLDLog(3, "  %s: attribute %d\n", __FUNCTION__, attributes[i]);
+	}
+#endif
 	addr = (typeof(addr)) bndl_ptrs[0][2];
 	if (addr) {
 		rc = addr(struct_out, attributes);
 		GLDLog(2, "  %s: returns %d, struct_out is %p\n", __FUNCTION__, rc, *struct_out);
 		if (rc != kCGLNoError || *struct_out == 0)
 			return rc;
-		p = (uint32_t *) (((long*) *struct_out) + 1);
 #if 0
-		*p = ((*p) & 0xFFFF0000U) | 0x4000U;
-		p[1] = 0x501U;
+		(*struct_out)->rendererID = ((*struct_out)->rendererID & 0xFFFF0000U) | (kCGLRendererIntel900ID & 0xFFFFU);
+		(&(*struct_out)->rendererID)[1] = 0x501U;
 #endif
-		for (i = 0; i < 12; ++i)
-			GLDLog(2, "  %s: [%d] == %#x\n", __FUNCTION__, i, p[i]);
+#if LOGGING_LEVEL >= 1
+		if (logLevel >= 3) {
+			int i;
+			for (i = 0; i < 12; ++i)
+				GLDLog(3, "  %s: [%d] == %#x\n", __FUNCTION__, i, (&(*struct_out)->rendererID)[i]);
+		}
+#endif
 		return kCGLNoError;
 	}
 	return -1;
@@ -840,6 +896,9 @@ GLDReturn gldCreateContext(gld_context_t** struct_out,
 	GLDReturn rc;
 
 	GLDLog(2, "%s(struct_out, %p, %p, %p, %p, %p)\n", __FUNCTION__, pixel_format, shared, arg3, arg4, arg5);
+	if (pixel_format)
+		GLDLog(1, "%s: ColorModes == %#x, DepthModes == %#x, StencilModes == %#x\n", __FUNCTION__,
+			   pixel_format->colorModes, pixel_format->depthModes, pixel_format->stencilModes);
 	addr = (typeof(addr)) bndl_ptrs[bndl_index][6];
 	if (addr) {
 		rc = addr(struct_out, pixel_format, shared, arg3, arg4, arg5);

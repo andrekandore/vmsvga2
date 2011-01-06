@@ -3,7 +3,7 @@
  *  VMsvga2Accel
  *
  *  Created by Zenith432 on December 11th 2010.
- *  Copyright 2010 Zenith432. All rights reserved.
+ *  Copyright 2010-2011 Zenith432. All rights reserved.
  *
  *  Permission is hereby granted, free of charge, to any person
  *  obtaining a copy of this software and associated documentation
@@ -33,12 +33,21 @@
 extern "C" {
 #endif
 
+#define TEX_TYPE_SURFACE   1U
+#define TEX_TYPE_IOSURFACE 2U
+#define TEX_TYPE_VB        3U
+#define TEX_TYPE_AGP       4U
+#define TEX_TYPE_AGPREF    6U
+#define TEX_TYPE_STD       8U
+#define TEX_TYPE_OOB       9U
+
 struct VendorNewTextureDataStruc
 {
 	uint32_t type;		// offset 0x00
-	uint8_t  version;	// offset 0x04
-	uint8_t  flags[2];	// offset 0x05
-	uint8_t  bytespp;	// offset 0x07
+	uint8_t num_faces;	// offset 0x04
+	uint8_t num_mipmaps;// offset 0x05
+	uint8_t min_mipmap; // offset 0x06
+	uint8_t bytespp;	// offset 0x07
 	uint32_t width;		// offset 0x08
 	uint16_t height;	// offset 0x0C
 	uint16_t depth;		// offset 0x0E
@@ -54,8 +63,8 @@ struct VendorNewTextureDataStruc
 struct sIONewTextureReturnData
 {
 	uint32_t pad;
-	uint64_t data;
-	uint64_t addr;
+	uint64_t tx_data;
+	uint64_t sys_obj_addr;
 } __attribute__((packed));
 
 struct sIODevicePageoffTexture
@@ -139,11 +148,12 @@ struct GLDSysObject {
 							// 10
 	uint8_t volatile in_use;
 							// 14
-	uint8_t f1;				// 15
+	uint8_t f1;				// 15 - looks like purgeable flag
 	uint8_t type;			// 16
 	uint32_t f2;			// 18
-	uint16_t f3[12];		// 1C
-	uint32_t f4;			// 34
+	uint16_t pageoff[6];	// 1C
+	uint16_t pageon[6];		// 28
+	uint32_t f3;			// 34
 							// 38
 };
 

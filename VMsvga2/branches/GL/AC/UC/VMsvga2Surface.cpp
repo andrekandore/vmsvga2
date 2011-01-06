@@ -3,7 +3,7 @@
  *  VMsvga2Accel
  *
  *  Created by Zenith432 on July 29th 2009.
- *  Copyright 2009-2010 Zenith432. All rights reserved.
+ *  Copyright 2009-2011 Zenith432. All rights reserved.
  *
  *  Permission is hereby granted, free of charge, to any person
  *  obtaining a copy of this software and associated documentation
@@ -34,6 +34,7 @@
 #include "VLog.h"
 #include "VMsvga2Accel.h"
 #include "VMsvga2Surface.h"
+#include "UCTypes.h"
 
 #include "svga_apple_header.h"
 #include "svga_overlay.h"
@@ -176,6 +177,24 @@ static inline
 bool isIdValid(uint32_t id)
 {
 	return static_cast<int>(id) >= 0;
+}
+
+static
+int select_ds_format(int context_mode_bits)
+{
+	if (context_mode_bits & CGLCMB_StencilMode0) {
+		if (context_mode_bits & CGLCMB_DepthMode32)
+			return SVGA3D_Z_D24S8;
+		return SVGA3D_Z_D15S1;
+	}
+	if (context_mode_bits & CGLCMB_DepthMode32) {
+		if (context_mode_bits & CGLCMB_DepthMode16)
+			return SVGA3D_Z_D24X8;
+		return SVGA3D_Z_D32;
+	}
+	if (context_mode_bits & (CGLCMB_DepthMode16 | CGLCMB_DepthMode0))
+		return SVGA3D_Z_D16;
+	return SVGA3D_FORMAT_INVALID;
 }
 
 #pragma mark -
@@ -1213,10 +1232,21 @@ void CLASS::CleanupGL()
 HIDDEN
 IOReturn CLASS::flushGLSurface()
 {
-	return m_provider->blitSurfaceToScreen(m_gl.color_sid,
-										   m_framebufferIndex,
-										   &m_scale.buffer,
-										   m_last_region);
+	VMsvga2Accel::ExtraInfo extra;
+	if (bHaveScreenObject)
+		return m_provider->blitSurfaceToScreen(m_gl.color_sid,
+											   m_framebufferIndex,
+											   &m_scale.buffer,
+											   m_last_region);
+	/*
+	 * TBD: Should we copy to the master surface instead?
+	 */
+	bzero(&extra, sizeof extra);
+	extra.srcDeltaX = m_scale.buffer.x - m_last_region->bounds.x;
+	extra.srcDeltaX = m_scale.buffer.y - m_last_region->bounds.y;
+	return m_provider->surfacePresentAutoSync(m_gl.color_sid,
+											  m_last_region,
+											  &extra);
 }
 
 HIDDEN
@@ -2141,6 +2171,17 @@ void CLASS::getBoundsForGL(uint32_t* inner_width, uint32_t* inner_height, uint32
 }
 
 HIDDEN
+bool CLASS::getDataForGLBind(uint32_t* surface_id, uint32_t* width, uint32_t* height)
+{
+	if (!bGLMode)
+		return false;
+	*surface_id = m_gl.color_sid;
+	*width = m_scale.source.w;
+	*height = m_scale.source.h;
+	return true;
+}
+
+HIDDEN
 IOReturn CLASS::attachGL(uint32_t context_id, int cmb)
 {
 	IOReturn rc;
@@ -2149,6 +2190,7 @@ IOReturn CLASS::attachGL(uint32_t context_id, int cmb)
 		return kIOReturnBusy;
 	if (!m_provider || !isSourceValid())
 		return kIOReturnNotReady;
+	m_gl.ds_format = select_ds_format(cmb);
 	if (!isIdValid(m_gl.color_sid))
 		m_gl.color_sid = m_provider->AllocSurfaceID();
 	rc = m_provider->createSurface(m_gl.color_sid,
@@ -2161,37 +2203,41 @@ IOReturn CLASS::attachGL(uint32_t context_id, int cmb)
 		m_gl.color_sid = SVGA_ID_INVALID;
 		return rc;
 	}
-#if 0
-	if (!isIdValid(m_gl.depth_sid))
-		m_gl.depth_sid = m_provider->AllocSurfaceID();
-	rc = m_provider->createSurface(m_gl.depth_sid,
-								   SVGA3D_SURFACE_HINT_DEPTHSTENCIL,
-								   SVGA3D_Z_D16,
-								   m_scale.source.w,
-								   m_scale.source.h);
-	if (rc != kIOReturnSuccess) {
-		m_provider->FreeSurfaceID(m_gl.depth_sid);
-		m_gl.depth_sid = SVGA_ID_INVALID;
-		CleanupGL();
-		return rc;
+	if (m_gl.ds_format != SVGA3D_FORMAT_INVALID) {
+		if (!isIdValid(m_gl.depth_sid))
+			m_gl.depth_sid = m_provider->AllocSurfaceID();
+		rc = m_provider->createSurface(m_gl.depth_sid,
+									   SVGA3D_SURFACE_HINT_DEPTHSTENCIL,
+									   SVGA3dSurfaceFormat(m_gl.ds_format),
+									   m_scale.source.w,
+									   m_scale.source.h);
+		if (rc != kIOReturnSuccess) {
+			m_provider->FreeSurfaceID(m_gl.depth_sid);
+			m_gl.depth_sid = SVGA_ID_INVALID;
+			CleanupGL();
+			return rc;
+		}
 	}
-#endif
 #if 0
-	SFLog(3, "%s: Attaching render target, cid == %u, sid == %u, width == %u, height == %u\n", __FUNCTION__,
-		  context_id, m_gl.color_sid, m_scale.source.w, m_scale.source.h);
+	SFLog(3, "%s: Attaching render target, cid == %u, color_sid == %u, depth_sid == %u, "
+		  "width == %u, height == %u\n", __FUNCTION__,
+		  context_id, m_gl.color_sid, m_gl.depth_sid, m_scale.source.w, m_scale.source.h);
 #endif
 	rc = m_provider->setRenderTarget(context_id, SVGA3D_RT_COLOR0, m_gl.color_sid);
 	if (rc != kIOReturnSuccess) {
 		CleanupGL();
 		return rc;
 	}
+	if (isIdValid(m_gl.depth_sid)) {
+		rc = m_provider->setRenderTarget(context_id, SVGA3D_RT_DEPTH, m_gl.depth_sid);
+		if (rc != kIOReturnSuccess) {
+			CleanupGL();
+			return rc;
+		}
 #if 0
-	rc = m_provider->setRenderTarget(context_id, SVGA3D_RT_DEPTH, m_gl.depth_sid);
-	if (rc != kIOReturnSuccess) {
-		CleanupGL();
-		return rc;
-	}
+		m_provider->setRenderTarget(context_id, SVGA3D_RT_STENCIL, m_gl.depth_sid); // is this needed too?
 #endif
+	}
 	m_gl.cid = context_id;
 	memcpy(&m_gl.rt_size, &m_scale.source, sizeof m_scale.source);
 	touchRenderTarget();
@@ -2201,9 +2247,7 @@ IOReturn CLASS::attachGL(uint32_t context_id, int cmb)
 	 *   Without the ViewPort setting, nothing paints
 	 */
 	m_provider->setViewPort(context_id, &m_scale.buffer);
-#if 0
-	m_provider->setZRange(context_id, 0.0F, 1.0F);
-#endif
+	m_provider->setZRange(context_id, 0.0F, 1.0F);	// is this a good range for Z?
 	return kIOReturnSuccess;
 }
 
@@ -2222,6 +2266,7 @@ IOReturn CLASS::resizeGL()
 	if (isIdValid(m_gl.cid)) {
 		m_provider->setRenderTarget(m_gl.cid, SVGA3D_RT_COLOR0, SVGA_ID_INVALID);
 		m_provider->setRenderTarget(m_gl.cid, SVGA3D_RT_DEPTH, SVGA_ID_INVALID);
+		m_provider->setRenderTarget(m_gl.cid, SVGA3D_RT_STENCIL, SVGA_ID_INVALID);
 	}
 	m_provider->destroySurface(m_gl.color_sid);
 	rc = m_provider->createSurface(m_gl.color_sid,
@@ -2236,21 +2281,21 @@ IOReturn CLASS::resizeGL()
 		CleanupGL();
 		return rc;
 	}
-#if 0
-	m_provider->destroySurface(m_gl.depth_sid);
-	rc = m_provider->createSurface(m_gl.depth_sid,
-								   SVGA3D_SURFACE_HINT_DEPTHSTENCIL,
-								   SVGA3D_Z_D16,
-								   m_scale.source.w,
-								   m_scale.source.h);
-	if (rc != kIOReturnSuccess) {
-		m_provider->FreeSurfaceID(m_gl.depth_sid);
-		m_gl.depth_sid = SVGA_ID_INVALID;
-		m_gl.cid = SVGA_ID_INVALID;
-		CleanupGL();
-		return rc;
+	if (isIdValid(m_gl.depth_sid)) {
+		m_provider->destroySurface(m_gl.depth_sid);
+		rc = m_provider->createSurface(m_gl.depth_sid,
+									   SVGA3D_SURFACE_HINT_DEPTHSTENCIL,
+									   SVGA3dSurfaceFormat(m_gl.ds_format),
+									   m_scale.source.w,
+									   m_scale.source.h);
+		if (rc != kIOReturnSuccess) {
+			m_provider->FreeSurfaceID(m_gl.depth_sid);
+			m_gl.depth_sid = SVGA_ID_INVALID;
+			m_gl.cid = SVGA_ID_INVALID;
+			CleanupGL();
+			return rc;
+		}
 	}
-#endif
 	if (!isIdValid(m_gl.cid)) {
 		touchRenderTarget();
 		return kIOReturnSuccess;
@@ -2261,14 +2306,16 @@ IOReturn CLASS::resizeGL()
 		CleanupGL();
 		return rc;
 	}
+	if (isIdValid(m_gl.depth_sid)) {
+		rc = m_provider->setRenderTarget(m_gl.cid, SVGA3D_RT_DEPTH, m_gl.depth_sid);
+		if (rc != kIOReturnSuccess) {
+			CleanupGL();
+			return rc;
+		}
 #if 0
-	rc = m_provider->setRenderTarget(m_gl.cid, SVGA3D_RT_DEPTH, m_gl.depth_sid);
-	if (rc != kIOReturnSuccess) {
-		m_gl.cid = SVGA_ID_INVALID;
-		CleanupGL();
-		return rc;
-	}
+		m_provider->setRenderTarget(m_gl.cid, SVGA3D_RT_STENCIL, m_gl.depth_sid); // is this needed too?
 #endif
+	}
 	memcpy(&m_gl.rt_size, &m_scale.source, sizeof m_scale.source);
 	touchRenderTarget();
 	SFLog(3, "%s: GL resized to %d, %d\n", __FUNCTION__, m_scale.source.w, m_scale.source.h);
@@ -2277,9 +2324,7 @@ set_view:
 	if (!isIdValid(m_gl.cid))
 		return kIOReturnSuccess;
 	m_provider->setViewPort(m_gl.cid, &m_scale.buffer);
-#if 0
 	m_provider->setZRange(m_gl.cid, 0.0F, 1.0F);
-#endif
 	return kIOReturnSuccess;
 }
 
@@ -2293,6 +2338,7 @@ IOReturn CLASS::detachGL()
 		return kIOReturnNotReady;
 	m_provider->setRenderTarget(m_gl.cid, SVGA3D_RT_COLOR0, SVGA_ID_INVALID);
 	m_provider->setRenderTarget(m_gl.cid, SVGA3D_RT_DEPTH, SVGA_ID_INVALID);
+	m_provider->setRenderTarget(m_gl.cid, SVGA3D_RT_STENCIL, SVGA_ID_INVALID);
 	m_gl.cid = SVGA_ID_INVALID;
 	return kIOReturnSuccess;
 }

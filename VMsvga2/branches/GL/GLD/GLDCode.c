@@ -3,7 +3,7 @@
  *  VMsvga2GLDriver
  *
  *  Created by Zenith432 on December 5th 2010.
- *  Copyright 2010 Zenith432. All rights reserved.
+ *  Copyright 2010-2011 Zenith432. All rights reserved.
  *
  *  Permission is hereby granted, free of charge, to any person
  *  obtaining a copy of this software and associated documentation
@@ -416,9 +416,9 @@ int glrGetKernelTextureAGPRef(gld_shared_t* shared,
 	texture->tds.pixels[0] = (uintptr_t) pixels1;
 	texture->tds.pixels[1] = (uintptr_t) pixels2;
 	texture->tds.size[0] = texture_size;
-	texture->tds.version = *MKOFS(uint8_t, 0x78, 0x80, client_texture);
-	texture->tds.flags[0] = *MKOFS(uint8_t, 0x76, 0x7E, client_texture);
-	texture->tds.flags[1] = *MKOFS(uint8_t, 0x75, 0x7D, client_texture);
+	texture->tds.num_faces = *MKOFS(uint8_t, 0x78, 0x80, client_texture);
+	texture->tds.num_mipmaps = *MKOFS(uint8_t, 0x76, 0x7E, client_texture);
+	texture->tds.min_mipmap = *MKOFS(uint8_t, 0x75, 0x7D, client_texture);
 	// texture->flags[3] = glrPixelBytes(word rbx+0x14, word rbx+0x16);
 	texture->tds.bytespp = 2;	// also to esi
 	texture->tds.width = 0;	// taken from client_texture
@@ -434,7 +434,7 @@ int glrGetKernelTextureAGPRef(gld_shared_t* shared,
 							 0, 0,
 							 &outputStruct, &outputStructCnt);
 	if (kr == ERR_SUCCESS) {
-		texture->obj = (gld_sys_object_t*) (uintptr_t) outputStruct.addr;	// Truncation32
+		texture->obj = (gld_sys_object_t*) (uintptr_t) outputStruct.sys_obj_addr;	// Truncation32
 		__sync_fetch_and_add(&texture->obj->refcount, 0x10000);
 		texture->obj->in_use = 1;
 		rc = 1;
@@ -451,6 +451,82 @@ int glrGetKernelTextureAGPRef(gld_shared_t* shared,
 	}
 	return rc;
 }
+
+#if 0
+int glrGetKernelTextureOrphanStandard(gld_shared_t* shared,
+									  gld_texture_t* texture,
+									  uint32_t size0,
+									  uint32_t size1,
+									  uint32_t arg4,
+									  uint32_t bytespp,
+									  uint32_t pitch)
+{
+	// var_60 = shared
+	// r12 = texture
+	// var_64 = size0
+	// var_68 = size1
+	// var_6C = arg4
+	// var_70 = bytespp
+	uint8_t const* client_texture = (uint8_t const*) texture->client_texture; // rbx
+	kern_return_t kr;
+	uint64_t input;
+	size_t outputStructCnt;
+	struct sIONewTextureReturnData outputStruct;
+	uint8_t edi = *MKOFS(uint8_t, 0x75, 0x7D, client_texture);
+	uint8_t r8b = *MKOFS(uint8_t, 0x78, 0x80, client_texture);
+	uint32_t width; // var_54
+	uint32_t edx;
+	for (edx = 0U; edx < r8b; ++edx)
+		if (MKOFS(uint16_t, 0x7A, 0x82, client_texture)[edx] & (1U << edi))
+				break;
+//	edx *= 15U;
+	rax = 32U * (edi + 15U * edx);
+	rcx = client_texture + 0xC8 + rax;
+	width = word ptr [rcx+8] - 2U * byte ptr [rcx + 0xE];
+	// continues calculations 14986-149AD
+	// r13 = texture->obj;
+	if (texture->obj) {
+		if (texture->obj->type != 8U) {
+			texture->f14 |= 1U;
+			if (__sync_fetch_and_add(&texture->obj->refcount, -0x10000) == 0x10000) {
+				// TBD 14C52
+			}
+			texture->obj = 0;
+			texture->tds.type = 8U;
+			texture->tds.size[0] = size0;
+			texture->tds.size[1] = size1;
+			texture->tds.version = *MKOFS(uint8_t, 0x78, 0x80, client_texture);
+			texture->tds.flags[0] = *MKOFS(uint8_t, 0x76, 0x7E, client_texture);
+			texture->tds.flags[1] = *MKOFS(uint8_t, 0x75, 0x7D, client_texture);
+			texture->tds.bytespp = bytespp;
+			texture->tds.width = width;
+			texture->tds.height = r15w;
+			texture->tds.depth = r14w;
+			texture->tds.f0 = arg4;
+			texture->tds.pitch = pitch;
+			texture->tds.read_only = 0U;
+			outputStructCnt = sizeof outputStruct;
+			kr = IOConnectCallMethod(shared->obj,
+									 kIOVMDeviceNewTexture,
+									 0, 0,
+									 &texture->tds, sizeof texture->tds,
+									 0, 0,
+									 &outputStruct, &outputStructCnt);
+			if (kr != ERR_SUCCESS)
+				return 0;
+			texture->obj = outputStruct.addr;
+			__sync_fetch_and_add(&texture->obj->refcount, 0x10000);
+			texture->raw_data = outputStruct.data;
+			texture->obj->in_use = 1U;
+			return 1;
+		} else {
+			// 14AF0
+		}
+	} else {
+		// 14C40
+	}
+}
+#endif
 
 void glrWriteAllHardwareState(gld_context_t* context)
 {

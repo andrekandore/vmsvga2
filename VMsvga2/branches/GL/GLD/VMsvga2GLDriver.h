@@ -3,7 +3,7 @@
  *  VMsvga2GLDriver
  *
  *  Created by Zenith432 on December 6th 2009.
- *  Copyright 2009-2010 Zenith432. All rights reserved.
+ *  Copyright 2009-2011 Zenith432. All rights reserved.
  *
  *  Permission is hereby granted, free of charge, to any person
  *  obtaining a copy of this software and associated documentation
@@ -43,7 +43,7 @@ void gldInitializeLibrary(io_service_t const* pServices,
 void gldTerminateLibrary(void);
 
 _Bool gldGetVersion(int*, int*, int*, int*);
-GLDReturn gldGetRendererInfo(void* struct_out, uint32_t GLDisplayMask);
+GLDReturn gldGetRendererInfo(RendererInfo* struct_out, uint32_t GLDisplayMask);
 GLDReturn gldChoosePixelFormat(PixelFormat** struct_out, int const* attributes);
 GLDReturn gldDestroyPixelFormat(PixelFormat* pixel_format);
 GLDReturn gldCreateShared(gld_shared_t** struct_out, uint32_t GLDisplayMask, long arg2);

@@ -259,10 +259,10 @@ public:
 							SVGA3dRenderState const* states);
 	IOReturn setViewPort(uint32_t cid,
 						 void /* IOAccelBounds */ const* rect);
-	IOReturn SetScissorRect(uint32_t cid,
+	IOReturn setScissorRect(uint32_t cid,
 							void /* IOAccelBounds */ const* rect);
 	IOReturn setZRange(uint32_t cid, float zMin, float zMax);
-	IOReturn SetClipPlane(uint32_t cid, uint32_t index, float const* plane);	// plane points to 4 floats (eq. Ax+By+Cz+D = 0)
+	IOReturn setClipPlane(uint32_t cid, uint32_t index, float const* plane);	// plane points to 4 floats (eq. Ax+By+Cz+D = 0)
 	IOReturn setTransform(uint32_t cid, SVGA3dTransformType type, float const* matrix);
 	IOReturn surfaceDMA3DEx(uint32_t sid,
 							SVGA3dTransferType transfer,
@@ -329,6 +329,7 @@ public:
 	IOMemoryDescriptor* getChannelMemory() const { return m_channel_memory; }
 	uint32_t getVRAMSize() const;
 	vm_offset_t offsetInVRAM(void* vram_ptr);
+	class VMsvga2Surface* findSurfaceForID(uint32_t surface_id);
 
 	/*
 	 * Video Support

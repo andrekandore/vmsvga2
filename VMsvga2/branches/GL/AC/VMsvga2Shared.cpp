@@ -3,7 +3,7 @@
  *  VMsvga2Accel
  *
  *  Created by Zenith432 on December 15th 2010.
- *  Copyright 2010 Zenith432. All rights reserved.
+ *  Copyright 2010-2011 Zenith432. All rights reserved.
  *
  *  Permission is hereby granted, free of charge, to any person
  *  obtaining a copy of this software and associated documentation
@@ -29,6 +29,7 @@
 #include <IOKit/IOBufferMemoryDescriptor.h>
 #include "VMsvga2Accel.h"
 #include "VMsvga2Shared.h"
+#include "VMsvga2Surface.h"
 #include "UCTypes.h"
 #include "VLog.h"
 
@@ -65,6 +66,12 @@ kern_return_t mach_vm_region(vm_map_t               map,
 #pragma mark -
 #pragma mark Private Methods
 #pragma mark -
+
+static inline
+bool isIdValid(uint32_t id)
+{
+	return static_cast<int>(id) >= 0;
+}
 
 HIDDEN
 IOReturn CLASS::alloc_client_shared(struct GLDSysObject** sys_obj, mach_vm_address_t* client_addr)
@@ -217,15 +224,23 @@ void CLASS::delete_texture_internal(class VMsvga2Accel* provider,
 									VMsvga2Shared* shared,
 									VMsvga2TextureBuffer* texture)
 {
+	VMsvga2TextureBuffer* ltx;
 	if (!texture)
 		return;
-	if (texture->sys_obj_type != 4U &&
-		texture->linked_agp) {
-		delete_texture_internal(provider, shared, texture->linked_agp);
-		texture->linked_agp = 0;
-	}
 	if (!shared)
 		shared = texture->creator;
+	switch (texture->sys_obj_type) {
+		case TEX_TYPE_AGPREF:
+		case TEX_TYPE_OOB:
+			ltx = texture->linked_agp;
+			if (ltx) {
+				if (!ltx->sys_obj ||
+					__sync_fetch_and_add(&ltx->sys_obj->refcount, -1) == 1)
+					delete_texture_internal(provider, shared, texture->linked_agp);
+				texture->linked_agp = 0;
+			}
+			break;
+	}
 	if (shared) {
 		shared->free_buf_handle(texture, texture->sys_obj->object_id);
 		shared->free_client_shared(texture->sys_obj);
@@ -254,7 +269,9 @@ void CLASS::finalize_texture(class VMsvga2Accel* provider, VMsvga2TextureBuffer*
 		texture->md->release();
 		texture->md = 0;
 	}
-	if (static_cast<int>(texture->surface_id) >= 0) {
+	if (!provider)
+		return;
+	if (isIdValid(texture->surface_id)) {
 		provider->destroySurface(texture->surface_id);
 		provider->FreeSurfaceID(texture->surface_id);
 		texture->surface_id = SVGA_ID_INVALID;
@@ -288,7 +305,7 @@ VMsvga2TextureBuffer* CLASS::new_agp_texture(mach_vm_address_t pixels,
 											 uint32_t read_only,
 											 mach_vm_address_t* sys_obj_client_addr)
 {
-	mach_vm_address_t down_pixels; // var_6c
+	mach_vm_address_t down_pixels; // var_70
 	mach_vm_offset_t offset_in_page; // var_80
 	vm_size_t up_size; // var_74
 	VMsvga2TextureBuffer *p1, *p2;
@@ -297,18 +314,17 @@ VMsvga2TextureBuffer* CLASS::new_agp_texture(mach_vm_address_t pixels,
 	int ro;
 	// [esi,ebx] = pixels
 	// edi = page_size
-	// var_90 = page_size - 1
-	// var_8c = 0
+	// var_90 = page_size - 1 (64 bit)
 	SHLog(2, "%s(%#llx, %lu, %u, out)\n", __FUNCTION__, pixels, texture_size, read_only);
-	down_pixels = pixels & -PAGE_SIZE;
 	offset_in_page = pixels & (PAGE_SIZE - 1U);
 	up_size = static_cast<vm_size_t>((offset_in_page + texture_size + (PAGE_SIZE - 1U)) & -PAGE_SIZE);
-	// var_84 = m_provider
 #if 0
+	// var_84 = m_provider
 	vm_size_t limit = 3U * (m_provider->0x93C << PAGE_SHIFT) >> 2;
 	if (up_size > limit)
 		return 0;
 #endif
+	down_pixels = pixels & -PAGE_SIZE;
 	if (!down_pixels) {
 		IOBufferMemoryDescriptor* bmd =
 		IOBufferMemoryDescriptor::inTaskWithOptions(m_owning_task,
@@ -332,7 +348,7 @@ VMsvga2TextureBuffer* CLASS::new_agp_texture(mach_vm_address_t pixels,
 		goto common;
 	}
 	for (p1 = m_texture_list; p1; p1 = p1->next) {	// p1 in ebx
-		if (p1->sys_obj_type != 4U ||
+		if (p1->sys_obj_type != TEX_TYPE_AGP ||
 			p1->agp_flag ||
 			p1->agp_offset_in_page != offset_in_page ||
 			p1->agp_addr != down_pixels ||
@@ -367,7 +383,7 @@ VMsvga2TextureBuffer* CLASS::new_agp_texture(mach_vm_address_t pixels,
 		return 0;
 	}
 common:
-	p2 = common_texture_init(4U);
+	p2 = common_texture_init(TEX_TYPE_AGP);
 	if (!p2) {
 		SHLog(1, "%s: common_texture_init failed\n", __FUNCTION__);
 		md->release();
@@ -469,7 +485,6 @@ VMsvga2TextureBuffer* CLASS::common_texture_init(uint8_t object_type)
 	sys_obj->in_use = 1U;
 	p->sys_obj_type = object_type;
 	p->surface_id = static_cast<uint32_t>(-1);
-	p->gmr_id = static_cast<uint32_t>(-1);
 	p->surface_format = SVGA3D_FORMAT_INVALID;
 	return p;
 }
@@ -525,12 +540,41 @@ void CLASS::free()
 }
 
 HIDDEN
-VMsvga2TextureBuffer* CLASS::new_surface_texture(uint32_t, uint32_t, mach_vm_address_t*)
+VMsvga2TextureBuffer* CLASS::new_surface_texture(uint32_t surface_id,
+												 uint32_t arg1,
+												 mach_vm_address_t* sys_obj_client_addr)
 {
-	/*
-	 * TBD
-	 */
-	return 0;
+	class VMsvga2Surface* surface;
+	VMsvga2TextureBuffer* p;
+	if (!m_provider)
+		return 0;
+	surface = m_provider->findSurfaceForID(surface_id);
+	if (!surface) {
+		SHLog(1, "%s: surface id %u not found\n", __FUNCTION__, surface_id);
+		return 0;
+	}
+	p = common_texture_init(TEX_TYPE_SURFACE);
+	if (!p) {
+		SHLog(1, "%s: common_texture_init failed\n", __FUNCTION__);
+		return 0;
+	}
+	p->creator = this;
+	p->linked_surface = surface;
+	p->agp_flag = arg1;
+	p->agp_addr = surface_id;
+	link_texture_at_head(p);
+	*sys_obj_client_addr = p->sys_obj_client_addr;
+#if 0
+	p->0x84 = surface->0xE64;
+	surface->0xE64 = p;
+	surface->reset_req_bits();
+	surface->prune_buffers();
+	surface->shape_surface(surface->0x10F0);
+	++m_provider->0x7BC;
+#else
+	p->surface_format = surface->getSurfaceFormat();
+#endif
+	return p;
 }
 
 HIDDEN
@@ -539,6 +583,7 @@ VMsvga2TextureBuffer* CLASS::new_iosurface_texture(uint32_t, uint32_t, uint32_t,
 	/*
 	 * TBD
 	 */
+	SHLog(1, "%s: IOSURFACE texture Unsupported\n", __FUNCTION__);
 	return 0;
 }
 
@@ -564,15 +609,15 @@ VMsvga2TextureBuffer* CLASS::new_texture(uint32_t size0,
 			SHLog(1, "%s: new_agp_texture failed\n", __FUNCTION__);
 			return 0;
 		}
-		obj_type = 9U;
+		obj_type = TEX_TYPE_OOB;
 		overhead = 0x900U;
 	} else {
 		p1 = 0;
 		if (size1) {
-			obj_type = 8U;
+			obj_type = TEX_TYPE_STD;
 			overhead = 0x900U;
 		} else {
-			obj_type = 3U;
+			obj_type = TEX_TYPE_VB;
 			overhead = 0x80U;
 		}
 	}
@@ -607,8 +652,8 @@ VMsvga2TextureBuffer* CLASS::new_texture(uint32_t size0,
 		SHLog(1, "%s: createMappingInTask failed\n", __FUNCTION__);
 		goto clean3;
 	}
-	p2->pad2[0] = size1;
-	if (obj_type == 9U) {
+	p2->vram_bytes = size1;
+	if (obj_type == TEX_TYPE_OOB) {
 		p2->linked_agp = p1;
 		__sync_fetch_and_add(&p1->sys_obj->refcount, 1);
 	}
@@ -649,7 +694,7 @@ VMsvga2TextureBuffer* CLASS::new_agpref_texture(mach_vm_address_t pixels1,
 		SHLog(1, "%s: new_agp_texture failed\n", __FUNCTION__);
 		return 0;
 	}
-	p2 = common_texture_init(6U);
+	p2 = common_texture_init(TEX_TYPE_AGPREF);
 	if (!p2) {
 		SHLog(1, "%s: common_texture_init failed\n", __FUNCTION__);
 		if (!p1->sys_obj->refcount)
@@ -672,10 +717,14 @@ VMsvga2TextureBuffer* CLASS::new_agpref_texture(mach_vm_address_t pixels1,
 }
 
 HIDDEN
-bool CLASS::initializeTexture(VMsvga2TextureBuffer*, VendorNewTextureDataStruc const*)
+bool CLASS::initializeTexture(VMsvga2TextureBuffer* tx, VendorNewTextureDataStruc const* tds)
 {
+	tx->vram_tile_pages = tds->pixels[2];
+	tx->vram_page_bytes = PAGE_SIZE;
+	if (tx->sys_obj_type != TEX_TYPE_IOSURFACE)
+		return 1;
 	/*
-	 * TBD
+	 * TBD: Rest of initialization for io_surface_texture
 	 */
 	return 1;
 }
