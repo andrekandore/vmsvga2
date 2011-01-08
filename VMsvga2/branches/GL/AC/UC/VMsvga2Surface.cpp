@@ -32,9 +32,9 @@
 
 #include "vmw_options_ac.h"
 #include "VLog.h"
+#include "UCGLDCommonTypes.h"
 #include "VMsvga2Accel.h"
 #include "VMsvga2Surface.h"
-#include "UCTypes.h"
 
 #include "svga_apple_header.h"
 #include "svga_overlay.h"
@@ -1397,8 +1397,10 @@ IOReturn CLASS::set_shape_backing(eIOAccelSurfaceShapeBits options,
 HIDDEN
 IOReturn CLASS::set_id_mode(uintptr_t wID, eIOAccelSurfaceModeBits modebits)
 {
+#ifdef GL_DEV
 	if (wID != 1U)
-		m_log_level = imax(m_provider->getLogLevelGLD(), m_log_level); // temporarily elevate to GLD level
+		m_log_level = imax(m_provider->getLogLevelGLD(), m_log_level); // elevate to GLD level
+#endif
 
 	SFLog(2, "%s(%#lx, %#x)\n", __FUNCTION__, wID, modebits);
 
@@ -2186,6 +2188,7 @@ IOReturn CLASS::attachGL(uint32_t context_id, int cmb)
 {
 	IOReturn rc;
 
+	SFLog(3, "%s(%u, %d)\n", __FUNCTION__, context_id, cmb);
 	if (bGLMode)
 		return kIOReturnBusy;
 	if (!m_provider || !isSourceValid())
@@ -2218,11 +2221,6 @@ IOReturn CLASS::attachGL(uint32_t context_id, int cmb)
 			return rc;
 		}
 	}
-#if 0
-	SFLog(3, "%s: Attaching render target, cid == %u, color_sid == %u, depth_sid == %u, "
-		  "width == %u, height == %u\n", __FUNCTION__,
-		  context_id, m_gl.color_sid, m_gl.depth_sid, m_scale.source.w, m_scale.source.h);
-#endif
 	rc = m_provider->setRenderTarget(context_id, SVGA3D_RT_COLOR0, m_gl.color_sid);
 	if (rc != kIOReturnSuccess) {
 		CleanupGL();
@@ -2256,6 +2254,7 @@ IOReturn CLASS::resizeGL()
 {
 	IOReturn rc;
 
+	SFLog(3, "%s()\n", __FUNCTION__);
 	if (!bGLMode)
 		return kIOReturnSuccess;
 	if (!m_provider || !isSourceValid())
@@ -2318,7 +2317,6 @@ IOReturn CLASS::resizeGL()
 	}
 	memcpy(&m_gl.rt_size, &m_scale.source, sizeof m_scale.source);
 	touchRenderTarget();
-	SFLog(3, "%s: GL resized to %d, %d\n", __FUNCTION__, m_scale.source.w, m_scale.source.h);
 
 set_view:
 	if (!isIdValid(m_gl.cid))

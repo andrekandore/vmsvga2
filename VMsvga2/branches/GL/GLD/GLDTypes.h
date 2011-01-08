@@ -26,7 +26,7 @@
  *  SOFTWARE.
  */
 
-#include "UCTypes.h"
+#include "UCGLDCommonTypes.h"
 
 #ifndef __GLDTYPES_H__
 #define __GLDTYPES_H__

@@ -39,7 +39,7 @@
 #include "EntryPointNames.h"
 #include "GLDData.h"
 #include "GLDCode.h"
-#include "ACMethods.h"
+#include "UCMethods.h"
 #include "VLog.h"
 
 #if LOGGING_LEVEL >= 1
@@ -74,7 +74,7 @@
  *
  * Later
  *   Need autonomic:
- *     gldReclaimContext, gldInitDispatch, gldUpdateDispatch, gldGetInteger
+ *     gldReclaimContext, gldUpdateDispatch, gldGetInteger
  *     gldTestObject, gldFinishObject, gldGenerateTexMipmaps, gldLoadTexture
  *     gldGetTextureLevelInfo, gldGetTextureLevelImage, gldPageoffBuffer
  *     gldGetMemoryPlugin, gldSetMemoryPlugin, gldTestMemoryPlugin, gldFlushMemoryPlugin, gldDestroyMemoryPlugin
@@ -896,9 +896,11 @@ GLDReturn gldCreateContext(gld_context_t** struct_out,
 	GLDReturn rc;
 
 	GLDLog(2, "%s(struct_out, %p, %p, %p, %p, %p)\n", __FUNCTION__, pixel_format, shared, arg3, arg4, arg5);
+#ifdef GL_DEV
 	if (pixel_format)
 		GLDLog(1, "%s: ColorModes == %#x, DepthModes == %#x, StencilModes == %#x\n", __FUNCTION__,
 			   pixel_format->colorModes, pixel_format->depthModes, pixel_format->stencilModes);
+#endif
 	addr = (typeof(addr)) bndl_ptrs[bndl_index][6];
 	if (addr) {
 		rc = addr(struct_out, pixel_format, shared, arg3, arg4, arg5);
@@ -1382,7 +1384,7 @@ GLDReturn gldModifyTexture(gld_shared_t* shared, gld_texture_t* texture, uint8_t
 		case 9:
 			if (shared->needs_locking)
 				pthread_mutex_lock(&shared->mutex);
-			if (__sync_fetch_and_add(&sys_obj->refcount, 0-0x10000) == 0x10000) {
+			if (__sync_fetch_and_add(&sys_obj->refcount, -0x10000) == 0x10000) {
 				input = (uint64_t) sys_obj->object_id;
 				IOConnectCallMethod(shared->obj,
 									kIOVMDeviceDeleteTexture,

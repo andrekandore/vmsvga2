@@ -29,6 +29,8 @@
 #include <IOKit/pci/IOPCIDevice.h>
 #include <IOKit/graphics/IOGraphicsInterfaceTypes.h>
 #include <IOKit/IOBufferMemoryDescriptor.h>
+#define GL_INCL_PUBLIC
+#include "GLCommon.h"
 #if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ >= 1060
 #include "IOSurfaceRoot.h"
 #endif
@@ -337,10 +339,12 @@ void CLASS::processOptions()
 		vmw_options_ac |= VMW_OPTION_AC_DIRECT_BLIT;
 	if (PE_parse_boot_argn("-vmw_no_screen_object", &boot_arg, sizeof boot_arg))
 		vmw_options_ac |= VMW_OPTION_AC_NO_SCREEN_OBJECT;
+	if (PE_parse_boot_argn("-vmw_no_gl", &boot_arg, sizeof boot_arg))
+		vmw_options_ac &= ~VMW_OPTION_AC_GL_CONTEXT;
 	if (PE_parse_boot_argn("-vmw_qe", &boot_arg, sizeof boot_arg))
-		vmw_options_ac |= VMW_OPTION_AC_QE | VMW_OPTION_AC_GLD;
-	if (PE_parse_boot_argn("-vmw_gld", &boot_arg, sizeof boot_arg))
-		vmw_options_ac |= VMW_OPTION_AC_GLD;
+		vmw_options_ac |= VMW_OPTION_AC_QE;
+	if (checkOptionAC(VMW_OPTION_AC_QE))
+		vmw_options_ac |= VMW_OPTION_AC_GL_CONTEXT;
 	setProperty("VMwareSVGAAccelOptions", static_cast<uint64_t>(vmw_options_ac), 32U);
 	if (PE_parse_boot_argn("vmw_options_ga", &boot_arg, sizeof boot_arg)) {
 		m_options_ga = boot_arg;
@@ -470,15 +474,19 @@ void CLASS::initGLStuff()
 															 kIODirectionOut,
 															 page_size,
 															 page_size);
+#if 0
 	if (m_channel_memory)
 		m_channel_memory->prepare(kIODirectionInOut);
+#endif
 }
 
 HIDDEN
 void CLASS::cleanGLStuff()
 {
 	if (m_channel_memory) {
+#if 0
 		m_channel_memory->complete();
+#endif
 		m_channel_memory->release();
 		m_channel_memory = 0;
 	}
@@ -516,15 +524,6 @@ bool CLASS::start(IOService* provider)
 	IOLog("IOAC: start\n");
 	VMLog_SendString("log IOAC: start\n");
 	processOptions();
-#if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ >= 1060
-	if (checkOptionAC(VMW_OPTION_AC_GLD)) {
-		m_surface_root = static_cast<IOSurfaceRoot*>(IOService::waitForService(IOService::nameMatching("IOSurfaceRoot")));
-		if (m_surface_root) {
-			m_surface_root->retain();
-			m_surface_root_uuid = m_surface_root->generateUniqueAcceleratorID(this);
-		}
-	}
-#endif
 	/*
 	 * TBD: is there a possible race condition here where VMsvga2Accel::start
 	 *   is called before VMsvga2 gets attached to its provider?
@@ -551,20 +550,31 @@ bool CLASS::start(IOService* provider)
 		bHaveScreenObject = true;
 		ACLog(1, "Screen Object On\n");
 	}
-	if ((bHaveScreenObject || checkOptionAC(VMW_OPTION_AC_SVGA3D)) && svga3d.Init(m_svga)) {
+	if ((bHaveScreenObject || checkOptionAC(VMW_OPTION_AC_SVGA3D | VMW_OPTION_AC_GL_CONTEXT)) &&
+		svga3d.Init(m_svga)) {
 		uint32_t hwv = svga3d.getHWVersion();
 		bHaveSVGA3D = true;
 		ACLog(1, "SVGA3D On, 3D HWVersion == %u.%u\n", SVGA3D_MAJOR_HWVERSION(hwv), SVGA3D_MINOR_HWVERSION(hwv));
 	}
 	if (checkOptionAC(VMW_OPTION_AC_NO_YUV))
 		ACLog(1, "YUV Off\n");
-	if (!HaveGLBaseline()) {
+	if (checkOptionAC(VMW_OPTION_AC_GL_CONTEXT) && !HaveGLBaseline()) {
 		/*
 		 * Disable GL User Clients
 		 */
-		vmw_options_ac &= ~(VMW_OPTION_AC_GL_CONTEXT | VMW_OPTION_AC_GLD | VMW_OPTION_AC_QE);
 		ACLog(1, "Disabling OpenGL support due to lack of baseline capabilities\n");
+		vmw_options_ac &= ~(VMW_OPTION_AC_GL_CONTEXT | VMW_OPTION_AC_QE);
+		setProperty("VMwareSVGAAccelOptions", static_cast<uint64_t>(vmw_options_ac), 32U);
 	}
+#if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ >= 1060
+	if (checkOptionAC(VMW_OPTION_AC_GL_CONTEXT)) {
+		m_surface_root = static_cast<IOSurfaceRoot*>(IOService::waitForService(IOService::nameMatching("IOSurfaceRoot")));
+		if (m_surface_root) {
+			m_surface_root->retain();
+			m_surface_root_uuid = m_surface_root->generateUniqueAcceleratorID(this);
+		}
+	}
+#endif
 	plug = getProperty(kIOCFPlugInTypesKey);
 	if (plug)
 		m_framebuffer->setProperty(kIOCFPlugInTypesKey, plug);
@@ -591,8 +601,12 @@ bool CLASS::start(IOService* provider)
 	 *   GeForce7xxxGLDriver
 	 *   GeForce8xxxGLDriver
 	 */
-	if (checkOptionAC(VMW_OPTION_AC_GLD)) {
+	if (checkOptionAC(VMW_OPTION_AC_GL_CONTEXT)) {
+#ifdef GL_DEV
 		setProperty("IOGLBundleName", "VMsvga2GLDriver");
+#else
+		setProperty("IOGLBundleName", "AppleIntelGMA950GLDriver");
+#endif
 		initGLStuff();
 	}
 	/*

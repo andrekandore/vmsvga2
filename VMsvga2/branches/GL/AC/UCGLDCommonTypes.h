@@ -1,5 +1,5 @@
 /*
- *  UCTypes.h
+ *  UCGLDCommonTypes.h
  *  VMsvga2Accel
  *
  *  Created by Zenith432 on December 11th 2010.
@@ -26,12 +26,8 @@
  *  SOFTWARE.
  */
 
-#ifndef __UCTYPES_H__
-#define __UCTYPES_H__
-
-#ifdef __cplusplus
-extern "C" {
-#endif
+#ifndef __UCGLDCOMMONTYPES_H__
+#define __UCGLDCOMMONTYPES_H__
 
 #define TEX_TYPE_SURFACE   1U
 #define TEX_TYPE_IOSURFACE 2U
@@ -40,6 +36,10 @@ extern "C" {
 #define TEX_TYPE_AGPREF    6U
 #define TEX_TYPE_STD       8U
 #define TEX_TYPE_OOB       9U
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 struct VendorNewTextureDataStruc
 {
@@ -161,4 +161,4 @@ struct GLDSysObject {
 }
 #endif
 
-#endif /* __UCTYPES_H__ */
+#endif /* __UCGLDCOMMONTYPES_H__ */

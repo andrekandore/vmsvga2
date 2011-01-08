@@ -3,7 +3,7 @@
  *  VMsvga2Accel
  *
  *  Created by Zenith432 on August 10th 2009.
- *  Copyright 2009-2010 Zenith432. All rights reserved.
+ *  Copyright 2009-2011 Zenith432. All rights reserved.
  *  Portions Copyright (c) Apple Computer, Inc.
  *
  *  Permission is hereby granted, free of charge, to any person
@@ -33,7 +33,7 @@
 #include "VMsvga2Accel.h"
 #include "VMsvga2Surface.h"
 #include "VMsvga22DContext.h"
-#include "ACMethods.h"
+#include "UCMethods.h"
 
 #include "svga_apple_header.h"
 #include "svga_overlay.h"

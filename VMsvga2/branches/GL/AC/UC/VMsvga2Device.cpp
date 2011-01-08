@@ -3,7 +3,7 @@
  *  VMsvga2Accel
  *
  *  Created by Zenith432 on October 11th 2009.
- *  Copyright 2009-2010 Zenith432. All rights reserved.
+ *  Copyright 2009-2011 Zenith432. All rights reserved.
  *  Portions Copyright (c) Apple Computer, Inc.
  *
  *  Permission is hereby granted, free of charge, to any person
@@ -29,13 +29,15 @@
 
 #include <IOKit/IOLib.h>
 #include <IOKit/IOBufferMemoryDescriptor.h>
+#define GL_INCL_SHARED
+#include "GLCommon.h"
 #include "VLog.h"
+#include "UCGLDCommonTypes.h"
+#include "UCMethods.h"
 #include "VMsvga2Accel.h"
 #include "VMsvga2Device.h"
 #include "VMsvga2Shared.h"
 #include "VMsvga2Surface.h"
-#include "ACMethods.h"
-#include "UCTypes.h"
 
 #define CLASS VMsvga2Device
 #define super IOUserClient
@@ -217,13 +219,17 @@ IOReturn CLASS::get_config(uint32_t* c1, uint32_t* c2, uint32_t* c3, uint32_t* c
 	uint32_t const vram_size = m_provider->getVRAMSize();
 
 	*c1 = 0U;	// used by GLD to discern Intel 915/965/Ironlake(HD)
+#ifdef GL_DEV
 #if 0
 	*c2 = static_cast<uint32_t>(m_provider->getLogLevelGLD()) & 7U;		// TBD: is this safe?
 #else
 	*c2 = 1U;	// set GLD logging to error level
 #endif
-	*c3 = vram_size;	// total VRAM size
-	*c4 = vram_size;	// total memory available for textures (no accounting by VMsvga2)
+#else
+	*c2 = 0U;
+#endif
+	*c3 = vram_size;	// total memory available for textures (no accounting by VMsvga2)
+	*c4 = vram_size;	// total VRAM size
 #if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ >= 1060
 	*c5 = m_provider->getSurfaceRootUUID();
 #else
@@ -440,9 +446,9 @@ IOReturn CLASS::new_texture(struct VendorNewTextureDataStruc const* struct_in,
 	m_shared->unlockShared();
 #if LOGGING_LEVEL >= 1
 	if (m_log_level >= 3) {
-		DVLog(2, "%s:   struct_out.pad == %#x\n", __FUNCTION__, struct_out->pad);
-		DVLog(2, "%s:   struct_out.tx_data == %#llx\n", __FUNCTION__, struct_out->tx_data);
-		DVLog(2, "%s:   struct_out.sys_obj_addr == %#llx\n", __FUNCTION__, struct_out->sys_obj_addr);
+		DVLog(3, "%s:   struct_out.pad == %#x\n", __FUNCTION__, struct_out->pad);
+		DVLog(3, "%s:   struct_out.tx_data == %#llx\n", __FUNCTION__, struct_out->tx_data);
+		DVLog(3, "%s:   struct_out.sys_obj_addr == %#llx\n", __FUNCTION__, struct_out->sys_obj_addr);
 	}
 #endif
 	return kIOReturnSuccess;
@@ -501,7 +507,7 @@ IOReturn CLASS::get_channel_memory(struct sIODeviceChannelMemoryData* struct_out
 		return kIOReturnNoResources;
 	*struct_out_size = sizeof *struct_out;
 	struct_out->addr = m_channel_memory_map->getAddress();
-	DVLog(2, "%s:   mapped to client @%#llx\n", __FUNCTION__, struct_out->addr);
+	DVLog(3, "%s:   mapped to client @%#llx\n", __FUNCTION__, struct_out->addr);
 	return kIOReturnSuccess;
 }
 

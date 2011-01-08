@@ -30,75 +30,9 @@
 #define __VMSVGA2SHARED_H__
 
 #include <IOKit/IOLib.h>
-#include <IOKit/IOMemoryDescriptor.h>
 
 struct GLDSysObject;
-
-#if 0
-struct VendorTransferBuffer {
-	uint32_t unknown1;		//   0
-	uint32_t gart_ptr;		//   4
-	IOMemoryDescriptor* md;	//   8
-	uint16_t unknown2[2];	// 0xC
-							// 0x10 end
-};
-
-struct GLKMemoryElement {
-	uint32_t gart_ptr;		//    0
-	uint32_t pitch;			//    4
-	uint32_t f0;			//    8
-	uint16_t f1[4];			// 0x0C
-							// 0x14 end
-};
-#endif
-
-struct VMsvga2TextureBuffer
-{
-									// Note - VendorTransferBuffer at offset 0 [16 bytes]
-	uint32_t gart_ptr;				// offset 0x4
-	IOMemoryDescriptor* md;			// offset 0x8
-#if 0
-	uint16_t offset12;				// offset 0xC - initialized to 4
-#endif
-	uint16_t counter14;				// offset 0xE
-									// offset 0x10 - 0x28 all dwords
-									// offset 0x20 initialized to 0xE34
-	IOMemoryMap* client_map;		// offset 0x28
-	GLDSysObject* sys_obj;			// offset 0x2C
-	mach_vm_address_t sys_obj_client_addr;	// offset 0x30
-	class VMsvga2Shared* creator;	// offset 0x38
-	uint8_t sys_obj_type;			// offset 0x3C, copy of sys_obj->type, init to 12
-	uint8_t num_faces;				// offset 0x3D, init to 1
-	uint8_t num_mipmaps;			// offset 0x3E, init to 1
-	uint8_t min_mipmap;				// offset 0x3F, init to 0
-	uint32_t width;					// offset 0x40
-	uint16_t height;				// offset 0x44
-	uint16_t depth;					// offset 0x46
-	uint32_t f0;					// offset 0x48
-	uint32_t pitch;					// offset 0x4C
-	uint32_t vram_bytes;			// offset 0x50
-	uint32_t f1;					// offset 0x54
-	uint16_t bytespp;				// offset 0x58
-									// offset 0x5C, 0x60 next prev pointers of circular linked list
-	VMsvga2TextureBuffer* next;		// offset 0x64
-	VMsvga2TextureBuffer* prev;		// offset 0x68
-									// Note - GLKMemoryElement at offset 0x6C (20 bytes)
-	union {							// offset 0x80 Note: 0x80 - 0x98 are a sub-structure (probably a union)
-		VMsvga2TextureBuffer* linked_agp;
-		mach_vm_address_t agp_offset_in_page;
-		class VMsvga2Surface* linked_surface;
-	};
-	uint32_t agp_flag;				// offset 0x88
-	mach_vm_offset_t agp_addr;		// offset 0x8C
-	vm_size_t agp_size;				// offset 0x94
-	uint64_t vram_tile_pages;		// offset 0x98
-	uint32_t vram_page_bytes;		// offset 0xA0
-									// offset 0xA4 - 0xAC are dwords
-									// ends   0xAC
-	uint32_t surface_id;
-	int surface_format;
-	int surface_changed;
-};
+struct VMsvga2TextureBuffer;
 
 class VMsvga2Shared : public OSObject
 {
@@ -116,7 +50,7 @@ private:
 										// offset 0x20, [linked list of structs describing sys object pools]
 	VMsvga2TextureBuffer* m_texture_list;	// offset 0x24, linked listed of textures
 										// ends   0x28
-	IOMemoryMap* m_client_sys_objs_map;
+	class IOMemoryMap* m_client_sys_objs_map;
 	void* m_client_sys_objs_kernel_ptr;
 	IOLock* m_shared_lock;
 	int m_log_level;

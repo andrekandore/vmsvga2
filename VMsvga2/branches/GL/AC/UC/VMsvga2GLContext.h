@@ -37,22 +37,6 @@ struct VendorGLStreamInfo;
 struct VMsvga2TextureBuffer;
 class IOMemoryDescriptor;
 
-struct VMsvga2CommandBuffer
-{
-	// Note: VendorTransferBuffer at offset 0 [16 bytes]
-	uint32_t pad1;
-	uint32_t gart_ptr;
-	IOMemoryDescriptor* md;
-	uint16_t pad2[2];
-	uint32_t gmr_id;
-	uint32_t fence;
-	uint32_t is_gmr_created;
-	uint32_t pad3[3];
-	uint32_t submit_counter;
-	VendorCommandBufferHeader* kernel_ptr;
-	size_t size;
-};
-
 class VMsvga2GLContext: public IOUserClient
 {
 	OSDeclareDefaultStructors(VMsvga2GLContext);
@@ -77,8 +61,11 @@ private:
 	int m_stream_error;						// offset 0x194
 											// offset 0x198: unknown
 	uint32_t m_mem_type;					// offset 0x19C
-	VMsvga2TextureBuffer* m_txs[16U];		// offset 0x1B0
-	VMsvga2TextureBuffer* m_tx_vb;			// offset 0x1F0
+	VMsvga2TextureBuffer* m_txs[21U];		// offset 0x1B0
+											// textures 0 - 15 used for texture stages
+											// texture 16 used for vertex buffer
+											// textures 17 - 18 used for DrawFBO (color & depth)
+											// textures 19 - 20 used for ReadFBO (color & depth)
 
 	/*
 	 * VMsvga2 Specific
@@ -126,6 +113,7 @@ private:
 	IOReturn get_status(uint32_t*);
 	uint32_t processCommandBuffer(struct VendorCommandDescriptor*);
 	void discardCommandBuffer();
+	IOReturn prepare_command_buffer_io();
 	void sync_command_buffer_io();
 	void complete_command_buffer_io();
 	void removeTextureFromStream(VMsvga2TextureBuffer*);
@@ -158,8 +146,6 @@ private:
 	/*
 	 * Intel Pipeline processor
 	 */
-	static int decipher_format(uint8_t mapsurf, uint8_t mt);
-	static int translate_clear_mask(uint32_t mask);
 	uint8_t calc_color_write_enable(void);
 	bool cache_misc_reg(uint8_t regnum, uint32_t value);
 	void ipp_discard_renderstate(void);

@@ -3,7 +3,7 @@
  *  VMsvga2Accel
  *
  *  Created by Zenith432 on August 18th 2009.
- *  Copyright 2009-2010 Zenith432. All rights reserved.
+ *  Copyright 2009-2011 Zenith432. All rights reserved.
  *
  *  Permission is hereby granted, free of charge, to any person
  *  obtaining a copy of this software and associated documentation
@@ -37,17 +37,10 @@
 #define VMW_OPTION_AC_SVGA3D				0x0010
 #define VMW_OPTION_AC_NO_YUV				0x0020
 #define VMW_OPTION_AC_DIRECT_BLIT			0x0040
-#define VMW_OPTION_AC_PACKED_BACKING		0x0080
-#define VMW_OPTION_AC_TEST_SMALL			0x0100
-#define VMW_OPTION_AC_TEST_PRESENT			0x0200
-#define VMW_OPTION_AC_TEST_READBACK			0x0400
-#define VMW_OPTION_AC_TEST_DMA				0x0800
-#define VMW_OPTION_AC_TEST_MASK				0x0F00
-
-#define VMW_OPTION_AC_REGION_BOUNDS_COPY	0x1000
-#define VMW_OPTION_AC_NO_SCREEN_OBJECT		0x2000
-#define VMW_OPTION_AC_QE					0x4000
-#define VMW_OPTION_AC_GLD					0x8000
+#define VMW_OPTION_AC_NO_SCREEN_OBJECT		0x0080
+#define VMW_OPTION_AC_QE					0x0100
+#define VMW_OPTION_AC_PACKED_BACKING		0x0200
+#define VMW_OPTION_AC_REGION_BOUNDS_COPY	0x0400
 
 #ifdef __cplusplus
 extern "C" {

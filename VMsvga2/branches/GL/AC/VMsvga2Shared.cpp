@@ -27,10 +27,12 @@
  */
 
 #include <IOKit/IOBufferMemoryDescriptor.h>
+#define GL_INCL_SHARED
+#include "GLCommon.h"
 #include "VMsvga2Accel.h"
 #include "VMsvga2Shared.h"
 #include "VMsvga2Surface.h"
-#include "UCTypes.h"
+#include "UCGLDCommonTypes.h"
 #include "VLog.h"
 
 #define CLASS VMsvga2Shared
