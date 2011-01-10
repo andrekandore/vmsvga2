@@ -110,6 +110,8 @@ IOExternalMethod iofbFuncsCache[kIOVMGLNumMethods] =
 // Note: VM Methods
 };
 
+#include "../Shaders.c"
+
 #pragma mark -
 #pragma mark Global Functions
 #pragma mark -
@@ -178,6 +180,7 @@ void CLASS::Cleanup()
 		m_type2 = 0;
 	}
 	if (m_provider && isIdValid(m_context_id)) {
+		unload_fixed_shaders();
 		m_provider->destroyContext(m_context_id);
 		m_provider->FreeContextID(m_context_id);
 		m_context_id = SVGA_ID_INVALID;
@@ -406,6 +409,57 @@ IOReturn CLASS::upload_arrays(size_t num_bytes)
 									  &copyBox,
 									  &extra,
 									  &m_arrays.fence);
+}
+
+HIDDEN
+IOReturn CLASS::load_fixed_shaders()
+{
+	SVGA3D* td;
+	if (!m_provider || !isIdValid(m_context_id))
+		return kIOReturnNotReady;
+	td = m_provider->lock3D();
+	if (!td)
+		return kIOReturnNotReady;
+	/*
+	 * TBD: should shader ids be unique system-wide???
+	 */
+	td->DefineShader(m_context_id,
+					 1U,
+					 SVGA3D_SHADERTYPE_PS,
+					 reinterpret_cast<uint32_t const*>(&g_ps20_diffuse[0]),
+					 sizeof g_ps20_diffuse);
+	td->DefineShader(m_context_id,
+					 2U,
+					 SVGA3D_SHADERTYPE_PS,
+					 reinterpret_cast<uint32_t const*>(&g_ps20_tex1_diffuse[0]),
+					 sizeof g_ps20_tex1_diffuse);
+	td->DefineShader(m_context_id,
+					 3U,
+					 SVGA3D_SHADERTYPE_PS,
+					 reinterpret_cast<uint32_t const*>(&g_ps20_tex1_diffuse_specular[0]),
+					 sizeof g_ps20_tex1_diffuse_specular);
+	m_provider->unlock3D();
+	m_shaders_loaded = true;
+	return kIOReturnSuccess;
+}
+
+HIDDEN
+void CLASS::unload_fixed_shaders()
+{
+	SVGA3D* td;
+	if (!m_shaders_loaded ||
+		!isIdValid(m_context_id) ||
+		!m_provider)
+		return;
+	td = m_provider->lock3D();
+	if (!td)
+		return;
+	td->SetShader(m_context_id, SVGA3D_SHADERTYPE_PS, SVGA_ID_INVALID);
+	td->DestroyShader(m_context_id, 3U, SVGA3D_SHADERTYPE_PS);
+	td->DestroyShader(m_context_id, 2U, SVGA3D_SHADERTYPE_PS);
+	td->DestroyShader(m_context_id, 1U, SVGA3D_SHADERTYPE_PS);
+	m_provider->unlock3D();
+	m_shaders_loaded = false;
 }
 
 #pragma mark -
@@ -657,6 +711,7 @@ bool CLASS::start(IOService* provider)
 		m_context_id = SVGA_ID_INVALID;
 		goto bad;
 	}
+	load_fixed_shaders();	// Note: ignore error
 	// TBD getVRAMDescriptors
 	if (!allocAllContextBuffers()) {
 		GLLog(1, "%s: allocAllContextBuffers failed\n", __FUNCTION__);

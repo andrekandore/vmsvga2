@@ -286,7 +286,7 @@ public:
 	int getOriginalModeBits() const { return m_gl.original_mode_bits; }
 	int getSurfaceFormat() const { return m_surfaceFormat; }
 	void getBoundsForGL(uint32_t* inner_width, uint32_t* inner_height, uint32_t* outer_width, uint32_t* outer_height) const;
-	bool getDataForGLBind(uint32_t* surface_id, uint32_t* width, uint32_t* height);
+	bool getSurfacesForGL(uint32_t* color_sid, uint32_t* depth_sid);
 	IOReturn attachGL(uint32_t context_id, int cmb);
 	IOReturn resizeGL();
 	IOReturn detachGL();

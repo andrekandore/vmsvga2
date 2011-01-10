@@ -2173,13 +2173,14 @@ void CLASS::getBoundsForGL(uint32_t* inner_width, uint32_t* inner_height, uint32
 }
 
 HIDDEN
-bool CLASS::getDataForGLBind(uint32_t* surface_id, uint32_t* width, uint32_t* height)
+bool CLASS::getSurfacesForGL(uint32_t* color_sid, uint32_t* depth_sid)
 {
 	if (!bGLMode)
 		return false;
-	*surface_id = m_gl.color_sid;
-	*width = m_scale.source.w;
-	*height = m_scale.source.h;
+	if (color_sid)
+		*color_sid = m_gl.color_sid;
+	if (depth_sid)
+		*depth_sid = m_gl.depth_sid;
 	return true;
 }
 

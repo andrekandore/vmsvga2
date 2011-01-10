@@ -3,7 +3,7 @@
  *  VMsvga2Accel
  *
  *  Created by Zenith432 on July 29th 2009.
- *  Copyright 2009-2010 Zenith432. All rights reserved.
+ *  Copyright 2009-2011 Zenith432. All rights reserved.
  *
  *  Permission is hereby granted, free of charge, to any person
  *  obtaining a copy of this software and associated documentation
@@ -330,6 +330,8 @@ public:
 	uint32_t getVRAMSize() const;
 	vm_offset_t offsetInVRAM(void* vram_ptr);
 	class VMsvga2Surface* findSurfaceForID(uint32_t surface_id);
+	SVGA3D* lock3D();
+	void unlock3D();
 
 	/*
 	 * Video Support

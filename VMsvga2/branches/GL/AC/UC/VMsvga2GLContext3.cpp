@@ -75,8 +75,11 @@ char const* ps_arith_ops[] =
 static
 char const* ps_sample_type[] =
 {
-	"2D", "cube", "volume", ""
+	"_2d", "_cube", "_volume", ""
 };
+
+static
+char const coord_letters[] = "xyzw";
 
 #pragma mark -
 #pragma mark Struct Definitions
@@ -188,11 +191,44 @@ uint32_t xlate_stencilop(uint32_t v)
 }
 
 static
-char const* xlate_ps_reg_type(uint32_t u)
+char const* xlate_ps_reg_type(uint8_t u)
 {
 	if (u < 7U)
 		return ps_regtype_names[u];
 	return ps_regtype_names[7U];
+}
+
+static
+char const* xlate_ps_mask(char* str, uint8_t mask)
+{
+	char* p = str;
+	int i;
+	if ((mask & 15U) == 15U)
+		goto done;
+	*p++ = '.';
+	for (i = 0; i != 4; ++i)
+		if (mask & (1U << i))
+			*p++ = coord_letters[i];
+done:
+	*p = 0;
+	return str;
+}
+
+static
+char const* xlate_ps_arith_src_reg(char* str, uint8_t regtype, uint8_t regnum, uint16_t mask)
+{
+	char* p = str;
+	int i;
+	if ((mask & 0x8888U) == 0x8888U)
+		*p++ = '-';
+	p += snprintf(p, 31, "%s%u", xlate_ps_reg_type(regtype), regnum);
+	if ((mask & 0x3333U) == 0x0123U)
+		goto done;
+	for (i = 3; i >= 0; --i)
+		*p++ = coord_letters[(mask >> (4 * i)) & 3U];
+done:
+	*p = 0;
+	return str;
 }
 
 static
@@ -289,7 +325,7 @@ IOReturn analyze_vertex_format(uint32_t s2,
 			case 2U: /* TEXCOORDFMT_4D */
 				pArray[i].identity.usage = SVGA3D_DECLUSAGE_TEXCOORD;
 				pArray[i].identity.usageIndex = tc;
-#if 0
+#if 1
 				pArray[i].identity.type = SVGA3D_DECLTYPE_FLOAT4;
 #else
 				pArray[i].identity.type = SVGA3D_DECLTYPE_FLOAT2;
@@ -415,6 +451,12 @@ void CLASS::adjust_texture_coords(uint8_t* vertex_array,
 	SVGA3dVertexDecl const* _decls = static_cast<SVGA3dVertexDecl const*>(decls);
 	size_t i, j;
 
+	/*
+	 * Note: this assumes the texture coordinate index is identical
+	 *   to the texture stage index.  In fact, the association is
+	 *   determined by the pixel shader, which can use any pair
+	 *   of sampler and tex-coord-index.
+	 */
 	for (i = 0U; i != num_decls; ++i)
 		if (_decls[i].identity.usage == SVGA3D_DECLUSAGE_TEXCOORD &&
 			_decls[i].identity.usageIndex < 8U &&
@@ -478,11 +520,11 @@ bool CLASS::cache_misc_reg(uint8_t regnum, uint32_t value)
 		return true;
 	mask = (1U << (8U + regnum));
 	if (m_intel_state.param_cache_mask & mask) {
-		if (value == m_intel_state.misc_regs[regnum])
+		if (value == m_intel_state.imm_s[8U + regnum])
 			return false;
-		m_intel_state.misc_regs[regnum] = value;
+		m_intel_state.imm_s[8U + regnum] = value;
 	} else {
-		m_intel_state.misc_regs[regnum] = value;
+		m_intel_state.imm_s[8U + regnum] = value;
 		m_intel_state.param_cache_mask |= mask;
 	}
 	return true;
@@ -551,11 +593,13 @@ void CLASS::ip_prim3d_poly(uint32_t const* vertex_data, size_t num_vertex_dwords
 						  num_vertices,
 						  &decls[0],
 						  num_decls);
+#if 0
 	if (m_intel_state.imm_s[4] & (1U << 11))
 		kill_fog(m_arrays.kernel_ptr,
 				 num_vertices,
 				 &decls[0],
 				 num_decls);
+#endif
 	rc = upload_arrays(vsize + isize);
 	if (rc != kIOReturnSuccess) {
 		GLLog(1, "%s: upload_arrays return %#x\n", __FUNCTION__, rc);
@@ -664,11 +708,13 @@ void CLASS::ip_prim3d_direct(uint32_t prim_kind, uint32_t const* vertex_data, si
 							  num_vertices,
 							  &decls[0],
 							  num_decls);
+#if 0
 	if (m_intel_state.imm_s[4] & (1U << 11))
 		kill_fog(m_arrays.kernel_ptr,
 				 num_vertices,
 				 &decls[0],
 				 num_decls);
+#endif
 	rc = upload_arrays(vsize);
 	if (rc != kIOReturnSuccess) {
 		GLLog(1, "%s: upload_arrays return %#x\n", __FUNCTION__, rc);
@@ -957,16 +1003,45 @@ uint32_t CLASS::ip_clear_params(uint32_t* p)
 }
 
 HIDDEN
-uint32_t CLASS::ip_3d_sampler_state(uint32_t* p)
+void CLASS::ip_3d_map_state(uint32_t* p)
 {
-	uint32_t i, j, cmd = *p, skip = (cmd & 0xFFFFU) + 2U, mask = p[1], *q = p + 2;
+	uint32_t i, width, height, mask = p[1], *q = p + 2;
+	float* f = m_float_cache;
+
+	for (i = 0U; i != 16U; ++i, f += 4, mask >>= 1)
+		if (mask & 1U) {
+			/*
+			 * cache surface ids, width & height
+			 */
+			m_intel_state.surface_ids[i] = q[0];
+			width  = bit_select(q[1], 10, 11) + 1U;
+			height = bit_select(q[1], 21, 11) + 1U;
+			f[0] = 1.0F / static_cast<float>(width);
+			f[1] = 1.0F / static_cast<float>(height);
+			f[2] = 1.0F;
+			f[3] = 1.0F;
+			q += 3;
+		}
+}
+
+HIDDEN
+void CLASS::ip_3d_sampler_state(uint32_t* p)
+{
+	uint32_t i, j, mask = p[1], *q = p + 2;
 	uint8_t tmi;
-	SVGA3dTextureState ts[8];
+	SVGA3dTextureState ts[10];
 	uint32_t const num_states = sizeof ts / sizeof ts[0];
 
-	for (i = 0U; i != 16U; ++i)
-		if (mask & (1U << i)) {
+	for (i = 0U; i != 16U; ++i, mask >>= 1)
+		if (mask & 1U) {
 			tmi = bit_select(q[1], 1, 4);
+#if 0
+			/*
+			 * Note: it's probably not necessary to remember tmi
+			 */
+			m_intel_state.sampler_to_texstage &= ~(0xFULL << (i * 4U));
+			m_intel_state.sampler_to_texstage |= static_cast<uint64_t>(tmi) << (i * 4U);
+#endif
 #if 0
 			GLLog(3, "%s:   txstage %u\n", __FUNCTION__, i);
 			GLLog(3, "%s:     RGE %u, PPE %u, CSC %u, CKS %u, BML %u, "
@@ -1000,31 +1075,31 @@ uint32_t CLASS::ip_3d_sampler_state(uint32_t* p)
 				m_intel_state.prettex_coordinates |= (1U << tmi);
 			for (j = 0U; j != num_states; ++j)
 				ts[j].stage = i;
-			ts[0].name = SVGA3D_TS_BORDERCOLOR;
-			ts[0].value = q[2];
-			ts[1].name = SVGA3D_TS_TEXCOORDINDEX;
-			ts[1].value = tmi;
+			ts[0].name = SVGA3D_TS_BIND_TEXTURE;
+			ts[0].value = m_intel_state.surface_ids[tmi];
+			ts[1].name = SVGA3D_TS_BORDERCOLOR;
+			ts[1].value = q[2];
 			ts[2].name = SVGA3D_TS_ADDRESSU;
 			ts[2].value = xlate_taddress(bit_select(q[1], 12, 3));
 			ts[3].name = SVGA3D_TS_ADDRESSV;
 			ts[3].value = xlate_taddress(bit_select(q[1],  9, 3));
+			ts[4].name = SVGA3D_TS_ADDRESSW;
+			ts[4].value = xlate_taddress(bit_select(q[1],  6, 3));
+			ts[5].name = SVGA3D_TS_MIPFILTER;
+			ts[5].value = xlate_filter1(bit_select(q[0], 20, 2));
+			ts[6].name = SVGA3D_TS_MAGFILTER;
+			ts[6].value = xlate_filter2(bit_select(q[0], 17, 3));
+			ts[7].name = SVGA3D_TS_MINFILTER;
+			ts[7].value = xlate_filter2(bit_select(q[0], 14, 3));
+			ts[8].name = SVGA3D_TS_TEXTURE_ANISOTROPIC_LEVEL;
+			ts[8].value = bit_select(q[0], 3, 1) ? 4U : 2U;
+			ts[9].name = SVGA3D_TS_GAMMA;
+			ts[9].floatValue = bit_select(q[0], 31, 1) ? 0.0F : 1.0F;
 			/*
-			 * Note: ADDRESSW/TCZ not handled
-			 */
-			ts[4].name = SVGA3D_TS_MIPFILTER;
-			ts[4].value = xlate_filter1(bit_select(q[0], 20, 2));
-			ts[5].name = SVGA3D_TS_MAGFILTER;
-			ts[5].value = xlate_filter2(bit_select(q[0], 17, 3));
-			ts[6].name = SVGA3D_TS_MINFILTER;
-			ts[6].value = xlate_filter2(bit_select(q[0], 14, 3));
-			ts[7].name = SVGA3D_TS_TEXTURE_ANISOTROPIC_LEVEL;
-			ts[7].value = bit_select(q[0], 3, 1) ? 4U : 2U;
-			/*
-			 * TBD: handle Reverse Gamma, base mip level, min lod, lod bias
+			 * TBD: handle base mip level, min lod, lod bias
 			 */
 			m_provider->setTextureState(m_context_id, num_states, &ts[0]);
 		}
-	return skip;
 }
 
 HIDDEN
@@ -1157,6 +1232,8 @@ HIDDEN
 void CLASS::ip_print_ps(uint32_t* p)
 {
 	uint32_t i, num_inst = (((*p) & 0xFFFFU) + 1U) / 3U;
+	char ps_mask_buf[6];
+	char ps_src_reg_buf[3][32];
 	++p;
 	if (!num_inst)
 		return;
@@ -1165,24 +1242,27 @@ void CLASS::ip_print_ps(uint32_t* p)
 		uint8_t opcode = p[0] >> 24;
 		if (opcode <= 20U) {
 			// Arithmetic
-			GLLog(3, "%s:   %s %s%u, %s%u[%#x], %s%u[%#x], %s%u[%#x] dest_saturate %u, dest_channel %#x\n", __FUNCTION__,
+			GLLog(3, "%s:   %s%s %s%u%s, %s, %s, %s\n", __FUNCTION__,
 				  ps_arith_ops[opcode],
+				  bit_select(p[0], 22, 1) ? "_sat" : "",
 				  xlate_ps_reg_type(bit_select(p[0], 19, 3)),
 				  bit_select(p[0], 14, 4),
-				  xlate_ps_reg_type(bit_select(p[0], 7, 3)),
-				  bit_select(p[0], 2, 4),
-				  bit_select(p[1], 16, 16),
-				  xlate_ps_reg_type(bit_select(p[1], 13, 3)),
-				  bit_select(p[1], 8, 4),
-				  (bit_select(p[1], 0, 8) << 8) | bit_select(p[2], 24, 8),
-				  xlate_ps_reg_type(bit_select(p[2], 21, 3)),
-				  bit_select(p[2], 16, 4),
-				  bit_select(p[2], 0, 16),
-				  bit_select(p[0], 22, 1),
-				  bit_select(p[0], 10, 4));
+				  xlate_ps_mask(&ps_mask_buf[0], bit_select(p[0], 10, 4)),
+				  xlate_ps_arith_src_reg(&ps_src_reg_buf[0][0],
+										 bit_select(p[0],  7,  3),
+										 bit_select(p[0],  2,  4),
+										 bit_select(p[1], 16, 16)),
+				  xlate_ps_arith_src_reg(&ps_src_reg_buf[1][0],
+										 bit_select(p[1], 13, 3),
+										 bit_select(p[1],  8, 4),
+										 (bit_select(p[1], 0, 8) << 8) | bit_select(p[2], 24, 8)),
+				  xlate_ps_arith_src_reg(&ps_src_reg_buf[2][0],
+										 bit_select(p[2], 21,  3),
+										 bit_select(p[2], 16,  4),
+										 bit_select(p[2],  0, 16)));
 		} else if (opcode <= 24U) {
 			// Texture
-			GLLog(3, "%s:   %s %s%u, %s%u, sampler %u\n", __FUNCTION__,
+			GLLog(3, "%s:   %s %s%u, %s%u, S%u\n", __FUNCTION__,
 				  ps_texture_ops[opcode - 21U],
 				  xlate_ps_reg_type(bit_select(p[0], 19, 3)),
 				  bit_select(p[0], 14, 4),
@@ -1191,13 +1271,76 @@ void CLASS::ip_print_ps(uint32_t* p)
 				  bit_select(p[0], 0, 4));
 		} else if (opcode == 25U) {
 			// DCL
-			GLLog(3, "%s:   dcl %s%u %s channel %#x\n", __FUNCTION__,
+			GLLog(3, "%s:   dcl%s %s%u%s\n", __FUNCTION__,
+				  ps_sample_type[bit_select(p[0], 22, 2)],
 				  xlate_ps_reg_type(bit_select(p[0], 19, 3)),
 				  bit_select(p[0], 14, 4),
-				  ps_sample_type[bit_select(p[0], 22, 2)],
-				  bit_select(p[0], 10, 4));
+				  xlate_ps_mask(&ps_mask_buf[0], bit_select(p[0], 10, 4)));
 		}
 	}
+}
+
+HIDDEN
+void CLASS::ip_select_and_load_ps(uint32_t* p)
+{
+	/*
+	 * Simplified shader support
+	 */
+	uint32_t s4 = m_intel_state.imm_s[4];
+	SVGA3D* td = m_provider->lock3D();
+	if (!td)
+		return;
+	if (s4 & (1U << 11))	/* S4_VFMT_SPEC_FOG */
+		td->SetShader(m_context_id, SVGA3D_SHADERTYPE_PS, 3U);
+	else if ((m_intel_state.imm_s[2] & 15U) != 15U) { /* Tex1 + Diffuse */
+#if 0
+		/*
+		 * Alternative implementation using the
+		 * fixed-function pipeline, for texture
+		 * stage index.
+		 */
+		for (int i = 0; i != 7; ++i)
+			ts[i].stage = index;
+		ts[0].name = SVGA3D_TS_TEXCOORDINDEX;
+		ts[0].value = index;
+		ts[1].name = SVGA3D_TS_COLOROP;
+		ts[1].value = SVGA3D_TC_MODULATE;
+		ts[2].name = SVGA3D_TS_ALPHAOP;
+		ts[2].value = SVGA3D_TC_MODULATE;
+		ts[3].name = SVGA3D_TS_COLORARG1;
+		ts[3].value = SVGA3D_TA_TEXTURE;
+		ts[4].name = SVGA3D_TS_COLORARG2;
+		ts[4].value = SVGA3D_TA_PREVIOUS;
+		ts[5].name = SVGA3D_TS_ALPHAARG1;
+		ts[5].value = SVGA3D_TA_TEXTURE;
+		ts[6].name = SVGA3D_TS_ALPHAARG2;
+		ts[6].value = SVGA3D_TA_PREVIOUS;
+#endif
+		td->SetShader(m_context_id, SVGA3D_SHADERTYPE_PS, 2U);
+	} else if (s4 & (1U << 10)) { /* S4_VFMT_COLOR */
+#if 0
+		/*
+		 * Alternative implementation using the
+		 * fixed-function pipeline, for texture
+		 * stage index.
+		 */
+		for (int i = 0; i != 5; ++i)
+			ts[i].stage = index;
+		ts[0].name = SVGA3D_TS_TEXCOORDINDEX;
+		ts[0].value = index;
+		ts[1].name = SVGA3D_TS_COLOROP;
+		ts[1].value = SVGA3D_TC_SELECTARG1;
+		ts[2].name = SVGA3D_TS_ALPHAOP;
+		ts[2].value = SVGA3D_TC_SELECTARG1;
+		ts[3].name = SVGA3D_TS_COLORARG1;
+		ts[3].value = SVGA3D_TA_PREVIOUS;
+		ts[4].name = SVGA3D_TS_ALPHAARG1;
+		ts[4].value = SVGA3D_TA_PREVIOUS;
+#endif
+		td->SetShader(m_context_id, SVGA3D_SHADERTYPE_PS, 1U);
+	} else
+		td->SetShader(m_context_id, SVGA3D_SHADERTYPE_PS, SVGA_ID_INVALID);
+	m_provider->unlock3D();
 }
 
 HIDDEN
@@ -1361,9 +1504,13 @@ uint32_t CLASS::decode_3d(uint32_t* p)
 			}
 			break;
 		case 0x1DU:
+			skip = (cmd & 0xFFFFU) + 2U;
 			switch (bit_select(cmd, 16, 8)) {
+				case 0x00U: /* 3DSTATE_MAP_STATE */
+					ip_3d_map_state(p);
+					break;
 				case 0x01U: /* 3DSTATE_SAMPLER_STATE */
-					skip = ip_3d_sampler_state(p);
+					ip_3d_sampler_state(p);
 					break;
 				case 0x04U: /* 3DSTATE_LOAD_STATE_IMMEDIATE_1 */
 					skip = ip_load_immediate(p);
@@ -1372,7 +1519,7 @@ uint32_t CLASS::decode_3d(uint32_t* p)
 #if 0
 					ip_print_ps(p);
 #endif
-					skip = (cmd & 0xFFFFU) + 2U;
+					ip_select_and_load_ps(p);
 					break;
 				case 0x81U: /* 3DSTATE_SCISSOR_RECT_0_CMD */
 #if 0
@@ -1383,7 +1530,6 @@ uint32_t CLASS::decode_3d(uint32_t* p)
 						  bit_select(p[2],  0, 16));
 #endif
 					ip_misc_render_state(2U, p);
-					skip = (cmd & 0xFFFFU) + 2U;
 					break;
 				case 0x83U: /* 3DSTATE_STIPPLE */
 #if 0
@@ -1391,7 +1537,6 @@ uint32_t CLASS::decode_3d(uint32_t* p)
 						  bit_select(p[1], 16,  1),
 						  bit_select(p[1],  0, 16));
 #endif
-					skip = (cmd & 0xFFFFU) + 2U;
 					break;
 				case 0x85U: /* 3DSTATE_DST_BUF_VARS_CMD */
 #if 0
@@ -1407,14 +1552,12 @@ uint32_t CLASS::decode_3d(uint32_t* p)
 							  bit_select(p[1],  0, 2));
 					}
 #endif
-					skip = (cmd & 0xFFFFU) + 2U;
 					break;
 				case 0x88U: /* 3DSTATE_CONST_BLEND_COLOR_CMD */
 #if 0
 					GLLog(3, "%s: 3DSTATE_CONST_BLEND_COLOR_CMD %#x\n", __FUNCTION__, p[1]);
 #endif
 					ip_misc_render_state(3U, p);
-					skip = (cmd & 0xFFFFU) + 2U;
 					break;
 				case 0x89U: /* 3DSTATE_FOG_MODE_CMD */
 					GLLog(3, "%s: 3DSTATE_FOG_MODE_CMD FFMEn %u, FF %u, FIMEn %u, FI %u, "
@@ -1428,23 +1571,19 @@ uint32_t CLASS::decode_3d(uint32_t* p)
 						  bit_select(p[1],  4, 16),
 						  bit_select(p[2], 16, 1),
 						  bit_select(p[3], 16, 1));
-					skip = (cmd & 0xFFFFU) + 2U;
 					break;
 				case 0x97U: /* 3DSTATE_DEPTH_OFFSET_SCALE */
 #if 0
 					GLLog(3, "%s: 3DSTATE_DEPTH_OFFSET_SCALE %#x\n", __FUNCTION__, p[1]);
 #endif
 					ip_misc_render_state(0U, p);
-					skip = (cmd & 0xFFFFU) + 2U;
 					break;
 				case 0x9CU: /* 3DSTATE_CLEAR_PARAMETERS */
 					skip = ip_clear_params(p);
 					break;
-				case 0x00U: /* 3DSTATE_MAP_STATE */
 				case 0x06U: /* 3DSTATE_PIXEL_SHADER_CONSTANTS */
 				case 0x80U: /* 3DSTATE_DRAW_RECT_CMD */
 				case 0x8EU: /* 3DSTATE_BUF_INFO_CMD */
-					skip = (cmd & 0xFFFFU) + 2U;
 					break;
 			}
 			break;

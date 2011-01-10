@@ -595,6 +595,7 @@ void CLASS::get_tex_data(VMsvga2TextureBuffer* tx, uint32_t* tex_gart_address, u
 HIDDEN
 void CLASS::write_tex_data(uint32_t i, uint32_t* q, VMsvga2TextureBuffer* tx)
 {
+#if 0
 	/*
 	 * TBD
 	 */
@@ -638,6 +639,23 @@ void CLASS::write_tex_data(uint32_t i, uint32_t* q, VMsvga2TextureBuffer* tx)
 		tx->pitch = pitch;
 	else if (!tx->pitch)
 		tx->pitch = width * tx->bytespp;
+#endif
+	switch (tx->sys_obj_type) {
+		case TEX_TYPE_SURFACE:
+			if (tx->linked_surface)
+				tx->linked_surface->getSurfacesForGL(&q[0], 0);	// Note: ignores error
+			else
+				q[0] = SVGA_ID_INVALID;
+			/*
+			 * Note: Assumes that the texture width & height needed to
+			 *   normalize the tex coordinates are sent by the GLD in
+			 *   q[1] for all surface types, including TEX_TYPE_SURFACE.
+			 */
+			break;
+		default:
+			q[0] = tx->surface_id;
+			break;
+	}
 }
 
 HIDDEN
@@ -847,7 +865,7 @@ IOReturn CLASS::bind_texture(uint32_t index, VMsvga2TextureBuffer* tx)
 {
 	uint32_t i, surface_id, width, height;
 	float* f;
-	SVGA3dTextureState tstate[7];
+	SVGA3dTextureState tstate[1];
 	uint32_t const num_states = sizeof tstate / sizeof tstate[0];
 
 	if (!m_provider)
@@ -856,8 +874,10 @@ IOReturn CLASS::bind_texture(uint32_t index, VMsvga2TextureBuffer* tx)
 		return kIOReturnBadArgument;
 	switch (tx->sys_obj_type) {
 		case TEX_TYPE_SURFACE:
-			if (!tx->linked_surface->getDataForGLBind(&surface_id, &width, &height))
+			if (!tx->linked_surface ||
+				!tx->linked_surface->getSurfacesForGL(&surface_id, 0))
 				return kIOReturnNotReady;
+			tx->linked_surface->getBoundsForGL(&width, &height, 0, 0);
 			break;
 		default:
 			surface_id = tx->surface_id;
@@ -877,18 +897,6 @@ IOReturn CLASS::bind_texture(uint32_t index, VMsvga2TextureBuffer* tx)
 		tstate[i].stage = index;
 	tstate[0].name = SVGA3D_TS_BIND_TEXTURE;
 	tstate[0].value = surface_id;
-	tstate[1].name = SVGA3D_TS_COLOROP;
-	tstate[1].value = SVGA3D_TC_MODULATE;
-	tstate[2].name = SVGA3D_TS_ALPHAOP;
-	tstate[2].value = SVGA3D_TC_MODULATE;
-	tstate[3].name = SVGA3D_TS_COLORARG1;
-	tstate[3].value = SVGA3D_TA_TEXTURE;
-	tstate[4].name = SVGA3D_TS_COLORARG2;
-	tstate[4].value = SVGA3D_TA_PREVIOUS;
-	tstate[5].name = SVGA3D_TS_ALPHAARG1;
-	tstate[5].value = SVGA3D_TA_TEXTURE;
-	tstate[6].name = SVGA3D_TS_ALPHAARG2;
-	tstate[6].value = SVGA3D_TA_PREVIOUS;
 #if 0
 	GLLog(3, "%s:   binding texture %u at index %u\n", __FUNCTION__,
 		  tx->sys_obj->object_id, index);
@@ -1388,10 +1396,12 @@ void CLASS::process_token_Texture(VendorGLStreamInfo* info)
 		this->0x240 = 0U;
 		this->0x244 = q[1];
 		this->0x248 = q[2];
-		write_tex_data(i, q, tx);
 #endif
+		write_tex_data(i, q, tx);
 		m_txs[i] = tx;
+#if 0
 		bind_texture(i, tx);	// Added
+#endif
 		q += 3;
 	}
 	if (count > 1U)

@@ -73,6 +73,7 @@ private:
 	int m_log_level;
 	uint32_t m_context_id;
 	float* m_float_cache;
+	bool m_shaders_loaded;
 
 	/*
 	 * Buffers for vertex/index arrays (need GMRs)
@@ -90,8 +91,7 @@ private:
 	 * Intel 915 Emulator State
 	 */
 	struct {
-		uint32_t imm_s[8];
-		uint32_t misc_regs[8];
+		uint32_t imm_s[16];
 		uint16_t param_cache_mask;
 		uint16_t prettex_coordinates; // pre-transformed tex coordinates
 		struct {
@@ -100,6 +100,10 @@ private:
 			float depth;
 			uint32_t stencil;
 		} clear;
+		uint32_t surface_ids[16];	// for the 16 texture stages
+#if 0
+		uint64_t sampler_to_texstage;	// associates texture stages with samplers (16 x 4)
+#endif
 	} m_intel_state;
 
 	/*
@@ -138,6 +142,8 @@ private:
 	IOReturn alloc_arrays(size_t num_bytes);
 	void purge_arrays();
 	IOReturn upload_arrays(size_t num_bytes);
+	IOReturn load_fixed_shaders();
+	void unload_fixed_shaders();
 	void adjust_texture_coords(uint8_t* vertex_array,
 							   size_t num_vertices,
 							   void const* decls,
@@ -154,11 +160,13 @@ private:
 	uint32_t ip_prim3d(uint32_t* p);
 	uint32_t ip_load_immediate(uint32_t* p);
 	uint32_t ip_clear_params(uint32_t* p);
-	uint32_t ip_3d_sampler_state(uint32_t* p);
+	void ip_3d_map_state(uint32_t* p);
+	void ip_3d_sampler_state(uint32_t* p);
 	void ip_misc_render_state(uint32_t selector, uint32_t* p);
 	void ip_independent_alpha_blend(uint32_t cmd);
 	void ip_backface_stencil_ops(uint32_t cmd);
 	void ip_print_ps(uint32_t* p);
+	void ip_select_and_load_ps(uint32_t* p);
 	uint32_t decode_mi(uint32_t* p);
 	uint32_t decode_2d(uint32_t* p);
 	uint32_t decode_3d(uint32_t* p);

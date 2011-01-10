@@ -156,6 +156,7 @@
 		E5912BF612B921320028A17D /* VMsvga2Shared.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = VMsvga2Shared.cpp; sourceTree = "<group>"; };
 		E592EC7912A83E7E001700AC /* GLDTypes.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = GLDTypes.h; sourceTree = "<group>"; };
 		E596102F12D7950A00EE8B57 /* VMsvga2GLContext3.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = VMsvga2GLContext3.cpp; sourceTree = "<group>"; };
+		E598109712DA004800508FF6 /* Shaders.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = Shaders.c; sourceTree = "<group>"; };
 		E5993C7F10A058070021B17F /* svga3d_caps.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = svga3d_caps.h; sourceTree = "<group>"; };
 		E59B1DB012ABDD0800F3C4A9 /* GLDData.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = GLDData.h; sourceTree = "<group>"; };
 		E59B1DB112ABDD0800F3C4A9 /* GLDData.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = GLDData.c; sourceTree = "<group>"; };
@@ -295,6 +296,7 @@
 		7919BDDC102B1FDE00E56229 /* Source */ = {
 			isa = PBXGroup;
 			children = (
+				E598109712DA004800508FF6 /* Shaders.c */,
 				799F594610319210000D2A71 /* SVGA3D.cpp */,
 				E577F63710A089750047C956 /* SVGAScreen.cpp */,
 				7919BDE0102B203500E56229 /* VMsvga2Accel.cpp */,
@@ -656,6 +658,7 @@
 					"LOGGING_LEVEL=1",
 					FRAGILE,
 					VECTORIZE,
+					GL_DEV,
 				);
 				INFOPLIST_FILE = "Info-AC.plist";
 				MODULE_NAME = net.osx86.driver.VMsvga2Accel;
@@ -719,6 +722,7 @@
 					"LOGGING_LEVEL=1",
 					FRAGILE,
 					VECTORIZE,
+					GL_DEV,
 				);
 				INFOPLIST_FILE = "Info-AC.plist";
 				MODULE_NAME = net.osx86.driver.VMsvga2Accel;
@@ -762,7 +766,10 @@
 					x86_64,
 					i386,
 				);
-				GCC_PREPROCESSOR_DEFINITIONS = "LOGGING_LEVEL=1";
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"LOGGING_LEVEL=1",
+					GL_DEV,
+				);
 				INFOPLIST_FILE = "Info-GLD.plist";
 				MODULE_NAME = net.osx86.VMsvga2GLDriver;
 				PRODUCT_NAME = VMsvga2GLDriver;
@@ -775,7 +782,10 @@
 		E5CC19B210CC0DA100EC0343 /* ReleaseSnowLeo */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				GCC_PREPROCESSOR_DEFINITIONS = "LOGGING_LEVEL=1";
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"LOGGING_LEVEL=1",
+					GL_DEV,
+				);
 				INFOPLIST_FILE = "Info-GLD.plist";
 				MODULE_NAME = net.osx86.VMsvga2GLDriver;
 				PRODUCT_NAME = VMsvga2GLDriver;
