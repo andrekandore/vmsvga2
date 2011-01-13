@@ -3,7 +3,7 @@
  *  VMsvga2Accel
  *
  *  Created by Zenith432 on August 11th 2009.
- *  Copyright 2009-2010 Zenith432. All rights reserved.
+ *  Copyright 2009-2011 Zenith432. All rights reserved.
  *
  */
 
@@ -57,6 +57,7 @@ public:
 
 	bool Init(SVGADevice*);
 	uint32_t getHWVersion() const { return HWVersion; }
+	void FIFOCommitAll();			// passthrough
 	bool BeginPresent(uint32_t sid, SVGA3dCopyRect **rects, size_t numRects);
 	bool BeginPresentReadback(SVGA3dRect **rects, size_t numRects);
 	bool BeginBlitSurfaceToScreen(SVGA3dSurfaceImageId const* srcImage,

@@ -1252,6 +1252,7 @@ IOReturn CLASS::flushGLSurface()
 HIDDEN
 IOReturn CLASS::copyGLSurfaceToBacking()
 {
+	SVGA3dSurfaceImageId hostImage;
 	SVGA3dCopyBox copyBox;
 	VMsvga2Accel::ExtraInfoEx extra;
 	uint32_t fence;
@@ -1271,7 +1272,10 @@ IOReturn CLASS::copyGLSurfaceToBacking()
 	extra.mem_pitch = m_scale.reserved[1];
 	extra.mem_limit = m_backing.size - m_scale.reserved[2];
 	extra.suffix_flags = 2U;
-	rc = m_provider->surfaceDMA3DEx(m_gl.color_sid,
+	hostImage.sid = m_gl.color_sid;
+	hostImage.face = 0U;
+	hostImage.mipmap = 0U;
+	rc = m_provider->surfaceDMA3DEx(&hostImage,
 									SVGA3D_READ_HOST_VRAM,
 									&copyBox,
 									&extra,

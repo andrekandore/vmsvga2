@@ -32,6 +32,7 @@
 #define GL_INCL_PUBLIC
 #define GL_INCL_PRIVATE
 #include "GLCommon.h"
+#include "Shaders.h"
 #include "UCGLDCommonTypes.h"
 #include "UCMethods.h"
 #include "VLog.h"
@@ -110,8 +111,6 @@ IOExternalMethod iofbFuncsCache[kIOVMGLNumMethods] =
 // Note: VM Methods
 };
 
-#include "../Shaders.c"
-
 #pragma mark -
 #pragma mark Global Functions
 #pragma mark -
@@ -142,6 +141,7 @@ void CLASS::Init()
 	m_context_id = SVGA_ID_INVALID;
 	m_arrays.sid = SVGA_ID_INVALID;
 	m_arrays.gmr_id = SVGA_ID_INVALID;
+	m_active_shid = SVGA_ID_INVALID;
 }
 
 HIDDEN
@@ -161,26 +161,19 @@ void CLASS::Cleanup()
 		m_gc->release();
 		m_gc = 0;
 	}
-	if (m_provider && isIdValid(m_command_buffer.gmr_id))
-		complete_command_buffer_io();
-	if (m_command_buffer.md) {
-		m_command_buffer.md->release();
-		m_command_buffer.md = 0;
-	}
-	if (m_context_buffer0.md) {
-		m_context_buffer0.md->release();
-		m_context_buffer0.md = 0;
-	}
-	if (m_context_buffer1.md) {
-		m_context_buffer1.md->release();
-		m_context_buffer1.md = 0;
-	}
+	complete_transfer_io(&m_command_buffer.xfer);
+	discard_transfer(&m_command_buffer.xfer);
+	discard_transfer(&m_context_buffer0.xfer);
+	discard_transfer(&m_context_buffer1.xfer);
 	if (m_type2) {
 		m_type2->release();
 		m_type2 = 0;
 	}
 	if (m_provider && isIdValid(m_context_id)) {
+		purge_shader_cache();
+#if 0
 		unload_fixed_shaders();
+#endif
 		m_provider->destroyContext(m_context_id);
 		m_provider->FreeContextID(m_context_id);
 		m_context_id = SVGA_ID_INVALID;
@@ -205,13 +198,13 @@ bool CLASS::allocCommandBuffer(VMsvga2CommandBuffer* buffer, size_t size)
 												kIODirectionInOut,
 												size,
 												page_size);
-	buffer->md = bmd;
+	buffer->xfer.md = bmd;
 	if (!bmd)
 		return false;
 	buffer->size = size;
 	buffer->kernel_ptr = static_cast<VendorCommandBufferHeader*>(bmd->getBytesNoCopy());
-	buffer->gmr_id = SVGA_ID_INVALID;
-	buffer->fence = 0U;
+	buffer->xfer.gmr_id = SVGA_ID_INVALID;
+	buffer->xfer.fence = 0U;
 	initCommandBufferHeader(buffer->kernel_ptr, size);
 	return true;
 }
@@ -235,10 +228,12 @@ bool CLASS::allocAllContextBuffers()
 												kIODirectionInOut,
 												4096U,
 												page_size);
-	m_context_buffer0.md = bmd;
+	m_context_buffer0.xfer.md = bmd;
 	if (!bmd)
 		return false;
 	m_context_buffer0.kernel_ptr = static_cast<VendorCommandBufferHeader*>(bmd->getBytesNoCopy());
+	m_context_buffer0.xfer.gmr_id = SVGA_ID_INVALID;
+	m_context_buffer0.xfer.fence = 0U;
 	p = m_context_buffer0.kernel_ptr;
 	bzero(p, sizeof *p);
 	p->flags = 1;
@@ -254,8 +249,10 @@ bool CLASS::allocAllContextBuffers()
 												page_size);
 	if (!bmd)
 		return false; // TBD frees previous ones
-	m_context_buffer1.md = bmd;
+	m_context_buffer1.xfer.md = bmd;
 	m_context_buffer1.kernel_ptr = static_cast<VendorCommandBufferHeader*>(bmd->getBytesNoCopy());
+	m_context_buffer1.xfer.gmr_id = SVGA_ID_INVALID;
+	m_context_buffer1.xfer.fence = 0U;
 	p = m_context_buffer1.kernel_ptr;
 	bzero(p, sizeof *p);
 	p->flags = 1;
@@ -275,52 +272,68 @@ IOReturn CLASS::get_status(uint32_t* status)
 }
 
 HIDDEN
-IOReturn CLASS::prepare_command_buffer_io()
+IOReturn CLASS::prepare_transfer_for_io(VendorTransferBuffer* xfer)
 {
 	IOReturn rc;
 
-	if (isIdValid(m_command_buffer.gmr_id))
+	if (!m_provider)
+		return kIOReturnNotReady;
+	if (!xfer)
+		return kIOReturnBadArgument;
+	if (isIdValid(xfer->gmr_id))
 		return kIOReturnSuccess;
-	m_command_buffer.gmr_id = m_provider->AllocGMRID();
-	if (!isIdValid(m_command_buffer.gmr_id)) {
+	if (!xfer->md)
+		return kIOReturnNotReady;
+	xfer->gmr_id = m_provider->AllocGMRID();
+	if (!isIdValid(xfer->gmr_id)) {
 		GLLog(1, "%s: Out of GMR IDs\n", __FUNCTION__);
 		return kIOReturnNoResources;
 	}
-	rc = m_command_buffer.md->prepare();
+	rc = xfer->md->prepare();
 	if (rc != kIOReturnSuccess)
 		goto clean1;
-	rc = m_provider->createGMR(m_command_buffer.gmr_id, m_command_buffer.md);
+	rc = m_provider->createGMR(xfer->gmr_id, xfer->md);
 	if (rc != kIOReturnSuccess)
 		goto clean2;
 	return kIOReturnSuccess;
 
 clean2:
-	m_command_buffer.md->complete();
+	xfer->md->complete();
 clean1:
-	m_provider->FreeGMRID(m_command_buffer.gmr_id);
-	m_command_buffer.gmr_id = SVGA_ID_INVALID;
+	m_provider->FreeGMRID(xfer->gmr_id);
+	xfer->gmr_id = SVGA_ID_INVALID;
 	return rc;
 }
 
 HIDDEN
-void CLASS::sync_command_buffer_io()
+void CLASS::sync_trasfer_io(VendorTransferBuffer* xfer)
 {
-	if (!m_command_buffer.fence)
+	if (!m_provider || !xfer || !xfer->fence)
 		return;
-	m_provider->SyncToFence(m_command_buffer.fence);
-	m_command_buffer.fence = 0U;
+	m_provider->SyncToFence(xfer->fence);
+	xfer->fence = 0U;
 }
 
 HIDDEN
-void CLASS::complete_command_buffer_io()
+void CLASS::complete_transfer_io(VendorTransferBuffer* xfer)
 {
-	if (!isIdValid(m_command_buffer.gmr_id))
+	if (!m_provider || !xfer || !isIdValid(xfer->gmr_id))
 		return;
-	sync_command_buffer_io();
-	m_provider->destroyGMR(m_command_buffer.gmr_id);
-	m_command_buffer.md->complete();
-	m_provider->FreeGMRID(m_command_buffer.gmr_id);
-	m_command_buffer.gmr_id = SVGA_ID_INVALID;
+	sync_trasfer_io(xfer);
+	m_provider->destroyGMR(xfer->gmr_id);
+	if (xfer->md)
+		xfer->md->complete();
+	m_provider->FreeGMRID(xfer->gmr_id);
+	xfer->gmr_id = SVGA_ID_INVALID;
+}
+
+HIDDEN
+void CLASS::discard_transfer(VendorTransferBuffer* xfer)
+{
+	if (!xfer || !xfer->md)
+		return;
+	xfer->md->release();
+	xfer->md = 0;
 }
 
 HIDDEN
@@ -388,6 +401,7 @@ void CLASS::purge_arrays()
 HIDDEN
 IOReturn CLASS::upload_arrays(size_t num_bytes)
 {
+	SVGA3dSurfaceImageId hostImage;
 	SVGA3dCopyBox copyBox;
 	VMsvga2Accel::ExtraInfoEx extra;
 
@@ -404,40 +418,33 @@ IOReturn CLASS::upload_arrays(size_t num_bytes)
 	copyBox.w = static_cast<uint32_t>(num_bytes);
 	copyBox.h = 1U;
 	copyBox.d = 1U;
-	return m_provider->surfaceDMA3DEx(m_arrays.sid,
+	hostImage.sid = m_arrays.sid;
+	hostImage.face = 0U;
+	hostImage.mipmap = 0U;
+	return m_provider->surfaceDMA3DEx(&hostImage,
 									  SVGA3D_WRITE_HOST_VRAM,
 									  &copyBox,
 									  &extra,
 									  &m_arrays.fence);
 }
 
+#if 0
 HIDDEN
 IOReturn CLASS::load_fixed_shaders()
 {
-	SVGA3D* td;
+	uint32_t i;
+	SVGA3D* svga3d;
 	if (!m_provider || !isIdValid(m_context_id))
 		return kIOReturnNotReady;
-	td = m_provider->lock3D();
-	if (!td)
+	svga3d = m_provider->lock3D();
+	if (!svga3d)
 		return kIOReturnNotReady;
-	/*
-	 * TBD: should shader ids be unique system-wide???
-	 */
-	td->DefineShader(m_context_id,
-					 1U,
-					 SVGA3D_SHADERTYPE_PS,
-					 reinterpret_cast<uint32_t const*>(&g_ps20_diffuse[0]),
-					 sizeof g_ps20_diffuse);
-	td->DefineShader(m_context_id,
-					 2U,
-					 SVGA3D_SHADERTYPE_PS,
-					 reinterpret_cast<uint32_t const*>(&g_ps20_tex1_diffuse[0]),
-					 sizeof g_ps20_tex1_diffuse);
-	td->DefineShader(m_context_id,
-					 3U,
-					 SVGA3D_SHADERTYPE_PS,
-					 reinterpret_cast<uint32_t const*>(&g_ps20_tex1_diffuse_specular[0]),
-					 sizeof g_ps20_tex1_diffuse_specular);
+	for (i = 0U; i != NUM_FIXED_SHADERS; ++i)
+		svga3d->DefineShader(m_context_id,
+							 i + 1U,
+							 SVGA3D_SHADERTYPE_PS,
+							 reinterpret_cast<uint32_t const*>(g_pointers[i]),
+							 g_lengths[i]);
 	m_provider->unlock3D();
 	m_shaders_loaded = true;
 	return kIOReturnSuccess;
@@ -446,21 +453,22 @@ IOReturn CLASS::load_fixed_shaders()
 HIDDEN
 void CLASS::unload_fixed_shaders()
 {
-	SVGA3D* td;
+	uint32_t i;
+	SVGA3D* svga3d;
 	if (!m_shaders_loaded ||
 		!isIdValid(m_context_id) ||
 		!m_provider)
 		return;
-	td = m_provider->lock3D();
-	if (!td)
+	svga3d = m_provider->lock3D();
+	if (!svga3d)
 		return;
-	td->SetShader(m_context_id, SVGA3D_SHADERTYPE_PS, SVGA_ID_INVALID);
-	td->DestroyShader(m_context_id, 3U, SVGA3D_SHADERTYPE_PS);
-	td->DestroyShader(m_context_id, 2U, SVGA3D_SHADERTYPE_PS);
-	td->DestroyShader(m_context_id, 1U, SVGA3D_SHADERTYPE_PS);
+	svga3d->SetShader(m_context_id, SVGA3D_SHADERTYPE_PS, SVGA_ID_INVALID);
+	for (i = 0U; i != NUM_FIXED_SHADERS; ++i)
+		svga3d->DestroyShader(m_context_id, i + 1U, SVGA3D_SHADERTYPE_PS);
 	m_provider->unlock3D();
 	m_shaders_loaded = false;
 }
+#endif
 
 #pragma mark -
 #pragma mark IOUserClient Methods
@@ -547,12 +555,12 @@ IOReturn CLASS::clientMemoryForType(UInt32 type, IOOptionBits* options, IOMemory
 			m_shared->unlockShared();
 			if ((pcbRet & 2U) && m_surface_client)
 				m_surface_client->touchRenderTarget();
-			complete_command_buffer_io();
+			complete_transfer_io(&m_command_buffer.xfer);
 			lockAccel(m_provider);
 			/*
 			 * AB58: reinitialize buffer
 			 */
-			md = m_command_buffer.md;
+			md = m_command_buffer.xfer.md;
 			if (!md)
 				return kIOReturnNoResources;
 			md->retain();
@@ -569,7 +577,7 @@ IOReturn CLASS::clientMemoryForType(UInt32 type, IOOptionBits* options, IOMemory
 			return kIOReturnSuccess;
 		case 1:
 			lockAccel(m_provider);
-			md = m_context_buffer0.md;
+			md = m_context_buffer0.xfer.md;
 			if (!md) {
 				unlockAccel(m_provider);
 				return kIOReturnNoResources;
@@ -628,7 +636,7 @@ IOReturn CLASS::clientMemoryForType(UInt32 type, IOOptionBits* options, IOMemory
 			break;
 		case 4:
 			lockAccel(m_provider);
-			md = m_command_buffer.md;
+			md = m_command_buffer.xfer.md;
 			if (!md) {
 				unlockAccel(m_provider);
 				return kIOReturnNoResources;
@@ -711,7 +719,9 @@ bool CLASS::start(IOService* provider)
 		m_context_id = SVGA_ID_INVALID;
 		goto bad;
 	}
+#if 0
 	load_fixed_shaders();	// Note: ignore error
+#endif
 	// TBD getVRAMDescriptors
 	if (!allocAllContextBuffers()) {
 		GLLog(1, "%s: allocAllContextBuffers failed\n", __FUNCTION__);
@@ -947,9 +957,8 @@ HIDDEN
 IOReturn CLASS::finish()
 {
 	GLLog(2, "%s()\n", __FUNCTION__);
-	/*
-	 * TBD
-	 */
+	if (m_provider)
+		return m_provider->SyncFIFO();
 	return kIOReturnSuccess;
 }
 
@@ -957,9 +966,8 @@ HIDDEN
 IOReturn CLASS::wait_for_stamp(uintptr_t c1)
 {
 	GLLog(2, "%s(%lu)\n", __FUNCTION__, c1);
-	/*
-	 * TBD
-	 */
+	if (c1 && m_provider)
+		m_provider->SyncToFence(static_cast<uint32_t>(c1));
 	return kIOReturnSuccess;
 }
 

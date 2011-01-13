@@ -335,17 +335,6 @@ IOReturn CLASS::new_texture(struct VendorNewTextureDataStruc const* struct_in,
 	if (struct_in->num_faces != 1U &&
 		struct_in->num_faces != 6U)
 		return kIOReturnBadArgument;
-	/*
-	 * Only support 1 face, 1 mipmap for now
-	 */
-	if (struct_in->num_faces != 1U ||
-		struct_in->min_mipmap != 0U) {
-		DVLog(1, "%s: num_faces == %u, num_mipmaps == %u, min_mipmap == %u Unsupported\n", __FUNCTION__,
-			  struct_in->num_faces, struct_in->num_mipmaps, struct_in->min_mipmap);
-		return kIOReturnUnsupported;
-	}
-	if (struct_in->num_mipmaps > 1U)
-		DVLog(3, "%s: num_mipmaps == %u, will only load mipmap 0\n", __FUNCTION__, struct_in->num_mipmaps);
 	*struct_out_size = sizeof *struct_out;
 	bzero(struct_out, sizeof *struct_out);
 	m_shared->lockShared();

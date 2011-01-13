@@ -267,9 +267,9 @@ void CLASS::finalize_texture(class VMsvga2Accel* provider, VMsvga2TextureBuffer*
 		texture->client_map->release();
 		texture->client_map = 0;
 	}
-	if (texture->md) {
-		texture->md->release();
-		texture->md = 0;
+	if (texture->xfer.md) {
+		texture->xfer.md->release();
+		texture->xfer.md = 0;
 	}
 	if (!provider)
 		return;
@@ -356,8 +356,8 @@ VMsvga2TextureBuffer* CLASS::new_agp_texture(mach_vm_address_t pixels,
 			p1->agp_addr != down_pixels ||
 			p1->agp_size != up_size)
 			continue;
-		md = IOMemoryDescriptor::withPersistentMemoryDescriptor(p1->md);	// md in esi
-		if (md != p1->md) {
+		md = IOMemoryDescriptor::withPersistentMemoryDescriptor(p1->xfer.md);	// md in esi
+		if (md != p1->xfer.md) {
 			p1->agp_flag = 1U;
 			if (md)
 				goto common;
@@ -391,7 +391,9 @@ common:
 		md->release();
 		return 0;
 	}
-	p2->md = md;
+	p2->xfer.md = md;
+	p2->xfer.gmr_id = SVGA_ID_INVALID;
+	p2->xfer.fence = 0U;
 	p2->agp_offset_in_page = offset_in_page;
 	p2->agp_addr = down_pixels;
 	p2->agp_size = md->getLength();
@@ -623,7 +625,7 @@ VMsvga2TextureBuffer* CLASS::new_texture(uint32_t size0,
 			overhead = 0x80U;
 		}
 	}
-	total_size = (3U * size0 + overhead + (PAGE_SIZE - 1U)) & -PAGE_SIZE;
+	total_size = (size0 + overhead + PAGE_SIZE + 3U) & -PAGE_SIZE;
 #if 0
 	vm_size_t limit = 3U * (m_provider->0x93C << PAGE_SHIFT) >> 2;
 	if (total_size > limit)
@@ -645,7 +647,9 @@ VMsvga2TextureBuffer* CLASS::new_texture(uint32_t size0,
 		SHLog(1, "%s: IOBufferMemoryDescriptor allocation failed\n", __FUNCTION__);
 		goto clean2;
 	}
-	p2->md = bmd;
+	p2->xfer.md = bmd;
+	p2->xfer.gmr_id = SVGA_ID_INVALID;
+	p2->xfer.fence = 0U;
 	p2->creator = this;
 	p2->client_map = bmd->createMappingInTask(m_owning_task,
 											  0U,
@@ -669,7 +673,7 @@ VMsvga2TextureBuffer* CLASS::new_texture(uint32_t size0,
 
 clean3:
 	bmd->release();
-	p2->md = 0;
+	p2->xfer.md = 0;
 clean2:
 	free_buf_handle(p2, p2->sys_obj->object_id);
 	free_client_shared(p2->sys_obj);

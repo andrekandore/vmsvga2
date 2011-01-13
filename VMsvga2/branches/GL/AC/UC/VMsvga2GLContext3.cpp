@@ -28,9 +28,11 @@
  */
 
 #include <IOKit/IOLib.h>
+#include <libkern/crypto/md5.h>
 #define GL_INCL_PUBLIC
 #define GL_INCL_PRIVATE
 #include "GLCommon.h"
+#include "Shaders.h"
 #include "VLog.h"
 #include "VMsvga2Accel.h"
 #include "VMsvga2GLContext.h"
@@ -48,14 +50,17 @@
 
 #define MAX_NUM_DECLS 12U
 
+#define PRINT_PS
+
 #pragma mark -
 #pragma mark Some Strings
 #pragma mark -
 
+#ifdef PRINT_PS
 static
 char const* ps_regtype_names[] =
 {
-	"R", "T", "Const", "S", "OC", "OD", "U", "Invalid"
+	"R", "T", "C", "S", "OC", "OD", "U", "Invalid"
 };
 
 static
@@ -73,13 +78,20 @@ char const* ps_arith_ops[] =
 };
 
 static
+int ps_arith_num_params[] =
+{
+	0, 2, 1, 2, 3, 3, 2, 2, 1, 1, 1, 1, 1, 3, 2, 2, 1, 1, 1, 2, 2
+};
+
+static
 char const* ps_sample_type[] =
 {
 	"_2d", "_cube", "_volume", ""
 };
 
 static
-char const coord_letters[] = "xyzw";
+char const coord_letters[] = "xyzw01__";
+#endif /* PRINT_PS */
 
 #pragma mark -
 #pragma mark Struct Definitions
@@ -90,6 +102,14 @@ union DefineRegion
 {
 	uint8_t b[sizeof(IOAccelDeviceRegion) + N * sizeof(IOAccelBounds)];
 	IOAccelDeviceRegion r;
+};
+
+struct ShaderEntry
+{
+	uint8_t md5[MD5_DIGEST_LENGTH];
+	SVGA3dShaderType shader_type;
+	uint32_t shader_id;
+	ShaderEntry* next;
 };
 
 #pragma mark -
@@ -190,6 +210,7 @@ uint32_t xlate_stencilop(uint32_t v)
 	return SVGA3D_STENCILOP_INVALID;
 }
 
+#ifdef PRINT_PS
 static
 char const* xlate_ps_reg_type(uint8_t u)
 {
@@ -219,17 +240,22 @@ char const* xlate_ps_arith_src_reg(char* str, uint8_t regtype, uint8_t regnum, u
 {
 	char* p = str;
 	int i;
-	if ((mask & 0x8888U) == 0x8888U)
-		*p++ = '-';
+	*p++ = ',';
+	*p++ = ' ';
 	p += snprintf(p, 31, "%s%u", xlate_ps_reg_type(regtype), regnum);
-	if ((mask & 0x3333U) == 0x0123U)
+	if ((mask & 0xFFFFU) == 0x0123U)
 		goto done;
-	for (i = 3; i >= 0; --i)
-		*p++ = coord_letters[(mask >> (4 * i)) & 3U];
+	*p++ = '.';
+	for (i = 3; i >= 0; --i) {
+		if ((mask >> (4 * i)) & 8U)
+			*p++ = '-';
+		*p++ = coord_letters[(mask >> (4 * i)) & 7U];
+	}
 done:
 	*p = 0;
 	return str;
 }
+#endif /* PRINT_PS */
 
 static
 IOReturn analyze_vertex_format(uint32_t s2,
@@ -309,47 +335,31 @@ IOReturn analyze_vertex_format(uint32_t s2,
 	for (tc = 0U; tc != 8U; ++tc) {
 		switch (bit_select(s2, static_cast<int>(tc) * 4, 4)) {
 			case 0U: /* TEXCOORDFMT_2D */
-				pArray[i].identity.usage = SVGA3D_DECLUSAGE_TEXCOORD;
-				pArray[i].identity.usageIndex = tc;
 				pArray[i].identity.type = SVGA3D_DECLTYPE_FLOAT2;
 				pArray[i].array.offset = static_cast<uint32_t>(d3d_size);
 				d3d_size += 2U * sizeof(float);
 				break;
 			case 1U: /* TEXCOORDFMT_3D */
-				pArray[i].identity.usage = SVGA3D_DECLUSAGE_TEXCOORD;
-				pArray[i].identity.usageIndex = tc;
 				pArray[i].identity.type = SVGA3D_DECLTYPE_FLOAT3;
 				pArray[i].array.offset = static_cast<uint32_t>(d3d_size);
 				d3d_size += 3U * sizeof(float);
 				break;
 			case 2U: /* TEXCOORDFMT_4D */
-				pArray[i].identity.usage = SVGA3D_DECLUSAGE_TEXCOORD;
-				pArray[i].identity.usageIndex = tc;
-#if 1
 				pArray[i].identity.type = SVGA3D_DECLTYPE_FLOAT4;
-#else
-				pArray[i].identity.type = SVGA3D_DECLTYPE_FLOAT2;
-#endif
 				pArray[i].array.offset = static_cast<uint32_t>(d3d_size);
 				d3d_size += 4U * sizeof(float);
 				break;
 			case 3U: /* TEXCOORDFMT_1D */
-				pArray[i].identity.usage = SVGA3D_DECLUSAGE_TEXCOORD;
-				pArray[i].identity.usageIndex = tc;
 				pArray[i].identity.type = SVGA3D_DECLTYPE_FLOAT1;
 				pArray[i].array.offset = static_cast<uint32_t>(d3d_size);
 				d3d_size += sizeof(float);
 				break;
 			case 4U: /* TEXCOORDFMT_2D_16 */
-				pArray[i].identity.usage = SVGA3D_DECLUSAGE_TEXCOORD;
-				pArray[i].identity.usageIndex = tc;
 				pArray[i].identity.type = SVGA3D_DECLTYPE_FLOAT16_2;
 				pArray[i].array.offset = static_cast<uint32_t>(d3d_size);
 				d3d_size += sizeof(uint32_t);
 				break;
 			case 5U: /* TEXCOORDFMT_4D_16 */
-				pArray[i].identity.usage = SVGA3D_DECLUSAGE_TEXCOORD;
-				pArray[i].identity.usageIndex = tc;
 				pArray[i].identity.type = SVGA3D_DECLTYPE_FLOAT16_4;
 				pArray[i].array.offset = static_cast<uint32_t>(d3d_size);
 				d3d_size += 2U * sizeof(uint32_t);
@@ -359,6 +369,8 @@ IOReturn analyze_vertex_format(uint32_t s2,
 			default:
 				return kIOReturnError;
 		}
+		pArray[i].identity.usage = SVGA3D_DECLUSAGE_TEXCOORD;
+		pArray[i].identity.usageIndex = tc;
 		tc_mask |= 1U << tc;
 		++i;
 		if (i >= *num_decls)
@@ -409,23 +421,6 @@ void flatshade_polygon(uint8_t* vertex_array,
 		}
 }
 
-static
-void kill_fog(uint8_t* vertex_array,
-			  size_t num_vertices,
-			  SVGA3dVertexDecl const* decls,
-			  size_t num_decls)
-{
-	size_t i, j;
-
-	for (i = 0U; i != num_decls; ++i)
-		if (decls[i].identity.usage == SVGA3D_DECLUSAGE_COLOR &&
-			decls[i].identity.usageIndex == 1U) {
-			for (j = 0U; j != num_vertices; ++j)
-				vertex_array[j * decls[i].array.stride + decls[i].array.offset + 3U] = 0xFFU;
-			break;
-		}
-}
-
 #if 0
 static
 void make_diag(float* matrix, float d0, float d1, float d2, float d3)
@@ -443,6 +438,94 @@ void make_diag(float* matrix, float d0, float d1, float d2, float d3)
 #pragma mark -
 
 HIDDEN
+uint32_t CLASS::cache_shader(uint32_t const* source, uint32_t num_dwords)
+{
+	MD5_CTX md5_ctx;
+	uint8_t hash[MD5_DIGEST_LENGTH];
+	ShaderEntry *e, *f;
+	SVGA3D* svga3d;
+	uint32_t i;
+
+	if (!source || !num_dwords)
+		return SVGA_ID_INVALID;
+	MD5Init(&md5_ctx);
+	MD5Update(&md5_ctx, source, static_cast<unsigned>(num_dwords * sizeof(uint32_t)));
+	MD5Final(&hash[0], &md5_ctx);
+	for (f = 0, e = m_shader_cache; e; f = e, e = e->next)
+		if (!memcmp(&hash[0], &e->md5[0], sizeof hash)) {
+			if (e != m_shader_cache) {
+				/*
+				 * move-to-front
+				 */
+				if (f)
+					f->next = e->next;
+				e->next = m_shader_cache;
+				m_shader_cache = e;
+			}
+			goto done;
+		}
+	e = static_cast<typeof e>(IOMalloc(sizeof *e));
+	if (!e)
+		return SVGA_ID_INVALID;
+	memcpy(&e->md5[0], &hash[0], sizeof hash);
+	e->shader_type = SVGA3D_SHADERTYPE_PS;
+	e->shader_id = SVGA_ID_INVALID;
+	e->next = m_shader_cache;
+	m_shader_cache = e;
+	for (i = 0U; i != NUM_FIXED_SHADERS; ++i)
+		if (!memcmp(&hash[0], &g_hashes[2U * i], sizeof hash)) {
+			svga3d = m_provider->lock3D();
+			if (!svga3d)
+				goto done;
+			e->shader_id = m_next_shid++;
+			svga3d->DefineShader(m_context_id,
+								 e->shader_id,
+								 e->shader_type,
+								 reinterpret_cast<uint32_t const*>(g_pointers[i]),
+								 g_lengths[i]);	// Note: ignores error
+			m_provider->unlock3D();
+			goto done;
+		}
+#ifdef PRINT_PS
+	GLLog(3, "%s: shader hash { %#llx, %#llx }\n", __FUNCTION__,
+		  *reinterpret_cast<uint64_t const*>(&hash[0]),
+		  *reinterpret_cast<uint64_t const*>(&hash[8]));
+	ip_print_ps(source, num_dwords);
+#endif
+done:
+	return e->shader_id;
+}
+
+HIDDEN
+void CLASS::purge_shader_cache()
+{
+	ShaderEntry *e, *f;
+	SVGA3D* svga3d;
+	if (!m_provider || !isIdValid(m_context_id))
+		goto just_delete_them;
+	svga3d = m_provider->lock3D();
+	if (!svga3d)
+		goto just_delete_them;
+	svga3d->SetShader(m_context_id, SVGA3D_SHADERTYPE_PS, SVGA_ID_INVALID);
+#if 0
+	svga3d->SetShader(m_context_id, SVGA3D_SHADERTYPE_VS, SVGA_ID_INVALID);
+#endif
+	m_active_shid = SVGA_ID_INVALID;
+	for (e = m_shader_cache; e; e = e->next)
+		if (isIdValid(e->shader_id))
+			svga3d->DestroyShader(m_context_id, e->shader_id, e->shader_type);
+	m_provider->unlock3D();
+
+just_delete_them:
+	for (e = m_shader_cache; e; e = f) {
+		f = e->next;
+		IOFree(e, sizeof *e);
+	}
+	m_shader_cache = 0;
+	m_next_shid = 0U;
+}
+
+HIDDEN
 void CLASS::adjust_texture_coords(uint8_t* vertex_array,
 								  size_t num_vertices,
 								  void const* decls,
@@ -457,6 +540,10 @@ void CLASS::adjust_texture_coords(uint8_t* vertex_array,
 	 *   determined by the pixel shader, which can use any pair
 	 *   of sampler and tex-coord-index.
 	 */
+#if 0
+	GLLog(3, "%s:   s2 == %#x, s4 == %#x\n", __FUNCTION__,
+		  m_intel_state.imm_s[2], m_intel_state.imm_s[4] & 0x1FC4U);
+#endif
 	for (i = 0U; i != num_decls; ++i)
 		if (_decls[i].identity.usage == SVGA3D_DECLUSAGE_TEXCOORD &&
 			_decls[i].identity.usageIndex < 8U &&
@@ -488,7 +575,6 @@ void CLASS::adjust_texture_coords(uint8_t* vertex_array,
 			  static_cast<int>(q[2] * 32767.0F),
 			  static_cast<int>(q[3] * 32767.0F),
 			  r[0]);
-		q[3] = 1.0F;
 	}
 #endif
 }
@@ -593,13 +679,6 @@ void CLASS::ip_prim3d_poly(uint32_t const* vertex_data, size_t num_vertex_dwords
 						  num_vertices,
 						  &decls[0],
 						  num_decls);
-#if 0
-	if (m_intel_state.imm_s[4] & (1U << 11))
-		kill_fog(m_arrays.kernel_ptr,
-				 num_vertices,
-				 &decls[0],
-				 num_decls);
-#endif
 	rc = upload_arrays(vsize + isize);
 	if (rc != kIOReturnSuccess) {
 		GLLog(1, "%s: upload_arrays return %#x\n", __FUNCTION__, rc);
@@ -708,13 +787,6 @@ void CLASS::ip_prim3d_direct(uint32_t prim_kind, uint32_t const* vertex_data, si
 							  num_vertices,
 							  &decls[0],
 							  num_decls);
-#if 0
-	if (m_intel_state.imm_s[4] & (1U << 11))
-		kill_fog(m_arrays.kernel_ptr,
-				 num_vertices,
-				 &decls[0],
-				 num_decls);
-#endif
 	rc = upload_arrays(vsize);
 	if (rc != kIOReturnSuccess) {
 		GLLog(1, "%s: upload_arrays return %#x\n", __FUNCTION__, rc);
@@ -1016,6 +1088,12 @@ void CLASS::ip_3d_map_state(uint32_t* p)
 			m_intel_state.surface_ids[i] = q[0];
 			width  = bit_select(q[1], 10, 11) + 1U;
 			height = bit_select(q[1], 21, 11) + 1U;
+#if 0
+			GLLog(3, "%s: texture stage %u, sid == %u, w == %u, h == %u, mapsurf == %u, mt == %u\n", __FUNCTION__,
+				  i, q[0], width, height,
+				  bit_select(q[1], 7, 3),
+				  bit_select(q[1], 3, 4));
+#endif
 			f[0] = 1.0F / static_cast<float>(width);
 			f[1] = 1.0F / static_cast<float>(height);
 			f[2] = 1.0F;
@@ -1034,13 +1112,13 @@ void CLASS::ip_3d_sampler_state(uint32_t* p)
 
 	for (i = 0U; i != 16U; ++i, mask >>= 1)
 		if (mask & 1U) {
-			tmi = bit_select(q[1], 1, 4);
-#if 0
 			/*
-			 * Note: it's probably not necessary to remember tmi
+			 * TBD: which is right
 			 */
-			m_intel_state.sampler_to_texstage &= ~(0xFULL << (i * 4U));
-			m_intel_state.sampler_to_texstage |= static_cast<uint64_t>(tmi) << (i * 4U);
+#if 0
+			tmi = bit_select(q[1], 1, 4);
+#else
+			tmi = i;
 #endif
 #if 0
 			GLLog(3, "%s:   txstage %u\n", __FUNCTION__, i);
@@ -1068,6 +1146,10 @@ void CLASS::ip_3d_sampler_state(uint32_t* p)
 				  tmi,
 				  bit_select(q[1],  0, 1));
 			GLLog(3, "%s:     Border Color %#x\n", __FUNCTION__, q[2]);
+#endif
+#if 0
+			GLLog(3, "%s:   binding S%u to T%u%s\n", __FUNCTION__,
+				  i, tmi, bit_select(q[1],  5, 1) ? "" : " unnormalized-coords");
 #endif
 			if (bit_select(q[1], 5, 1))
 				m_intel_state.prettex_coordinates &= ~(1U << tmi);
@@ -1228,13 +1310,14 @@ void CLASS::ip_backface_stencil_ops(uint32_t cmd)
 		m_provider->setRenderState(m_context_id, i, &rs[0]);
 }
 
+#ifdef PRINT_PS
 HIDDEN
-void CLASS::ip_print_ps(uint32_t* p)
+void CLASS::ip_print_ps(uint32_t const* p, uint32_t num_dwords)
 {
-	uint32_t i, num_inst = (((*p) & 0xFFFFU) + 1U) / 3U;
+	uint32_t i, num_inst = num_dwords / 3U;
+	int np;
 	char ps_mask_buf[6];
 	char ps_src_reg_buf[3][32];
-	++p;
 	if (!num_inst)
 		return;
 	GLLog(3, "%s: Pixel Shader Program\n", __FUNCTION__);
@@ -1242,24 +1325,38 @@ void CLASS::ip_print_ps(uint32_t* p)
 		uint8_t opcode = p[0] >> 24;
 		if (opcode <= 20U) {
 			// Arithmetic
-			GLLog(3, "%s:   %s%s %s%u%s, %s, %s, %s\n", __FUNCTION__,
+			np = ps_arith_num_params[opcode];
+			if (np <= 0) {
+				GLLog(3, "%s:   %s\n", __FUNCTION__, ps_arith_ops[opcode]);
+				continue;
+			}
+			xlate_ps_arith_src_reg(&ps_src_reg_buf[0][0],
+								   bit_select(p[0],  7,  3),
+								   bit_select(p[0],  2,  4),
+								   bit_select(p[1], 16, 16));
+			if (np >= 2) {
+				xlate_ps_arith_src_reg(&ps_src_reg_buf[1][0],
+									   bit_select(p[1], 13, 3),
+									   bit_select(p[1],  8, 4),
+									   (bit_select(p[1], 0, 8) << 8) | bit_select(p[2], 24, 8));
+			} else
+				ps_src_reg_buf[1][0] = 0;
+			if (np >= 3) {
+				xlate_ps_arith_src_reg(&ps_src_reg_buf[2][0],
+									   bit_select(p[2], 21,  3),
+									   bit_select(p[2], 16,  4),
+									   bit_select(p[2],  0, 16));
+			} else
+				ps_src_reg_buf[2][0] = 0;
+			GLLog(3, "%s:   %s%s %s%u%s%s%s%s\n", __FUNCTION__,
 				  ps_arith_ops[opcode],
 				  bit_select(p[0], 22, 1) ? "_sat" : "",
 				  xlate_ps_reg_type(bit_select(p[0], 19, 3)),
 				  bit_select(p[0], 14, 4),
 				  xlate_ps_mask(&ps_mask_buf[0], bit_select(p[0], 10, 4)),
-				  xlate_ps_arith_src_reg(&ps_src_reg_buf[0][0],
-										 bit_select(p[0],  7,  3),
-										 bit_select(p[0],  2,  4),
-										 bit_select(p[1], 16, 16)),
-				  xlate_ps_arith_src_reg(&ps_src_reg_buf[1][0],
-										 bit_select(p[1], 13, 3),
-										 bit_select(p[1],  8, 4),
-										 (bit_select(p[1], 0, 8) << 8) | bit_select(p[2], 24, 8)),
-				  xlate_ps_arith_src_reg(&ps_src_reg_buf[2][0],
-										 bit_select(p[2], 21,  3),
-										 bit_select(p[2], 16,  4),
-										 bit_select(p[2],  0, 16)));
+				  &ps_src_reg_buf[0][0],
+				  &ps_src_reg_buf[1][0],
+				  &ps_src_reg_buf[2][0]);
 		} else if (opcode <= 24U) {
 			// Texture
 			GLLog(3, "%s:   %s %s%u, %s%u, S%u\n", __FUNCTION__,
@@ -1279,6 +1376,7 @@ void CLASS::ip_print_ps(uint32_t* p)
 		}
 	}
 }
+#endif
 
 HIDDEN
 void CLASS::ip_select_and_load_ps(uint32_t* p)
@@ -1286,60 +1384,52 @@ void CLASS::ip_select_and_load_ps(uint32_t* p)
 	/*
 	 * Simplified shader support
 	 */
+#if 0
 	uint32_t s4 = m_intel_state.imm_s[4];
-	SVGA3D* td = m_provider->lock3D();
-	if (!td)
+#else
+	uint32_t shader_id = cache_shader(p + 1, (p[0] & 0xFFFFU) + 1U);
+#endif
+	if (shader_id == m_active_shid)
 		return;
+	SVGA3D* svga3d = m_provider->lock3D();
+	if (!svga3d)
+		return;
+#if 0
 	if (s4 & (1U << 11))	/* S4_VFMT_SPEC_FOG */
-		td->SetShader(m_context_id, SVGA3D_SHADERTYPE_PS, 3U);
-	else if ((m_intel_state.imm_s[2] & 15U) != 15U) { /* Tex1 + Diffuse */
-#if 0
-		/*
-		 * Alternative implementation using the
-		 * fixed-function pipeline, for texture
-		 * stage index.
-		 */
-		for (int i = 0; i != 7; ++i)
-			ts[i].stage = index;
-		ts[0].name = SVGA3D_TS_TEXCOORDINDEX;
-		ts[0].value = index;
-		ts[1].name = SVGA3D_TS_COLOROP;
-		ts[1].value = SVGA3D_TC_MODULATE;
-		ts[2].name = SVGA3D_TS_ALPHAOP;
-		ts[2].value = SVGA3D_TC_MODULATE;
-		ts[3].name = SVGA3D_TS_COLORARG1;
-		ts[3].value = SVGA3D_TA_TEXTURE;
-		ts[4].name = SVGA3D_TS_COLORARG2;
-		ts[4].value = SVGA3D_TA_PREVIOUS;
-		ts[5].name = SVGA3D_TS_ALPHAARG1;
-		ts[5].value = SVGA3D_TA_TEXTURE;
-		ts[6].name = SVGA3D_TS_ALPHAARG2;
-		ts[6].value = SVGA3D_TA_PREVIOUS;
+		svga3d->SetShader(m_context_id, SVGA3D_SHADERTYPE_PS, 3U);
+	else if ((m_intel_state.imm_s[2] & 15U) != 15U) /* Tex1 + Diffuse */
+		svga3d->SetShader(m_context_id, SVGA3D_SHADERTYPE_PS, 2U);
+	else if (s4 & (1U << 10)) /* S4_VFMT_COLOR */
+		svga3d->SetShader(m_context_id, SVGA3D_SHADERTYPE_PS, 1U);
+	else
+		svga3d->SetShader(m_context_id, SVGA3D_SHADERTYPE_PS, SVGA_ID_INVALID);
+#else
+	svga3d->SetShader(m_context_id, SVGA3D_SHADERTYPE_PS, shader_id);
+	m_active_shid = shader_id;
 #endif
-		td->SetShader(m_context_id, SVGA3D_SHADERTYPE_PS, 2U);
-	} else if (s4 & (1U << 10)) { /* S4_VFMT_COLOR */
+	m_provider->unlock3D();
+}
+
+HIDDEN
+void CLASS::ip_load_ps_const(uint32_t* p)
+{
+	uint32_t i, mask = p[1];
+	SVGA3D* svga3d;
+	if (!(mask & 0xFFFFU))
+		return;
+	svga3d = m_provider->lock3D();
+	if (!svga3d)
+		return;
+	p += 2;
+	for (i = 0U; i != 16U; ++i)
+		if (mask & (1U << i)) {
 #if 0
-		/*
-		 * Alternative implementation using the
-		 * fixed-function pipeline, for texture
-		 * stage index.
-		 */
-		for (int i = 0; i != 5; ++i)
-			ts[i].stage = index;
-		ts[0].name = SVGA3D_TS_TEXCOORDINDEX;
-		ts[0].value = index;
-		ts[1].name = SVGA3D_TS_COLOROP;
-		ts[1].value = SVGA3D_TC_SELECTARG1;
-		ts[2].name = SVGA3D_TS_ALPHAOP;
-		ts[2].value = SVGA3D_TC_SELECTARG1;
-		ts[3].name = SVGA3D_TS_COLORARG1;
-		ts[3].value = SVGA3D_TA_PREVIOUS;
-		ts[4].name = SVGA3D_TS_ALPHAARG1;
-		ts[4].value = SVGA3D_TA_PREVIOUS;
+			GLLog(3, "%s:   const %u == [%#x, %#x, %#x, %#x]\n", __FUNCTION__,
+				  i, p[0], p[1], p[2], p[3]);
 #endif
-		td->SetShader(m_context_id, SVGA3D_SHADERTYPE_PS, 1U);
-	} else
-		td->SetShader(m_context_id, SVGA3D_SHADERTYPE_PS, SVGA_ID_INVALID);
+			svga3d->SetShaderConst(m_context_id, i, SVGA3D_SHADERTYPE_PS, SVGA3D_CONST_TYPE_FLOAT, p);
+			p += 4;
+		}
 	m_provider->unlock3D();
 }
 
@@ -1516,10 +1606,10 @@ uint32_t CLASS::decode_3d(uint32_t* p)
 					skip = ip_load_immediate(p);
 					break;
 				case 0x05U: /* 3DSTATE_PIXEL_SHADER_PROGRAM */
-#if 0
-					ip_print_ps(p);
-#endif
 					ip_select_and_load_ps(p);
+					break;
+				case 0x06U: /* 3DSTATE_PIXEL_SHADER_CONSTANTS */
+					ip_load_ps_const(p);
 					break;
 				case 0x81U: /* 3DSTATE_SCISSOR_RECT_0_CMD */
 #if 0
@@ -1581,7 +1671,6 @@ uint32_t CLASS::decode_3d(uint32_t* p)
 				case 0x9CU: /* 3DSTATE_CLEAR_PARAMETERS */
 					skip = ip_clear_params(p);
 					break;
-				case 0x06U: /* 3DSTATE_PIXEL_SHADER_CONSTANTS */
 				case 0x80U: /* 3DSTATE_DRAW_RECT_CMD */
 				case 0x8EU: /* 3DSTATE_BUF_INFO_CMD */
 					break;
@@ -1612,15 +1701,6 @@ uint32_t CLASS::submit_buffer(uint32_t* kernel_buffer_ptr, uint32_t size_dwords)
 	for (; p < limit; p += skip) {
 		cmd = *p;
 		skip = 0U;
-#if 0
-		if (opcode_u <= 0xAU || (opcode_u >= 0x20U && opcode_u <= 0x3DU)) {
-			GLLog(3, "%s:   Apple cmd in stream %#x\n", __FUNCTION__, cmd);
-			skip = cmd & 0xFFFFU;
-			if (!skip)
-				++skip;
-			continue;
-		}
-#endif
 		switch (cmd >> 29) {
 			case 0U:
 				skip = decode_mi(p);

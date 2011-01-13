@@ -225,7 +225,7 @@ int default_format(uint8_t bytespp)
 		case 2U:
 			return SVGA3D_A1R5G5B5;
 		case 1U:
-			return SVGA3D_BUFFER;
+			return SVGA3D_LUMINANCE8 /* SVGA3D_BUFFER */;	// TBD: gotta solve this
 	}
 	return SVGA3D_FORMAT_INVALID;
 }
@@ -239,37 +239,36 @@ bool isPagedOff(GLDSysObject* sys_obj, uint8_t face, uint8_t mipmap)
 }
 
 static
-IOReturn readGLDTextureHeader(VMsvga2TextureBuffer* tx, VMsvga2Accel::ExtraInfoEx* extra, uint8_t face, uint8_t mipmap)
+bool areAnyPagedOff(GLDSysObject* sys_obj)
 {
-	IOReturn rc;
-	GLDTextureHeader gld_th;
-	IOByteCount bc;
+	int i;
+	if (!sys_obj)
+		return false;
+	for (i = 0; i != 6; ++i)
+		if (sys_obj->pageoff[i] & ~sys_obj->pageon[i])
+			return true;
+	return false;
+}
 
-	if (!tx ||
-		!extra ||
-		face >= 6U ||
-		mipmap >= 12U)
+static
+IOReturn mapGLDTextureHeader(VMsvga2TextureBuffer* tx, IOMemoryMap** map)
+{
+	IOMemoryMap* mmap;
+
+	if (!tx)
 		return kIOReturnBadArgument;
-	if (!tx->md)
-		return kIOReturnNoMemory;
-	rc = tx->md->prepare();
-	if (rc != kIOReturnSuccess)
-		return rc;
-	bc = tx->md->readBytes((face * 12U + mipmap) * sizeof gld_th, &gld_th, sizeof gld_th);
-	tx->md->complete();
-	if (bc < sizeof gld_th)
-		return kIOReturnError;
-	if (tx->sys_obj_type == TEX_TYPE_STD) {
-		extra->mem_offset_in_gmr = gld_th.offset_in_client;
-		extra->mem_limit = tx->md->getLength() - extra->mem_offset_in_gmr;
-	} else {	// Note: should be TEX_TYPE_OOB here
-		extra->mem_offset_in_gmr += gld_th.offset_in_client;
-		extra->mem_limit -= gld_th.offset_in_client;
+	if (!tx->xfer.md)
+		return kIOReturnNotReady;
+	mmap = tx->xfer.md->createMappingInTask(kernel_task, 0U, kIOMapAnywhere);
+	if (!mmap)
+		return kIOReturnNoResources;
+#if 0
+	if (mmap->getLength() < 72U * sizeof(GLDTextureHeader)) {
+		mmap->release();
+		return kIOReturnNotReadable;
 	}
-	if (gld_th.pitch) {
-		extra->mem_pitch = gld_th.pitch;
-		tx->pitch = gld_th.pitch;
-	}
+#endif
+	*map = mmap;
 	return kIOReturnSuccess;
 }
 
@@ -424,7 +423,7 @@ uint32_t CLASS::processCommandBuffer(VendorCommandDescriptor* result)
 	} while (cb_iter.cmd);
 	GLLog(3, "%s:   processed %d stream commands, error == %#x\n", __FUNCTION__, commands_processed, m_stream_error);
 	result->next = &m_command_buffer.kernel_ptr->downstream[0] + cb_iter.dso_bytes / sizeof(uint32_t);
-	result->ds_ptr = m_command_buffer.gart_ptr + static_cast<uint32_t>(sizeof(VendorCommandBufferHeader)) + cb_iter.dso_bytes;
+	result->ds_ptr = m_command_buffer.xfer.gart_ptr + static_cast<uint32_t>(sizeof(VendorCommandBufferHeader)) + cb_iter.dso_bytes;
 	result->ds_count_dwords = cb_iter.ds_count_dwords;
 	result->f2 = cb_iter.f2;
 	return cb_iter.flags;
@@ -654,6 +653,9 @@ void CLASS::write_tex_data(uint32_t i, uint32_t* q, VMsvga2TextureBuffer* tx)
 			break;
 		default:
 			q[0] = tx->surface_id;
+#if 0
+			GLLog(3, "%s: format for surface %u is %u\n", __FUNCTION__, tx->surface_id, tx->surface_format);
+#endif
 			break;
 	}
 }
@@ -662,160 +664,243 @@ HIDDEN
 IOReturn CLASS::create_host_surface_for_texture(VMsvga2TextureBuffer* tx)
 {
 	IOReturn rc;
+	uint32_t face, mipmap;
+	SVGA3D* svga3d;
+	SVGA3dSurfaceFace* faces;
+	SVGA3dSize* mipmaps;
+	IOMemoryMap* mmap;
+	GLDTextureHeader *headers, *gld_th;
 
-	if (!tx)
+	if (!m_provider)
+		return kIOReturnNotReady;
+	if (!tx ||
+		!tx->bytespp ||
+		tx->num_faces > 6U ||
+		tx->min_mipmap + tx->num_mipmaps > 12U)
 		return kIOReturnBadArgument;
-	if (!isIdValid(tx->surface_id)) {
-		tx->surface_id = m_provider->AllocSurfaceID();	// Note: doesn't fail
-		tx->surface_changed = 2;
-	}
-	if (tx->surface_changed) {
-		if (tx->surface_changed != 2)
-			m_provider->destroySurface(tx->surface_id);
-		tx->surface_changed = 0;
-		rc = m_provider->createTexture(tx->surface_id,
+	if (tx->sys_obj_type == TEX_TYPE_SURFACE)
+		return kIOReturnSuccess;
+	if (isIdValid(tx->surface_id))
+		return kIOReturnSuccess;
+	tx->surface_id = m_provider->AllocSurfaceID();	// Note: doesn't fail
+	switch (tx->sys_obj_type) {
+		case TEX_TYPE_AGPREF:
+			svga3d = m_provider->lock3D();
+			if (!svga3d) {
+				GLLog(1, "%s: cannot lock device\n", __FUNCTION__);
+				rc = kIOReturnNotReady;
+				goto clean1;
+			}
+			svga3d->BeginDefineSurface(tx->surface_id,
+									   SVGA3D_SURFACE_HINT_TEXTURE,
 									   static_cast<SVGA3dSurfaceFormat>(tx->surface_format),
-									   tx->width,
-									   tx->height,
-									   tx->depth);
-		if (rc != kIOReturnSuccess) {
-			m_provider->FreeSurfaceID(tx->surface_id);
-			tx->surface_id = SVGA_ID_INVALID;
-			return rc;
-		}
+									   &faces,
+									   &mipmaps,
+									   1U);
+			faces->numMipLevels = 1U;
+			mipmaps->width = tx->width;
+			mipmaps->height = tx->height;
+			mipmaps->depth = tx->depth;
+			svga3d->FIFOCommitAll();
+			m_provider->unlock3D();
+			break;
+		case TEX_TYPE_STD:
+		case TEX_TYPE_OOB:
+			rc = mapGLDTextureHeader(tx, &mmap);
+			if (rc != kIOReturnSuccess) {
+				GLLog(1, "%s: mapGLDTextureHeader return %#x\n", __FUNCTION__, rc);
+				goto clean1;
+			}
+			headers = reinterpret_cast<typeof headers>(mmap->getVirtualAddress()) + tx->min_mipmap;
+			svga3d = m_provider->lock3D();
+			if (!svga3d) {
+				GLLog(1, "%s: cannot lock device\n", __FUNCTION__);
+				rc = kIOReturnNotReady;
+				goto clean2;
+			}
+			svga3d->BeginDefineSurface(tx->surface_id,
+									   SVGA3dSurfaceFlags(SVGA3D_SURFACE_HINT_TEXTURE |
+														  (tx->num_faces == 6U ? SVGA3D_SURFACE_CUBEMAP : 0)),
+									   static_cast<SVGA3dSurfaceFormat>(tx->surface_format),
+									   &faces,
+									   &mipmaps,
+									   tx->num_faces * tx->num_mipmaps);
+			for (face = 0U; face != tx->num_faces; ++face, headers += 12) {
+				faces[face].numMipLevels = tx->num_mipmaps;
+				for (gld_th = headers, mipmap = 0U; mipmap != tx->num_mipmaps; ++mipmap, ++gld_th, ++mipmaps) {
+					if (!gld_th->offset_in_client)
+						continue;
+					mipmaps->width  = gld_th->width_bytes / tx->bytespp;
+					mipmaps->height = gld_th->height;
+					mipmaps->depth  = gld_th->depth;
+				}
+			}
+			svga3d->FIFOCommitAll();
+			m_provider->unlock3D();
+			mmap->release();
+			break;
+		default:
+			rc = kIOReturnUnsupported;
+			goto clean1;
 	}
 	return kIOReturnSuccess;
+
+clean2:
+	mmap->release();
+clean1:
+	m_provider->FreeSurfaceID(tx->surface_id);
+	tx->surface_id = SVGA_ID_INVALID;
+	return rc;
 }
 
 HIDDEN
 IOReturn CLASS::alloc_and_load_texture(VMsvga2TextureBuffer* tx)
 {
 	IOReturn rc;
-	uint32_t fence;
-	uint8_t sys_obj_type, face, mipmap;
-	IOMemoryDescriptor* data_md;
+	uint8_t sys_obj_type;
+	IOMemoryMap* mmap;
+	SVGA3dSurfaceImageId hostImage;
 	SVGA3dCopyBox copyBox;
 	VMsvga2Accel::ExtraInfoEx extra;
 	VMsvga2TextureBuffer* ltx;
+	GLDTextureHeader *headers, *gld_th;
+	vm_offset_t base_offset;
+	vm_size_t base_limit;
 
-	if (!tx)
+	if (!m_provider)
+		return kIOReturnNotReady;
+	if (!tx ||
+		!tx->bytespp ||
+		tx->num_faces > 6U ||
+		tx->min_mipmap + tx->num_mipmaps > 12U)
 		return kIOReturnBadArgument;
 	if (tx->surface_format == SVGA3D_FORMAT_INVALID) {
 		GLLog(1, "%s: invalid surface format\n", __FUNCTION__);
 		return kIOReturnNotReady;
 	}
 	sys_obj_type = tx->sys_obj_type;
-	face = 0U;
-	mipmap = 0U;
+	if (sys_obj_type == TEX_TYPE_SURFACE)
+		return kIOReturnSuccess;
+	mmap = 0;
+	bzero(&copyBox, sizeof copyBox);
 	bzero(&extra, sizeof extra);
-	extra.mem_pitch = tx->pitch;
 	extra.suffix_flags = 3U;
 	ltx = tx;
+	headers = 0;
+	base_offset = 0U;
+	base_limit = 0xFFFFFFFFU;
 	switch (sys_obj_type) {
-		case TEX_TYPE_SURFACE:
-			return kIOReturnSuccess;
 		case TEX_TYPE_AGPREF:
-			if (tx->linked_agp) {
-				ltx = tx->linked_agp;
-				extra.mem_offset_in_gmr = static_cast<vm_offset_t>(tx->agp_addr);	// Note: offset of pixels1, not pixels2
-				extra.mem_limit = ltx->agp_size - extra.mem_offset_in_gmr;
-			}
-			/*
-			 * TBD: What if linked_agp is NULL??
-			 */
+			if (!tx->linked_agp)
+				return kIOReturnBadArgument;
+			ltx = tx->linked_agp;
+			extra.mem_offset_in_gmr = static_cast<vm_offset_t>(tx->agp_addr);	// Note: offset of pixels1, not pixels2
+			extra.mem_pitch = tx->pitch;
+			extra.mem_limit = ltx->agp_size - extra.mem_offset_in_gmr;
 			break;
 		case TEX_TYPE_STD:
 		case TEX_TYPE_OOB:
-			if (!isPagedOff(tx->sys_obj, face, mipmap))
+			if (!areAnyPagedOff(tx->sys_obj))
 				return kIOReturnSuccess;
-			dirtyTexture(tx, face, mipmap);
-			if (sys_obj_type == TEX_TYPE_OOB && tx->linked_agp) {
+			if (sys_obj_type == TEX_TYPE_OOB) {
+				if (!tx->linked_agp)
+					return kIOReturnBadArgument;
 				ltx = tx->linked_agp;
-				extra.mem_offset_in_gmr = static_cast<vm_offset_t>(ltx->agp_offset_in_page);
-				extra.mem_limit = ltx->agp_size - extra.mem_offset_in_gmr;
-			}
+				base_offset = static_cast<vm_offset_t>(ltx->agp_offset_in_page);
+				base_limit = ltx->agp_size - base_offset;
+			} else if (tx->xfer.md)
+				base_limit = tx->xfer.md->getLength();
 			/*
 			 * TBD: is this needed for types TEX_TYPE_VB as well?
-			 * TBD: What if linked_agp is NULL for TEX_TYPE_OOB??
 			 */
-			rc = readGLDTextureHeader(tx, &extra, face, mipmap);
+			rc = mapGLDTextureHeader(tx, &mmap);
 			if (rc != kIOReturnSuccess) {
-				GLLog(1, "%s: readGLDTextureHeader return %#x\n", __FUNCTION__, rc);
+				GLLog(1, "%s: mapGLDTextureHeader return %#x\n", __FUNCTION__, rc);
 				return rc;
 			}
+			headers = reinterpret_cast<typeof headers>(mmap->getVirtualAddress()) + tx->min_mipmap;
 			break;
 		default:
 			GLLog(1, "%s: tex type %u - Unsupported\n", __FUNCTION__, sys_obj_type);
 			return kIOReturnUnsupported;
 	}
-	data_md = ltx->md;
-	if (!data_md) {
-		GLLog(1, "%s: no memory descriptor for texture data\n", __FUNCTION__);
-		return kIOReturnError;
-	}
-	bzero(&copyBox, sizeof copyBox);
-	copyBox.w = tx->width;
-	copyBox.h = tx->height;
-	copyBox.d = tx->depth;
 	rc = create_host_surface_for_texture(tx);
 	if (rc != kIOReturnSuccess) {
 		GLLog(1, "%s: create_host_surface_for_texture return %#x\n", __FUNCTION__, rc);
-		return rc;
+		goto clean1;
 	}
-	extra.mem_gmr_id = m_provider->AllocGMRID();
-	if (!isIdValid(extra.mem_gmr_id)) {
-		GLLog(1, "%s: Out of GMR IDs\n", __FUNCTION__);
-		return kIOReturnNoResources;
-	}
-	rc = data_md->prepare();
+	hostImage.sid = tx->surface_id;
+	rc = prepare_transfer_for_io(&ltx->xfer);
 	if (rc != kIOReturnSuccess) {
-		GLLog(1, "%s: prepare failed, return %#x\n", __FUNCTION__, rc);
-		m_provider->FreeGMRID(extra.mem_gmr_id);
-		return rc;
+		GLLog(1, "%s: prepare_transfer_for_io return %#x\n", __FUNCTION__, rc);
+		goto clean1;
 	}
-	rc = m_provider->createGMR(extra.mem_gmr_id, data_md);
-	if (rc != kIOReturnSuccess) {
-		data_md->complete();
-		m_provider->FreeGMRID(extra.mem_gmr_id);
-		GLLog(1, "%s: createGMR return %#x\n", __FUNCTION__, rc);
-		return rc;
+	extra.mem_gmr_id = ltx->xfer.gmr_id;
+	switch (sys_obj_type) {
+		case TEX_TYPE_AGPREF:
+			copyBox.w = tx->width;
+			copyBox.h = tx->height;
+			copyBox.d = tx->depth;
+			hostImage.face = 0U;
+			hostImage.mipmap = 0U;
+			dirtyTexture(tx, hostImage.face, hostImage.mipmap);
+			rc = m_provider->surfaceDMA3DEx(&hostImage,
+											SVGA3D_WRITE_HOST_VRAM,
+											&copyBox,
+											&extra,
+											&ltx->xfer.fence);
+			break;
+		case TEX_TYPE_STD:
+		case TEX_TYPE_OOB:
+			for (hostImage.face = 0U;
+				 hostImage.face != tx->num_faces;
+				 ++hostImage.face, headers += 12) {
+				for (gld_th = headers, hostImage.mipmap = 0U;
+					 hostImage.mipmap != tx->num_mipmaps;
+					 ++hostImage.mipmap, ++gld_th) {
+					if (!gld_th->offset_in_client ||
+						!isPagedOff(tx->sys_obj, hostImage.face, hostImage.mipmap))
+						continue;
+					copyBox.w = gld_th->width_bytes / tx->bytespp;
+					copyBox.h = gld_th->height;
+					copyBox.d = gld_th->depth;
+					extra.mem_offset_in_gmr = base_offset + gld_th->offset_in_client;
+					extra.mem_limit = base_limit - gld_th->offset_in_client;
+					extra.mem_pitch = gld_th->pitch;
+					dirtyTexture(tx, hostImage.face, hostImage.mipmap);
+					rc = m_provider->surfaceDMA3DEx(&hostImage,
+													SVGA3D_WRITE_HOST_VRAM,
+													&copyBox,
+													&extra,
+													&ltx->xfer.fence);
+					if (rc != kIOReturnSuccess)
+						goto clean2;
+				}
+			}
+			mmap->release();
+			break;
 	}
-#if 0
-	GLLog(3, "%s: width == %u, height == %u, gmr_id == %u, pitch == %lu, offset_in_gmr == %#lx, limit == %#lx\n",
-		  __FUNCTION__,
-		  tx->width, tx->height, extra.mem_gmr_id,
-		  static_cast<size_t>(extra.mem_pitch),
-		  static_cast<size_t>(extra.mem_offset_in_gmr),
-		  static_cast<size_t>(extra.mem_limit));
-#endif
-	rc = m_provider->surfaceDMA3DEx(tx->surface_id,
-									SVGA3D_WRITE_HOST_VRAM,
-									&copyBox,
-									&extra,
-									&fence);
-	if (rc == kIOReturnSuccess)
-		m_provider->SyncToFence(fence);	// ugh... to get rid of this need set up a garbage-collection mechanism
-	m_provider->destroyGMR(extra.mem_gmr_id);
-	data_md->complete();
-	m_provider->FreeGMRID(extra.mem_gmr_id);
+	complete_transfer_io(&ltx->xfer); // ugh... to get rid of this need set up a garbage-collection mechanism
 	return kIOReturnSuccess;
+
+clean2:
+	complete_transfer_io(&ltx->xfer);
+clean1:
+	if (mmap)
+		mmap->release();
+	return rc;
 }
 
 HIDDEN
 IOReturn CLASS::tex_subimage_2d(VMsvga2TextureBuffer* tx,
-								size_t command_buffer_offset,
-								size_t source_pitch,
-								uint32_t width,
-								uint32_t height,
-								uint32_t destX,
-								uint32_t destY,
-								uint32_t destZ)
+								struct GLDTexSubImage2DStruc const* desc)
 {
 	IOReturn rc;
 	SVGA3dCopyBox copyBox;
+	SVGA3dSurfaceImageId hostImage;
 	VMsvga2Accel::ExtraInfoEx extra;
 
-	if (!tx)
+	if (!tx || !desc || !tx->bytespp)
 		return kIOReturnBadArgument;
 	if (!tx->sys_obj)
 		return kIOReturnNotReady;
@@ -823,85 +908,37 @@ IOReturn CLASS::tex_subimage_2d(VMsvga2TextureBuffer* tx,
 		GLLog(1, "%s: invalid surface format\n", __FUNCTION__);
 		return kIOReturnNotReady;
 	}
-#if 0
-	GLLog(3, "%s(tx %u, offset %#lx, sourcep %lu, w %u, h %u, x %u, y %u, z %u)\n", __FUNCTION__,
-		  tx->sys_obj->object_id,
-		  command_buffer_offset,
-		  source_pitch,
-		  width, height, destX, destY, destZ);
-#endif
 	bzero(&extra, sizeof extra);
-	extra.mem_offset_in_gmr = command_buffer_offset;
-	extra.mem_pitch = source_pitch;
-	extra.mem_limit = m_command_buffer.size - command_buffer_offset;
+	extra.mem_offset_in_gmr = desc->source_addr;
+	extra.mem_pitch = desc->source_pitch;
+	extra.mem_limit = m_command_buffer.size - extra.mem_offset_in_gmr;
 	extra.suffix_flags = 2U;
 	bzero(&copyBox, sizeof copyBox);
-	copyBox.w = width;
-	copyBox.h = height;
+	copyBox.w = desc->width / tx->bytespp;
+	copyBox.h = desc->height;
 	copyBox.d = 1U;
-	copyBox.x = destX;
-	copyBox.y = destY;
-	copyBox.z = destZ;
+	copyBox.x = desc->dest_x / tx->bytespp;
+	copyBox.y = desc->dest_y;
+	copyBox.z = desc->dest_z;
+	hostImage.face = desc->face;
+	hostImage.mipmap = desc->mipmap;
 	rc = create_host_surface_for_texture(tx);
 	if (rc != kIOReturnSuccess) {
 		GLLog(1, "%s: create_host_surface_for_texture return %#x\n", __FUNCTION__, rc);
 		return rc;
 	}
-	rc = prepare_command_buffer_io();
+	hostImage.sid = tx->surface_id;
+	rc = prepare_transfer_for_io(&m_command_buffer.xfer);
 	if (rc != kIOReturnSuccess) {
-		GLLog(1, "%s: prepare_command_buffer_io return %#x\n", __FUNCTION__, rc);
+		GLLog(1, "%s: prepare_transfer_for_io return %#x\n", __FUNCTION__, rc);
 		return rc;
 	}
-	extra.mem_gmr_id = m_command_buffer.gmr_id;
-	return m_provider->surfaceDMA3DEx(tx->surface_id,
+	extra.mem_gmr_id = m_command_buffer.xfer.gmr_id;
+	return m_provider->surfaceDMA3DEx(&hostImage,
 									  SVGA3D_WRITE_HOST_VRAM,
 									  &copyBox,
 									  &extra,
-									  &m_command_buffer.fence);
-}
-
-HIDDEN
-IOReturn CLASS::bind_texture(uint32_t index, VMsvga2TextureBuffer* tx)
-{
-	uint32_t i, surface_id, width, height;
-	float* f;
-	SVGA3dTextureState tstate[1];
-	uint32_t const num_states = sizeof tstate / sizeof tstate[0];
-
-	if (!m_provider)
-		return kIOReturnNotReady;
-	if (index >= 8U || !tx)
-		return kIOReturnBadArgument;
-	switch (tx->sys_obj_type) {
-		case TEX_TYPE_SURFACE:
-			if (!tx->linked_surface ||
-				!tx->linked_surface->getSurfacesForGL(&surface_id, 0))
-				return kIOReturnNotReady;
-			tx->linked_surface->getBoundsForGL(&width, &height, 0, 0);
-			break;
-		default:
-			surface_id = tx->surface_id;
-			width = tx->width;
-			height = tx->height;
-			break;
-	}
-	/*
-	 * Cache texture size
-	 */
-	f = m_float_cache + index * 4U;
-	f[0] = 1.0F / static_cast<float>(width);
-	f[1] = 1.0F / static_cast<float>(height);
-	f[2] = 1.0F;
-	f[3] = 1.0F;
-	for (i = 0U; i != num_states; ++i)
-		tstate[i].stage = index;
-	tstate[0].name = SVGA3D_TS_BIND_TEXTURE;
-	tstate[0].value = surface_id;
-#if 0
-	GLLog(3, "%s:   binding texture %u at index %u\n", __FUNCTION__,
-		  tx->sys_obj->object_id, index);
-#endif
-	return m_provider->setTextureState(m_context_id, num_states, &tstate[0]);
+									  &m_command_buffer.xfer.fence);
 }
 
 HIDDEN
@@ -957,20 +994,20 @@ void CLASS::process_token_TextureVolatile(VendorGLStreamInfo* info)
 		case TEX_TYPE_STD:
 			tx->sys_obj->f1 |= static_cast<uint8_t>(q);
 			if (q & 0x10U)
-				tx->md->setPurgeable(kIOMemoryPurgeableVolatile, &old_state);
+				tx->xfer.md->setPurgeable(kIOMemoryPurgeableVolatile, &old_state);
 			break;
 		case TEX_TYPE_OOB:
 			tx->sys_obj->f1 |= static_cast<uint8_t>(q);
 			if (q & 0x10U) {
 				tx->linked_agp->sys_obj->f1 |= 0x10U;
-				tx->linked_agp->md->setPurgeable(kIOMemoryPurgeableVolatile, &old_state);
+				tx->linked_agp->xfer.md->setPurgeable(kIOMemoryPurgeableVolatile, &old_state);
 			}
 			break;
 		case TEX_TYPE_AGPREF:
 			if (q & 0x10U) {
 				tx->sys_obj->f1 |= 0x10U;
 				tx->linked_agp->sys_obj->f1 |= 0x10U;
-				tx->linked_agp->md->setPurgeable(kIOMemoryPurgeableVolatile, &old_state);
+				tx->linked_agp->xfer.md->setPurgeable(kIOMemoryPurgeableVolatile, &old_state);
 			}
 			break;
 	}
@@ -993,14 +1030,14 @@ void CLASS::process_token_TextureNonVolatile(VendorGLStreamInfo* info)
 	switch (tx->sys_obj_type) {
 		case TEX_TYPE_STD:
 			tx->sys_obj->f1 &= ~0x11U;
-			tx->md->setPurgeable(kIOMemoryPurgeableNonVolatile, &old_state);
+			tx->xfer.md->setPurgeable(kIOMemoryPurgeableNonVolatile, &old_state);
 			if (old_state == kIOMemoryPurgeableEmpty)
 				tx->sys_obj->f1 |= 0x20U;
 			break;
 		case TEX_TYPE_OOB:
 			tx->sys_obj->f1 &= ~0x11U;
 			tx->linked_agp->sys_obj->f1 &= ~0x11U;
-			tx->linked_agp->md->setPurgeable(kIOMemoryPurgeableNonVolatile, &old_state);
+			tx->linked_agp->xfer.md->setPurgeable(kIOMemoryPurgeableNonVolatile, &old_state);
 			if (old_state == kIOMemoryPurgeableEmpty) {
 				tx->sys_obj->f1 |= 0x20U;
 				tx->linked_agp->sys_obj->f1 |= 0x20U;
@@ -1009,7 +1046,7 @@ void CLASS::process_token_TextureNonVolatile(VendorGLStreamInfo* info)
 		case TEX_TYPE_AGPREF:
 			tx->sys_obj->f1 &= ~0x11U;
 			tx->linked_agp->sys_obj->f1 &= ~0x11U;
-			tx->linked_agp->md->setPurgeable(kIOMemoryPurgeableNonVolatile, &old_state);
+			tx->linked_agp->xfer.md->setPurgeable(kIOMemoryPurgeableNonVolatile, &old_state);
 			if (old_state == kIOMemoryPurgeableEmpty) {
 				tx->sys_obj->f1 |= 0x20U;
 				tx->linked_agp->sys_obj->f1 |= 0x20U;
@@ -1399,13 +1436,8 @@ void CLASS::process_token_Texture(VendorGLStreamInfo* info)
 #endif
 		write_tex_data(i, q, tx);
 		m_txs[i] = tx;
-#if 0
-		bind_texture(i, tx);	// Added
-#endif
 		q += 3;
 	}
-	if (count > 1U)
-		GLLog(1, "%s: %u texture stages - Unsupported blend\n", __FUNCTION__, count);
 #if 0
 	this->0x23C = count;
 #endif
@@ -1467,12 +1499,12 @@ void CLASS::process_token_VertexBuffer(VendorGLStreamInfo* info)
 	if (tx != m_txs[16]) {
 		if (m_txs[16]) {
 			m_txs[16]->sys_obj->stamps[0] = 0U /* m_provider->0x50 */;
-			--m_txs[16]->counter14;
+			--m_txs[16]->xfer.counter14;
 		}
-		++tx->counter14;
+		++tx->xfer.counter14;
 		m_txs[16] = tx;
 	}
-	if (!m_txs[16]->gart_ptr) {
+	if (!m_txs[16]->xfer.gart_ptr) {
 		submit_midbuffer(info);
 #if 0
 		mapTransferToGART(tx);
@@ -1495,7 +1527,7 @@ void CLASS::process_token_NoVertexBuffer(VendorGLStreamInfo* info)
 	GLLog(1, "%s() Unsupported\n", __FUNCTION__);
 	if (m_txs[16]) {
 		m_txs[16]->sys_obj->stamps[0] = 0U /* m_provider->0x50 */;
-		--m_txs[16]->counter14;
+		--m_txs[16]->xfer.counter14;
 		m_txs[16] = 0;
 	}
 #if 0
@@ -1639,23 +1671,12 @@ void CLASS::process_token_TexSubImage2D(VendorGLStreamInfo* info)
 	info->p[7] = 0U;
 	info->p[8] = 0U;
 #else
-	if (!tx->bytespp ||
-		helper->face != 0U ||
-		helper->mipmap != 0U)
-		goto skip;
+	if (helper->face > 6U)
+		helper->face = 0U;
+	if (helper->mipmap >= 16U)
+		helper->mipmap = 0U;
 	dirtyTexture(tx, helper->face, helper->mipmap);
-	/*
-	 * Note: Blits to face 0U, mipmap 0U
-	 */
-	tex_subimage_2d(tx,
-					helper->source_addr,
-					helper->source_pitch,
-					helper->width / tx->bytespp,
-					helper->height,
-					helper->dest_x / tx->bytespp,
-					helper->dest_y,
-					helper->dest_z);
-skip:
+	tex_subimage_2d(tx, helper);
 	bzero(&info->p[0], 9U * sizeof(uint32_t));
 #endif
 	removeTextureFromStream(tx);

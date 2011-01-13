@@ -3,7 +3,7 @@
  *  VMsvga2Accel
  *
  *  Created by Zenith432 on August 11th 2009.
- *  Copyright 2009-2010 Zenith432. All rights reserved.
+ *  Copyright 2009-2011 Zenith432. All rights reserved.
  *
  */
 
@@ -87,6 +87,11 @@ void* CLASS::FIFOReserve(uint32_t cmd, size_t cmdSize)
 	header->size = static_cast<uint32_t>(cmdSize);
 
 	return &header[1];
+}
+
+void CLASS::FIFOCommitAll()
+{
+	return m_svga->FIFOCommitAll();
 }
 
 bool CLASS::BeginDefineSurface(uint32_t sid,                // IN

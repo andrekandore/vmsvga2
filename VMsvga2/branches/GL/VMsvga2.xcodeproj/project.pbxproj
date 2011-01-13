@@ -48,6 +48,7 @@
 		E577F63810A089750047C956 /* SVGAScreen.cpp in Sources */ = {isa = PBXBuildFile; fileRef = E577F63710A089750047C956 /* SVGAScreen.cpp */; settings = {COMPILER_FLAGS = "-fvisibility=hidden"; }; };
 		E58ACDA810CC439E0051F215 /* EntryPointNames.c in Sources */ = {isa = PBXBuildFile; fileRef = E58ACDA710CC439E0051F215 /* EntryPointNames.c */; };
 		E58AE5721268EC5900ABABF8 /* SendString.c in Sources */ = {isa = PBXBuildFile; fileRef = 7987F8851037020E003B52A2 /* SendString.c */; };
+		E58CFD8D12DC66CF00A8F812 /* Shaders.c in Sources */ = {isa = PBXBuildFile; fileRef = E598109712DA004800508FF6 /* Shaders.c */; };
 		E590EA9510CD311F0019BC36 /* SendString.c in Sources */ = {isa = PBXBuildFile; fileRef = 7987F8851037020E003B52A2 /* SendString.c */; settings = {COMPILER_FLAGS = "-mdynamic-no-pic"; }; };
 		E5912BF712B921320028A17D /* VMsvga2Shared.cpp in Sources */ = {isa = PBXBuildFile; fileRef = E5912BF612B921320028A17D /* VMsvga2Shared.cpp */; };
 		E594320012A80FF700F55717 /* IOKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = E52B47CC10B5B4B5002470B4 /* IOKit.framework */; };
@@ -152,6 +153,7 @@
 		E588767B1269C9D3001B5608 /* IOSurfaceRoot.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = IOSurfaceRoot.h; sourceTree = "<group>"; };
 		E58ACDA710CC439E0051F215 /* EntryPointNames.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = EntryPointNames.c; sourceTree = "<group>"; };
 		E58ACDA910CC44A60051F215 /* EntryPointNames.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = EntryPointNames.h; sourceTree = "<group>"; };
+		E58CFD8E12DC66EA00A8F812 /* Shaders.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = Shaders.h; sourceTree = "<group>"; };
 		E5912BF512B921320028A17D /* VMsvga2Shared.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = VMsvga2Shared.h; sourceTree = "<group>"; };
 		E5912BF612B921320028A17D /* VMsvga2Shared.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = VMsvga2Shared.cpp; sourceTree = "<group>"; };
 		E592EC7912A83E7E001700AC /* GLDTypes.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = GLDTypes.h; sourceTree = "<group>"; };
@@ -281,6 +283,7 @@
 				79AEEE01104F0FC8001B6B2C /* FenceTracker.h */,
 				E5059B8712D752F000866E66 /* GLCommon.h */,
 				E588767B1269C9D3001B5608 /* IOSurfaceRoot.h */,
+				E58CFD8E12DC66EA00A8F812 /* Shaders.h */,
 				799F594510319210000D2A71 /* SVGA3D.h */,
 				E577F63610A089750047C956 /* SVGAScreen.h */,
 				E5059B8512D7524000866E66 /* UCGLDCommonTypes.h */,
@@ -567,6 +570,7 @@
 				E5912BF712B921320028A17D /* VMsvga2Shared.cpp in Sources */,
 				E5C69EA012D7502600959371 /* VMsvga2GLContext2.cpp in Sources */,
 				E596103012D7950A00EE8B57 /* VMsvga2GLContext3.cpp in Sources */,
+				E58CFD8D12DC66CF00A8F812 /* Shaders.c in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -642,8 +646,8 @@
 			buildSettings = {
 				ARCHS = i386;
 				COPYRIGHT_NOTICE = "Copyright 2009-2010 Zenith432";
-				CURRENT_PROJECT_VERSION = 1.3.0d1;
-				DYLIB_COMPATIBILITY_VERSION = 1.3.0d1;
+				CURRENT_PROJECT_VERSION = 1.3.0d2;
+				DYLIB_COMPATIBILITY_VERSION = 1.3.0d2;
 				DYLIB_CURRENT_VERSION = "$(CURRENT_PROJECT_VERSION)";
 				INSTALL_PATH = "$(SYSTEM_LIBRARY_DIR)/Extensions";
 				MODULE_VERSION = "$(CURRENT_PROJECT_VERSION)";
@@ -658,7 +662,6 @@
 					"LOGGING_LEVEL=1",
 					FRAGILE,
 					VECTORIZE,
-					GL_DEV,
 				);
 				INFOPLIST_FILE = "Info-AC.plist";
 				MODULE_NAME = net.osx86.driver.VMsvga2Accel;
@@ -690,8 +693,8 @@
 					i386,
 				);
 				COPYRIGHT_NOTICE = "Copyright 2009-2010 Zenith432";
-				CURRENT_PROJECT_VERSION = 1.3.0d1;
-				DYLIB_COMPATIBILITY_VERSION = 1.3.0d1;
+				CURRENT_PROJECT_VERSION = 1.3.0d2;
+				DYLIB_COMPATIBILITY_VERSION = 1.3.0d2;
 				DYLIB_CURRENT_VERSION = "$(CURRENT_PROJECT_VERSION)";
 				INSTALL_PATH = "$(SYSTEM_LIBRARY_DIR)/Extensions";
 				MODULE_VERSION = "$(CURRENT_PROJECT_VERSION)";
@@ -722,7 +725,6 @@
 					"LOGGING_LEVEL=1",
 					FRAGILE,
 					VECTORIZE,
-					GL_DEV,
 				);
 				INFOPLIST_FILE = "Info-AC.plist";
 				MODULE_NAME = net.osx86.driver.VMsvga2Accel;
@@ -766,10 +768,7 @@
 					x86_64,
 					i386,
 				);
-				GCC_PREPROCESSOR_DEFINITIONS = (
-					"LOGGING_LEVEL=1",
-					GL_DEV,
-				);
+				GCC_PREPROCESSOR_DEFINITIONS = "LOGGING_LEVEL=1";
 				INFOPLIST_FILE = "Info-GLD.plist";
 				MODULE_NAME = net.osx86.VMsvga2GLDriver;
 				PRODUCT_NAME = VMsvga2GLDriver;
@@ -782,10 +781,7 @@
 		E5CC19B210CC0DA100EC0343 /* ReleaseSnowLeo */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				GCC_PREPROCESSOR_DEFINITIONS = (
-					"LOGGING_LEVEL=1",
-					GL_DEV,
-				);
+				GCC_PREPROCESSOR_DEFINITIONS = "LOGGING_LEVEL=1";
 				INFOPLIST_FILE = "Info-GLD.plist";
 				MODULE_NAME = net.osx86.VMsvga2GLDriver;
 				PRODUCT_NAME = VMsvga2GLDriver;

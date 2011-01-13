@@ -1528,70 +1528,37 @@ IOReturn CLASS::setTransform(uint32_t cid, SVGA3dTransformType type, float const
 }
 
 HIDDEN
-IOReturn CLASS::surfaceDMA3DEx(uint32_t sid,
+IOReturn CLASS::surfaceDMA3DEx(SVGA3dSurfaceImageId const* hostImage,
 							   SVGA3dTransferType transfer,
 							   SVGA3dCopyBox const* copyBox,
 							   ExtraInfoEx const* extra,
 							   uint32_t* fence)
 {
 	bool rc;
-	SVGA3dSurfaceDMAFlags flags;
 	SVGA3dCopyBox* copyBoxes;
 	SVGA3dGuestImage guestImage;
-	SVGA3dSurfaceImageId hostImage;
 
 	if (!extra || !copyBox)
 		return kIOReturnBadArgument;
 	if (!bHaveSVGA3D)
 		return kIOReturnNoDevice;
-	hostImage.sid = sid;
-	hostImage.face = 0;
-	hostImage.mipmap = 0;
 	guestImage.ptr.gmrId = extra->mem_gmr_id;
 	guestImage.ptr.offset = static_cast<uint32_t>(extra->mem_offset_in_gmr);
 	guestImage.pitch = static_cast<uint32_t>(extra->mem_pitch);
-	memcpy(&flags, &extra->suffix_flags, sizeof(uint32_t));
 	m_framebuffer->lockDevice();
 	rc = svga3d.BeginSurfaceDMAwithSuffix(&guestImage,
-										  &hostImage,
+										  hostImage,
 										  transfer,
 										  &copyBoxes,
 										  1U,
 										  static_cast<uint32_t>(extra->mem_limit),
-										  flags);
+										  *reinterpret_cast<SVGA3dSurfaceDMAFlags const*>(&extra->suffix_flags));
 	if (!rc)
 		goto exit;
 	memcpy(&copyBoxes[0], copyBox, sizeof *copyBox);
 	m_svga->FIFOCommitAll();
 	if (fence)
 		*fence = m_svga->InsertFence();
-exit:
-	m_framebuffer->unlockDevice();
-	return kIOReturnSuccess;
-}
-
-HIDDEN
-IOReturn CLASS::createTexture(uint32_t sid,
-							  SVGA3dSurfaceFormat surfaceFormat,
-							  uint32_t width,
-							  uint32_t height,
-							  uint32_t depth)
-{
-	bool rc;
-	SVGA3dSize* mipSizes;
-	SVGA3dSurfaceFace* faces;
-
-	if (!bHaveSVGA3D)
-		return kIOReturnNoDevice;
-	m_framebuffer->lockDevice();
-	rc = svga3d.BeginDefineSurface(sid, SVGA3D_SURFACE_HINT_TEXTURE, surfaceFormat, &faces, &mipSizes, 1U);
-	if (!rc)
-		goto exit;
-	faces[0].numMipLevels = 1U;
-	mipSizes[0].width = width;
-	mipSizes[0].height = height;
-	mipSizes[0].depth = depth;
-	m_svga->FIFOCommitAll();
 exit:
 	m_framebuffer->unlockDevice();
 	return kIOReturnSuccess;

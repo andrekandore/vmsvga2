@@ -264,16 +264,11 @@ public:
 	IOReturn setZRange(uint32_t cid, float zMin, float zMax);
 	IOReturn setClipPlane(uint32_t cid, uint32_t index, float const* plane);	// plane points to 4 floats (eq. Ax+By+Cz+D = 0)
 	IOReturn setTransform(uint32_t cid, SVGA3dTransformType type, float const* matrix);
-	IOReturn surfaceDMA3DEx(uint32_t sid,
+	IOReturn surfaceDMA3DEx(SVGA3dSurfaceImageId const* hostImage,
 							SVGA3dTransferType transfer,
 							SVGA3dCopyBox const* copyBox,
 							ExtraInfoEx const* extra,
 							uint32_t* fence = 0);
-	IOReturn createTexture(uint32_t sid,
-						   SVGA3dSurfaceFormat surfaceFormat,
-						   uint32_t width,
-						   uint32_t height,
-						   uint32_t depth);
 
 	/*
 	 * Screen Methods

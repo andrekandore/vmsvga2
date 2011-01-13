@@ -29,16 +29,17 @@
 #ifndef __GLCOMMON_H__
 #define __GLCOMMON_H__
 
-#if 0
 struct VendorTransferBuffer {
-	uint32_t unknown1;		//   0
+	uint32_t pad1;			//   0
 	uint32_t gart_ptr;		//   4
 	class IOMemoryDescriptor* md;
 							//   8
-	uint16_t unknown2[2];	// 0xC
+	uint16_t offset12;		// offset 0xC - initialized to 4 in VMsvga2TextureBuffer
+	uint16_t counter14;		// offset 0xE
 							// 0x10 end
+	uint32_t gmr_id;
+	uint32_t fence;
 };
-#endif
 
 #if 0
 struct GLKMemoryElement {
@@ -53,13 +54,7 @@ struct GLKMemoryElement {
 #ifdef GL_INCL_SHARED
 struct VMsvga2TextureBuffer
 {
-	// Note - VendorTransferBuffer at offset 0 [16 bytes]
-	uint32_t gart_ptr;				// offset 0x4
-	class IOMemoryDescriptor* md;	// offset 0x8
-#if 0
-	uint16_t offset12;				// offset 0xC - initialized to 4
-#endif
-	uint16_t counter14;				// offset 0xE
+	struct VendorTransferBuffer xfer;
 									// offset 0x10 - 0x28 all dwords
 									// offset 0x20 initialized to 0xE34
 	class IOMemoryMap* client_map;	// offset 0x28
@@ -97,20 +92,13 @@ struct VMsvga2TextureBuffer
 									// ends   0xAC
 	uint32_t surface_id;
 	int surface_format;
-	int surface_changed;
 };
 #endif /* GL_INCL_SHARED */
 
 #ifdef GL_INCL_PUBLIC
 struct VMsvga2CommandBuffer
 {
-	// Note: VendorTransferBuffer at offset 0 [16 bytes]
-	uint32_t pad1;
-	uint32_t gart_ptr;
-	class IOMemoryDescriptor* md;
-	uint16_t pad2[2];
-	uint32_t gmr_id;
-	uint32_t fence;
+	struct VendorTransferBuffer xfer;
 	uint32_t pad3[4];
 	uint32_t submit_stamp;
 	struct VendorCommandBufferHeader* kernel_ptr;

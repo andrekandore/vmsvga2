@@ -34,6 +34,7 @@
 
 struct VendorCommandBufferHeader;
 struct VendorGLStreamInfo;
+struct VendorTransferBuffer;
 struct VMsvga2TextureBuffer;
 class IOMemoryDescriptor;
 
@@ -73,7 +74,15 @@ private:
 	int m_log_level;
 	uint32_t m_context_id;
 	float* m_float_cache;
+#if 0
 	bool m_shaders_loaded;
+#endif
+	struct ShaderEntry* m_shader_cache;
+	/*
+	 * TBD: should shader ids be unique system-wide???
+	 */
+	uint32_t m_next_shid;
+	uint32_t m_active_shid;
 
 	/*
 	 * Buffers for vertex/index arrays (need GMRs)
@@ -101,9 +110,6 @@ private:
 			uint32_t stencil;
 		} clear;
 		uint32_t surface_ids[16];	// for the 16 texture stages
-#if 0
-		uint64_t sampler_to_texstage;	// associates texture stages with samplers (16 x 4)
-#endif
 	} m_intel_state;
 
 	/*
@@ -117,9 +123,10 @@ private:
 	IOReturn get_status(uint32_t*);
 	uint32_t processCommandBuffer(struct VendorCommandDescriptor*);
 	void discardCommandBuffer();
-	IOReturn prepare_command_buffer_io();
-	void sync_command_buffer_io();
-	void complete_command_buffer_io();
+	IOReturn prepare_transfer_for_io(VendorTransferBuffer* xfer);
+	void sync_trasfer_io(VendorTransferBuffer* xfer);
+	void complete_transfer_io(VendorTransferBuffer* xfer);
+	static void discard_transfer(VendorTransferBuffer* xfer);
 	void removeTextureFromStream(VMsvga2TextureBuffer*);
 	void addTextureToStream(VMsvga2TextureBuffer*);
 	void submit_midbuffer(VendorGLStreamInfo*);
@@ -130,20 +137,17 @@ private:
 	IOReturn create_host_surface_for_texture(VMsvga2TextureBuffer*);
 	IOReturn alloc_and_load_texture(VMsvga2TextureBuffer*);
 	IOReturn tex_subimage_2d(VMsvga2TextureBuffer* tx,
-							 size_t command_buffer_offset,
-							 size_t source_pitch,
-							 uint32_t width,
-							 uint32_t height,
-							 uint32_t destX,
-							 uint32_t destY,
-							 uint32_t destZ);
-	IOReturn bind_texture(uint32_t index, VMsvga2TextureBuffer* tx);
+							 struct GLDTexSubImage2DStruc const* desc);
 	void setup_drawbuffer_registers(uint32_t*);
 	IOReturn alloc_arrays(size_t num_bytes);
 	void purge_arrays();
 	IOReturn upload_arrays(size_t num_bytes);
+#if 0
 	IOReturn load_fixed_shaders();
 	void unload_fixed_shaders();
+#endif
+	uint32_t cache_shader(uint32_t const* source, uint32_t num_dwords);
+	void purge_shader_cache();
 	void adjust_texture_coords(uint8_t* vertex_array,
 							   size_t num_vertices,
 							   void const* decls,
@@ -165,8 +169,9 @@ private:
 	void ip_misc_render_state(uint32_t selector, uint32_t* p);
 	void ip_independent_alpha_blend(uint32_t cmd);
 	void ip_backface_stencil_ops(uint32_t cmd);
-	void ip_print_ps(uint32_t* p);
+	void ip_print_ps(uint32_t const*, uint32_t);
 	void ip_select_and_load_ps(uint32_t* p);
+	void ip_load_ps_const(uint32_t* p);
 	uint32_t decode_mi(uint32_t* p);
 	uint32_t decode_2d(uint32_t* p);
 	uint32_t decode_3d(uint32_t* p);
