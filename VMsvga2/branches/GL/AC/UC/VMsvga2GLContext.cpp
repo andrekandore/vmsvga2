@@ -141,7 +141,7 @@ void CLASS::Init()
 	m_context_id = SVGA_ID_INVALID;
 	m_arrays.sid = SVGA_ID_INVALID;
 	m_arrays.gmr_id = SVGA_ID_INVALID;
-	m_active_shid = SVGA_ID_INVALID;
+	m_active_shid = SVGA_ID_INVALID - 1;
 }
 
 HIDDEN
@@ -180,7 +180,7 @@ void CLASS::Cleanup()
 	}
 	purge_arrays();
 	if (m_float_cache) {
-		IOFreeAligned(m_float_cache, 32U * sizeof(float));
+		IOFreeAligned(m_float_cache, 64U * sizeof(float));
 		m_float_cache = 0;
 	}
 }
@@ -707,7 +707,7 @@ bool CLASS::start(IOService* provider)
 		super::stop(provider);
 		return false;
 	}
-	m_float_cache = static_cast<float*>(IOMallocAligned(32U * sizeof(float), 16U));	// SSE-ready
+	m_float_cache = static_cast<float*>(IOMallocAligned(64U * sizeof(float), 16U));	// SSE-ready
 	if (!m_float_cache) {
 		GLLog(1, "%s: IOMallocAligned failed\n", __FUNCTION__);
 		goto bad;

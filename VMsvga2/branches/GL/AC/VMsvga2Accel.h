@@ -80,6 +80,7 @@ private:
 	int volatile m_master_surface_retain_count;
 	uint32_t m_master_surface_id;
 	IOReturn m_blitbug_result;
+	uint32_t* m_devcaps;
 
 	/*
 	 * AutoSync area
@@ -124,6 +125,9 @@ private:
 #endif
 	void initGLStuff();
 	void cleanGLStuff();
+	void dumpSurfaceCaps(uint32_t caps);
+	void dumpGPUCaps();
+	void getGPUCaps();
 
 public:
 	/*
@@ -327,6 +331,7 @@ public:
 	class VMsvga2Surface* findSurfaceForID(uint32_t surface_id);
 	SVGA3D* lock3D();
 	void unlock3D();
+	uint32_t getDevCap(uint32_t index) const { return m_devcaps[index]; }
 
 	/*
 	 * Video Support

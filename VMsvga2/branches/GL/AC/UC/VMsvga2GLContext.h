@@ -110,6 +110,7 @@ private:
 			uint32_t stencil;
 		} clear;
 		uint32_t surface_ids[16];	// for the 16 texture stages
+		uint64_t s2t_map;	// maps samplers to texture stages (4 bits each)
 	} m_intel_state;
 
 	/*

@@ -123,6 +123,20 @@ void set_region(IOAccelDeviceRegion* rgn,
 				uint32_t h);
 
 static
+uint8_t get4bits(uint64_t const* v, uint8_t index)
+{
+	return static_cast<uint8_t>((*v) >> ((index & 15U) * 4U)) & 15U;
+}
+
+static
+void set4bits(uint64_t* v, uint8_t index, uint8_t n)
+{
+	index = (index & 15U) * 4U;
+	*v &= ~(0xFULL << index);
+	*v |= static_cast<uint64_t>(n & 15U) << index;
+}
+
+static
 int translate_clear_mask(uint32_t mask)
 {
 	int out_mask = 0U;
@@ -182,7 +196,7 @@ uint32_t xlate_filter2(uint32_t v)
 		case 6U: /* FILTER_6X5_MONO */
 			break;
 	}
-	return SVGA3D_TEX_FILTER_NONE;
+	return SVGA3D_TEX_FILTER_NEAREST;
 }
 
 static inline
@@ -510,7 +524,7 @@ void CLASS::purge_shader_cache()
 #if 0
 	svga3d->SetShader(m_context_id, SVGA3D_SHADERTYPE_VS, SVGA_ID_INVALID);
 #endif
-	m_active_shid = SVGA_ID_INVALID;
+	m_active_shid = SVGA_ID_INVALID - 1;
 	for (e = m_shader_cache; e; e = e->next)
 		if (isIdValid(e->shader_id))
 			svga3d->DestroyShader(m_context_id, e->shader_id, e->shader_type);
@@ -535,10 +549,16 @@ void CLASS::adjust_texture_coords(uint8_t* vertex_array,
 	size_t i, j;
 
 	/*
-	 * Note: this assumes the texture coordinate index is identical
-	 *   to the texture stage index.  In fact, the association is
-	 *   determined by the pixel shader, which can use any pair
-	 *   of sampler and tex-coord-index.
+	 * Note: The GLD always maps TexCoord set i to Sampler i.  Since
+	 *   there are 16 samplers and only 8 coord-sets, this implies
+	 *   samplers 8-15 can only be accessed from a pixel shader with
+	 *   computed coordinates.
+	 *   Since OpenGL uses normalized coordinates, any coordinates
+	 *   computed by a pixel shader should always be normalized, and
+	 *   the GLD should have marked the corresponding sampler as
+	 *   using normalized cooridnates.
+	 *   Additionally, the GLD always maps sampler i to texture stage i,
+	 *   [there are 16 of each], however the code handles the general case.
 	 */
 #if 0
 	GLLog(3, "%s:   s2 == %#x, s4 == %#x\n", __FUNCTION__,
@@ -546,11 +566,12 @@ void CLASS::adjust_texture_coords(uint8_t* vertex_array,
 #endif
 	for (i = 0U; i != num_decls; ++i)
 		if (_decls[i].identity.usage == SVGA3D_DECLUSAGE_TEXCOORD &&
-			_decls[i].identity.usageIndex < 8U &&
-			(m_intel_state.prettex_coordinates & (1U << _decls[i].identity.usageIndex))) {
-			float const* f = m_float_cache + _decls[i].identity.usageIndex * 4U;
+			bit_select(m_intel_state.prettex_coordinates, _decls[i].identity.usageIndex, 1)) {
+			float const* f = m_float_cache + 4U *
+				get4bits(&m_intel_state.s2t_map, _decls[i].identity.usageIndex);
 			/*
 			 * Barbarically assume at least FLOAT2 and adjust
+			 *   Note: The GLD always uses FLOAT4 projective tex-coords.
 			 */
 			for (j = 0U; j != num_vertices; ++j) {
 				float* q = reinterpret_cast<float*>(vertex_array + j * _decls[i].array.stride + _decls[i].array.offset);
@@ -1105,21 +1126,16 @@ void CLASS::ip_3d_map_state(uint32_t* p)
 HIDDEN
 void CLASS::ip_3d_sampler_state(uint32_t* p)
 {
-	uint32_t i, j, mask = p[1], *q = p + 2;
+	uint32_t i, j, mask = p[1], *q = p + 2, max_aniso;
 	uint8_t tmi;
 	SVGA3dTextureState ts[10];
 	uint32_t const num_states = sizeof ts / sizeof ts[0];
 
+	max_aniso = m_provider->getDevCap(SVGA3D_DEVCAP_MAX_TEXTURE_ANISOTROPY);
 	for (i = 0U; i != 16U; ++i, mask >>= 1)
 		if (mask & 1U) {
-			/*
-			 * TBD: which is right
-			 */
-#if 0
 			tmi = bit_select(q[1], 1, 4);
-#else
-			tmi = i;
-#endif
+			set4bits(&m_intel_state.s2t_map, i, tmi);
 #if 0
 			GLLog(3, "%s:   txstage %u\n", __FUNCTION__, i);
 			GLLog(3, "%s:     RGE %u, PPE %u, CSC %u, CKS %u, BML %u, "
@@ -1149,12 +1165,12 @@ void CLASS::ip_3d_sampler_state(uint32_t* p)
 #endif
 #if 0
 			GLLog(3, "%s:   binding S%u to T%u%s\n", __FUNCTION__,
-				  i, tmi, bit_select(q[1],  5, 1) ? "" : " unnormalized-coords");
+				  i, tmi, bit_select(q[1], 5, 1) ? "" : " unnormalized-coords");
 #endif
 			if (bit_select(q[1], 5, 1))
-				m_intel_state.prettex_coordinates &= ~(1U << tmi);
+				m_intel_state.prettex_coordinates &= ~(1U << i);
 			else
-				m_intel_state.prettex_coordinates |= (1U << tmi);
+				m_intel_state.prettex_coordinates |= (1U << i);
 			for (j = 0U; j != num_states; ++j)
 				ts[j].stage = i;
 			ts[0].name = SVGA3D_TS_BIND_TEXTURE;
@@ -1174,13 +1190,14 @@ void CLASS::ip_3d_sampler_state(uint32_t* p)
 			ts[7].name = SVGA3D_TS_MINFILTER;
 			ts[7].value = xlate_filter2(bit_select(q[0], 14, 3));
 			ts[8].name = SVGA3D_TS_TEXTURE_ANISOTROPIC_LEVEL;
-			ts[8].value = bit_select(q[0], 3, 1) ? 4U : 2U;
+			ts[8].value = ulmin(bit_select(q[0], 3, 1) ? 4U : 2U, max_aniso);
 			ts[9].name = SVGA3D_TS_GAMMA;
 			ts[9].floatValue = bit_select(q[0], 31, 1) ? 0.0F : 1.0F;
 			/*
 			 * TBD: handle base mip level, min lod, lod bias
 			 */
 			m_provider->setTextureState(m_context_id, num_states, &ts[0]);
+			q += 3;
 		}
 }
 
@@ -1388,9 +1405,9 @@ void CLASS::ip_select_and_load_ps(uint32_t* p)
 	uint32_t s4 = m_intel_state.imm_s[4];
 #else
 	uint32_t shader_id = cache_shader(p + 1, (p[0] & 0xFFFFU) + 1U);
-#endif
 	if (shader_id == m_active_shid)
 		return;
+#endif
 	SVGA3D* svga3d = m_provider->lock3D();
 	if (!svga3d)
 		return;
@@ -1406,6 +1423,30 @@ void CLASS::ip_select_and_load_ps(uint32_t* p)
 #else
 	svga3d->SetShader(m_context_id, SVGA3D_SHADERTYPE_PS, shader_id);
 	m_active_shid = shader_id;
+	if (!isIdValid(shader_id)) {
+		SVGA3dTextureState* ts;
+		/*
+		 * Set defaults for the Fixed-Function Pixel Pipeline
+		 *
+		 * According to Direct3D documentation, the default
+		 * operations are
+		 *   OC.rgb = Diffuse.rgb * T0.rgb
+		 *   If no texture at stage 0,
+		 *     OC.a = Diffuse.a
+		 *   If texture at stage 0
+		 *     OC.a = T0.a
+		 * We leave it that way.
+		 *
+		 * We set the TransformFlags to Projective, since the GLD
+		 *   passes down FLOAT4 projective tex coords.
+		 */
+		if (svga3d->BeginSetTextureState(m_context_id, &ts, 1U)) {
+			ts->stage = 0U;
+			ts->name = SVGA3D_TS_TEXTURETRANSFORMFLAGS;
+			ts->value = SVGA3D_TEX_PROJECTED;
+			svga3d->FIFOCommitAll();
+		}
+	}
 #endif
 	m_provider->unlock3D();
 }

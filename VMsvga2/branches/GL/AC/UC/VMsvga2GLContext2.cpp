@@ -653,9 +653,6 @@ void CLASS::write_tex_data(uint32_t i, uint32_t* q, VMsvga2TextureBuffer* tx)
 			break;
 		default:
 			q[0] = tx->surface_id;
-#if 0
-			GLLog(3, "%s: format for surface %u is %u\n", __FUNCTION__, tx->surface_id, tx->surface_format);
-#endif
 			break;
 	}
 }
@@ -1425,8 +1422,12 @@ void CLASS::process_token_Texture(VendorGLStreamInfo* info)
 		}
 		++count;
 		addTextureToStream(tx);
-		if (tx->surface_format == SVGA3D_FORMAT_INVALID)
+		if (tx->surface_format == SVGA3D_FORMAT_INVALID) {
 			tx->surface_format = decipher_format(bit_select(q[1], 7, 3), bit_select(q[1], 3, 4));
+#ifdef GL_DEV
+			GLLog(3, "%s: texture %u format %u\n", __FUNCTION__, tx->sys_obj->object_id, tx->surface_format);
+#endif
+		}
 		get_texture(info, tx, true);
 		__sync_fetch_and_add(&tx->sys_obj->refcount, -0xFFFF);
 #if 0
@@ -1650,8 +1651,12 @@ void CLASS::process_token_TexSubImage2D(VendorGLStreamInfo* info)
 	 * [On Intel 915, the blit only needs to know bytespp,
 	 *  not complete format]
 	 */
-	if (tx->surface_format == SVGA3D_FORMAT_INVALID)
+	if (tx->surface_format == SVGA3D_FORMAT_INVALID) {
 		tx->surface_format = default_format(tx->bytespp);
+#ifdef GL_DEV
+		GLLog(3, "%s: texture %u format %u\n", __FUNCTION__, tx->sys_obj->object_id, tx->surface_format);
+#endif
+	}
 	get_texture(info, tx, true);
 #if 0
 	get_tex_data(tx, &dest_gart_addr, &dest_pitch);

@@ -68,6 +68,86 @@ uint32_t vmw_options_ac = 0;
 #define FMT_LU(x) static_cast<size_t>(x)
 
 #pragma mark -
+#pragma mark GPU Capabilities
+#pragma mark -
+
+static
+char const* const cap_names[] =
+{
+	0, "Max Lights", "Max FFP Texture Stages", "Max Clip Planes",
+	"Vertex Shader Version", "Vertex Shaders",
+	"Pixel Shader Version", "Pixel Shaders",
+	"Max Render Targets", "S23E8 Textures",
+	"S10E5 Textures", "Max Fixed VertexBlend",
+	0, 0, 0, "Occlusion Query",
+	"Texture Gradient Sampling", "Max Point Size",
+	"Max Pixel Shader Textures", "Max Texture Width",
+	"Max Texture Height", "Max Volume Extent",
+	"Max Texture Repeat", "Max Texture Aspect Ratio",
+	"Max Texture Anisotropy", "Max Primitive Count",
+	"Max Vertex Index", "Max Vertex Shader Instructions",
+	"Max Pixel Shader Instructions", "Max Vertex Shader Temps",
+	"Max Pixel Shader Temps", "Texture Ops",
+	"X8R8G8B8", "A8R8G8B8", "A2R10G10B10", "X1R5G5B5",
+	"A1R5G5B5", "A4R4G4B4", "R5G6B5", "L16",
+	"L8A8", "A8", "L8", "Z_D16",
+	"Z_D24S8", "Z_D24X8", "DXT1", "DXT2",
+	"DXT3", "DXT4", "DXT5", "BUMPX8L8V8U8",
+	"A2W10V10U10", "BUMPU8V8", "Q8W8V8U8", "CxV8U8",
+	"R_S10E5", "R_S23E8", "RG_S10E5", "RG_S23E8",
+	"ARGB_S10E5", "ARGB_S23E8", 0, "Max Vertex Shader Textures",
+	"Max Simultaneous Render Targets", "V16U16",
+	"G16R16", "A16B16G16R16", "UYVY", "YUY2"
+};
+
+static
+uint8_t const cap_types[] =
+{
+	0, 1, 1, 1,
+	4, 0, 5, 0,
+	1, 0, 0, 1,
+	0, 0, 0, 0,
+	0, 3, 1, 1,
+	1, 1, 1, 1,
+	1, 1, 1, 2,
+	2, 1, 1, 6,
+	7, 7, 7, 7,
+	7, 7, 7, 7,
+	7, 7, 7, 7,
+	7, 7, 7, 7,
+	7, 7, 7, 7,
+	7, 7, 7, 7,
+	7, 7, 7, 7,
+	7, 7, 1, 1,
+	1, 7, 7, 7,
+	7, 7
+};
+
+static
+char const* const cap_psver[] =
+{
+	"Enabled", "ps_1_1", "ps_1_2", "ps_1_3", "ps_1_4", "ps_2_0", "ps_3_0", "ps_4_0"
+};
+
+static
+char const* const cap_vsver[] =
+{
+	"Enabled", "vs_1_1", "vs_2_0", "vs_3_0", "vs_4_0"
+};
+
+static
+char const* const cap_sf_names[] =
+{
+	"Texture", "VolumeTexture", "CubeTexture", "OffscreenRenderTarget",
+	"SameFormatRenderTarget", 0, "ZStencil", "ZStencilArbitraryDepth",
+	"SameFormatUpToAlpha", 0, "DisplayMode", "3DAcceleration",
+	"PixelSize", "ConvertToARGB", "OffscreenPlain", "SRGBRead",
+	"BumpMap", "DMap", "NoFilter", "MemberOfGroupARGB",
+	"SRGBWrite", "NoAlphaBlend", "AutoGenMipMap", "VertexTexture",
+	"NoTexCoordWrapNorMip"
+};
+
+#pragma mark -
 #pragma mark Static Functions
 #pragma mark -
 
@@ -223,6 +303,22 @@ uint32_t GMR_VRAM(void)
 	return static_cast<uint32_t>(-2) /* SVGA_GMR_FRAMEBUFFER */;
 }
 
+static
+char const* const cap_ps_version(uint8_t num)
+{
+	if ((num & 1U) && ((num >> 1) <= 7U))
+		return cap_psver[num >> 1];
+	return "None";
+}
+
+static
+char const* const cap_vs_version(uint8_t num)
+{
+	if ((num & 1U) && ((num >> 1) <= 4U))
+		return cap_vsver[num >> 1];
+	return "None";
+}
+
 #pragma mark -
 #pragma mark Private Methods
 #pragma mark -
@@ -240,6 +336,10 @@ void CLASS::Cleanup()
 	if (bHaveSVGA3D) {
 		bHaveSVGA3D = false;
 		svga3d.Init(0);
+	}
+	if (m_devcaps) {
+		IOFree(m_devcaps, SVGA3D_DEVCAP_MAX * sizeof(uint32_t));
+		m_devcaps = 0;
 	}
 	if (bHaveScreenObject) {
 		bHaveScreenObject = false;
@@ -492,6 +592,87 @@ void CLASS::cleanGLStuff()
 	}
 }
 
+HIDDEN
+void CLASS::dumpSurfaceCaps(uint32_t caps)
+{
+	for (int i = 0; i != 25; ++i)
+		if (caps & (1U << i)) {
+			if (cap_sf_names[i])
+				ACLog(1, "    %s\n", cap_sf_names[i]);
+			else
+				ACLog(1, "    Unknown %#x\n", (1U << i));
+		}
+}
+
+HIDDEN
+void CLASS::dumpGPUCaps()
+{
+	uint32_t c;
+	SVGA3dDevCapResult const* v;
+	ACLog(1, "GPU Feature Detection\n");
+	for (c = 1U; c < SVGA3D_DEVCAP_MAX; ++c) {
+		switch (c) {
+			case 12U:
+			case 13U:
+			case 14U:
+			case 62U:
+				continue;
+		}
+		v = reinterpret_cast<typeof v>(&m_devcaps[c]);
+		if (c >= sizeof cap_types) {
+			ACLog(1, "  DevCap %u == %#x\n", c, v->u);
+			continue;
+		}
+		switch (cap_types[c]) {
+			case 0U:
+				ACLog(1, "  %s %s\n", cap_names[c], (v->b & 1U) ? "Yes" : "No");
+				break;
+			case 1U:
+				ACLog(1, "  %s %u\n", cap_names[c], v->u);
+				break;
+			case 2U:
+				ACLog(1, "  %s %d\n", cap_names[c], v->i);
+				break;
+			case 3U:
+				ACLog(1, "  %s %d\n", cap_names[c], static_cast<int>(v->f));
+				break;
+			case 4U:
+				ACLog(1, "  %s %s\n", cap_names[c], cap_vs_version(v->u));
+				break;
+			case 5U:
+				ACLog(1, "  %s %s\n", cap_names[c], cap_ps_version(v->u));
+				break;
+			case 6U:	// Texture Ops TBD
+				ACLog(1, "  %s %#x\n", cap_names[c], v->u);
+				break;
+			case 7U:
+				if (v->u & 0x1FFFDDFU) {
+					ACLog(1, "  %s Caps\n", cap_names[c]);
+					dumpSurfaceCaps(v->u);
+				}
+				break;
+		}
+	}
+}
+
+HIDDEN
+void CLASS::getGPUCaps()
+{
+	uint32_t offset, i, len, c;
+	uint32_t const* caps = m_svga->get3DCapsBlock();
+	if (!caps)
+		return;
+	for (offset = 0U; (len = caps[offset]); offset += len) {
+		if (caps[offset + 1U] != 0x100U /* SVGA3DCAPS_RECORD_DEVCAPS */)
+			continue;
+		for (i = 2U; i < len; i += 2U) {
+			c = caps[offset + i];
+			if (c < SVGA3D_DEVCAP_MAX)
+				m_devcaps[c] = caps[offset + i + 1U];
+		}
+	}
+}
+
 #pragma mark -
 #pragma mark Methods from IOService
 #pragma mark -
@@ -550,11 +731,22 @@ bool CLASS::start(IOService* provider)
 		bHaveScreenObject = true;
 		ACLog(1, "Screen Object On\n");
 	}
+	m_devcaps = static_cast<typeof m_devcaps>(IOMalloc(SVGA3D_DEVCAP_MAX * sizeof(uint32_t)));
+	if (!m_devcaps) {
+		ACLog(1, "Unable to allocate space for devcaps\n");
+		stop(provider);
+		return false;
+	}
+	bzero(m_devcaps, SVGA3D_DEVCAP_MAX * sizeof(uint32_t));
 	if ((bHaveScreenObject || checkOptionAC(VMW_OPTION_AC_SVGA3D | VMW_OPTION_AC_GL_CONTEXT)) &&
 		svga3d.Init(m_svga)) {
 		uint32_t hwv = svga3d.getHWVersion();
 		bHaveSVGA3D = true;
 		ACLog(1, "SVGA3D On, 3D HWVersion == %u.%u\n", SVGA3D_MAJOR_HWVERSION(hwv), SVGA3D_MINOR_HWVERSION(hwv));
+		if (hwv >= SVGA3D_HWVERSION_WS6_B1) {
+			getGPUCaps();
+			dumpGPUCaps();
+		}
 	}
 	if (checkOptionAC(VMW_OPTION_AC_NO_YUV))
 		ACLog(1, "YUV Off\n");
