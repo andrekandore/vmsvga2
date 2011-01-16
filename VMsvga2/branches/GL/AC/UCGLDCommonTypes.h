@@ -51,7 +51,7 @@ struct VendorNewTextureDataStruc
 	uint32_t width;		// offset 0x08
 	uint16_t height;	// offset 0x0C
 	uint16_t depth;		// offset 0x0E
-	uint32_t f0;		// offset 0x10
+	uint32_t vram_pitch;// offset 0x10
 	uint32_t pitch;		// offset 0x14
 	uint32_t read_only;	// offset 0x18
 	uint32_t f1[3];		// offset 0x1C
@@ -69,7 +69,10 @@ struct sIONewTextureReturnData
 
 struct sIODevicePageoffTexture
 {
-	uint32_t data[6];	// Note: only 2 elements are used
+	uint32_t texture_id;
+	uint16_t mipmap;
+	uint16_t face;
+	uint32_t data[4];	// Note: other elements unused
 };
 
 struct sIODeviceChannelMemoryData
@@ -148,13 +151,43 @@ struct GLDSysObject {
 							// 10
 	uint8_t volatile in_use;
 							// 14
-	uint8_t f1;				// 15 - looks like purgeable flag
+	uint8_t vstate;			// 15 - looks like purgeable flag
 	uint8_t type;			// 16
 	uint32_t f2;			// 18
-	uint16_t pageoff[6];	// 1C
-	uint16_t pageon[6];		// 28
+	uint16_t pageoff[6];	// 1C - 1 bit indicates the GLD copy is valid
+	uint16_t pageon[6];		// 28 - 1 bit indicates the VRAM copy is valid
 	uint32_t f3;			// 34
 							// 38
+};
+
+struct GLDFence
+{
+	uint32_t u;
+	uint32_t v;
+};
+
+/*
+ * A GLD Texture of types TEX_TYPE_STD or TEX_TYPE_OOB begins
+ *   with an array of 72 structures of the following type.
+ *   This corresponds to 6 faces X 12 mipmaps per face
+ *   [A total of 0x900 bytes of headers].  After that the
+ *   pixel data is stored, as pointed to by pixels_in_client
+ *   (equivalently offset_in_client).
+ *
+ * The f0 and f1 are used to calculate the addresses of
+ *   multiple layers when the depth is > 1.  There are
+ *   different volume texture layouts for GMA900 and GMA950.
+ */
+struct GLDTextureHeader {
+	uint64_t pixels_in_client;	// 0 (64-bit virtual address of mipmap)
+	uint32_t offset_in_client;	// 8 (offset from beginning of texture storage)
+	uint32_t f0;				// 12
+	uint16_t width_bytes;		// 16
+	uint16_t height;			// 18 (in scan lines)
+	uint32_t fixed;				// 20 (always 0x3CC0000U, used to build SRC_COPY_BLT commands)
+	uint32_t f1;				// 24
+	uint16_t pitch;				// 28 (in bytes)
+	uint16_t depth;				// 30 (in planes)
 };
 
 #ifdef __cplusplus

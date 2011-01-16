@@ -1120,9 +1120,12 @@ IOReturn CLASS::setup_trick_buffer()
 
 	if (!isBackingValid())
 		return kIOReturnNotReady;
-	mem = IOBufferMemoryDescriptor::withOptions(kIODirectionInOut | kIOMemoryPageable | kIOMemoryKernelUserShared,
-												m_backing.size,
-												PAGE_SIZE);
+	mem = IOBufferMemoryDescriptor::inTaskWithOptions(0,
+													  kIOMemoryKernelUserShared |
+													  kIOMemoryPageable |
+													  kIODirectionInOut,
+													  m_backing.size,
+													  page_size);
 	if (!mem)
 		return kIOReturnNoMemory;
 	if (mem->prepare() != kIOReturnSuccess) {
@@ -2177,7 +2180,7 @@ void CLASS::getBoundsForGL(uint32_t* inner_width, uint32_t* inner_height, uint32
 }
 
 HIDDEN
-bool CLASS::getSurfacesForGL(uint32_t* color_sid, uint32_t* depth_sid)
+bool CLASS::getSurfacesForGL(uint32_t* color_sid, uint32_t* depth_sid) const
 {
 	if (!bGLMode)
 		return false;
@@ -2226,6 +2229,7 @@ IOReturn CLASS::attachGL(uint32_t context_id, int cmb)
 			return rc;
 		}
 	}
+#if 0
 	rc = m_provider->setRenderTarget(context_id, SVGA3D_RT_COLOR0, m_gl.color_sid);
 	if (rc != kIOReturnSuccess) {
 		CleanupGL();
@@ -2241,16 +2245,19 @@ IOReturn CLASS::attachGL(uint32_t context_id, int cmb)
 		m_provider->setRenderTarget(context_id, SVGA3D_RT_STENCIL, m_gl.depth_sid); // is this needed too?
 #endif
 	}
+#endif
 	m_gl.cid = context_id;
 	memcpy(&m_gl.rt_size, &m_scale.source, sizeof m_scale.source);
 	touchRenderTarget();
 	bGLMode = true;
+#if 0
 	/*
 	 * Initialization taken from VMware Examples
 	 *   Without the ViewPort setting, nothing paints
 	 */
 	m_provider->setViewPort(context_id, &m_scale.buffer);
 	m_provider->setZRange(context_id, 0.0F, 1.0F);	// is this a good range for Z?
+#endif
 	return kIOReturnSuccess;
 }
 
@@ -2304,6 +2311,7 @@ IOReturn CLASS::resizeGL()
 		touchRenderTarget();
 		return kIOReturnSuccess;
 	}
+#if 0
 	rc = m_provider->setRenderTarget(m_gl.cid, SVGA3D_RT_COLOR0, m_gl.color_sid);
 	if (rc != kIOReturnSuccess) {
 		m_gl.cid = SVGA_ID_INVALID;
@@ -2320,14 +2328,17 @@ IOReturn CLASS::resizeGL()
 		m_provider->setRenderTarget(m_gl.cid, SVGA3D_RT_STENCIL, m_gl.depth_sid); // is this needed too?
 #endif
 	}
+#endif
 	memcpy(&m_gl.rt_size, &m_scale.source, sizeof m_scale.source);
 	touchRenderTarget();
 
 set_view:
+#if 0
 	if (!isIdValid(m_gl.cid))
 		return kIOReturnSuccess;
 	m_provider->setViewPort(m_gl.cid, &m_scale.buffer);
 	m_provider->setZRange(m_gl.cid, 0.0F, 1.0F);
+#endif
 	return kIOReturnSuccess;
 }
 

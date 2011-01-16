@@ -44,29 +44,41 @@ class VMsvga2GLContext: public IOUserClient
 
 private:
 	task_t m_owning_task;					// offset 0x78
-											// offset 0x7C: unknown
+											// offset 0x7C - 0x80: unknown
 	class VMsvga2Accel* m_provider;			// offset 0x80
 											// offset 0x84 - 0x8C: unknown
 	class VMsvga2Shared* m_shared;			// offset 0x8C
-											// offset 0x90 - 0xB4: unknown 
-	IOMemoryDescriptor* m_type2;			// offset 0xB4
-	size_t m_type2_len;						// offset 0xB8
-	VendorCommandBufferHeader* m_type2_ptr; // offset 0xBC
-											// offset 0xC0: unknown
+											// offset 0x90 - 0xA8: unknown 
+	uint16_t m_drawbuf_params[2];			// offset 0xA8 - 0xAC
+											// offset 0xAC - 0xB4: unknown
+	IOMemoryDescriptor* m_fences;			// offset 0xB4
+	size_t m_fences_len;					// offset 0xB8
+	struct GLDFence* m_fences_ptr;			// offset 0xBC
+											// offset 0xC0 - 0xC4: unknown
 	class VMsvga2Surface* m_surface_client;	// offset 0xC4
 	VMsvga2CommandBuffer m_command_buffer;	// offset 0xC8 - 0xFC
 	class OSSet* m_gc;						// offset 0xFC
 	VMsvga2CommandBuffer m_context_buffer0; // offset 0x100 - 0x134
-	VMsvga2CommandBuffer m_context_buffer1; // offset 0x130 - 0x154
-											// offset 0x154 - 0x194: unknown
+	VMsvga2CommandBuffer m_context_buffer1; // offset 0x130 - 0x164
+											// offset 0x160 - 0x194: unknown
 	int m_stream_error;						// offset 0x194
-											// offset 0x198: unknown
+											// offset 0x198 - 0x19C: unknown
 	uint32_t m_mem_type;					// offset 0x19C
+											// offset 0x1A0 - 0x1B0: unknown
 	VMsvga2TextureBuffer* m_txs[21U];		// offset 0x1B0
 											// textures 0 - 15 used for texture stages
 											// texture 16 used for vertex buffer
 											// textures 17 - 18 used for DrawFBO (color & depth)
 											// textures 19 - 20 used for ReadFBO (color & depth)
+	struct FBODescriptor* m_fbo[2];			// m_fbo[0] for DrawFBO [offset 0x204]
+											// m_fbo[1] for ReadFBO [offset 0x208]
+											// offset 0x20C - 0x228: VendorGLStreamInfo
+											// offset 0x228 - 0x238: unknown
+											// offset 0x238: mask from map_state
+											// offset 0x23C: count of num bits in mask
+											// offset 0x240 - 0x300: uint32[16][3] for tex data from map_state
+											// offset 0x300 - 0x304: unknown
+	uint32_t m_drawrect[4];					// offset 0x304 - 0x314
 
 	/*
 	 * VMsvga2 Specific
@@ -118,28 +130,10 @@ private:
 	 */
 	void Init();
 	void Cleanup();
-	bool allocCommandBuffer(VMsvga2CommandBuffer*, size_t);
-	void initCommandBufferHeader(VendorCommandBufferHeader*, size_t);
+	static bool allocCommandBuffer(VMsvga2CommandBuffer*, size_t);
+	static void initCommandBufferHeader(VendorCommandBufferHeader*, size_t);
 	bool allocAllContextBuffers();
-	IOReturn get_status(uint32_t*);
-	uint32_t processCommandBuffer(struct VendorCommandDescriptor*);
-	void discardCommandBuffer();
-	IOReturn prepare_transfer_for_io(VendorTransferBuffer* xfer);
-	void sync_trasfer_io(VendorTransferBuffer* xfer);
-	void complete_transfer_io(VendorTransferBuffer* xfer);
-	static void discard_transfer(VendorTransferBuffer* xfer);
-	void removeTextureFromStream(VMsvga2TextureBuffer*);
-	void addTextureToStream(VMsvga2TextureBuffer*);
-	void submit_midbuffer(VendorGLStreamInfo*);
-	void get_texture(VendorGLStreamInfo*, VMsvga2TextureBuffer*, bool);
-	void dirtyTexture(VMsvga2TextureBuffer* tx, uint8_t face, uint8_t mipmap);
-	void get_tex_data(VMsvga2TextureBuffer* tx, uint32_t* tex_gart_address, uint32_t* tex_pitch);
-	void write_tex_data(uint32_t, uint32_t*, VMsvga2TextureBuffer*);
-	IOReturn create_host_surface_for_texture(VMsvga2TextureBuffer*);
-	IOReturn alloc_and_load_texture(VMsvga2TextureBuffer*);
-	IOReturn tex_subimage_2d(VMsvga2TextureBuffer* tx,
-							 struct GLDTexSubImage2DStruc const* desc);
-	void setup_drawbuffer_registers(uint32_t*);
+	static IOReturn get_status(uint32_t*);
 	IOReturn alloc_arrays(size_t num_bytes);
 	void purge_arrays();
 	IOReturn upload_arrays(size_t num_bytes);
@@ -147,35 +141,58 @@ private:
 	IOReturn load_fixed_shaders();
 	void unload_fixed_shaders();
 #endif
+
+	/*
+	 * Apple Pipeline processor
+	 */
+	void CleanupApp();
+	uint32_t processCommandBuffer(struct VendorCommandDescriptor*);
+	void discardCommandBuffer();
+	static void removeTextureFromStream(VMsvga2TextureBuffer*);
+	static void addTextureToStream(VMsvga2TextureBuffer*);
+	void submit_midbuffer(VendorGLStreamInfo*);
+	void get_texture(VendorGLStreamInfo*, VMsvga2TextureBuffer*, bool);
+	static void dirtyTexture(VMsvga2TextureBuffer* tx, uint8_t face, uint8_t mipmap);
+	static void get_tex_data(VMsvga2TextureBuffer* tx, uint32_t* tex_gart_address, uint32_t* tex_pitch, int kind);
+	static void write_tex_data(uint32_t, uint32_t*, VMsvga2TextureBuffer*);
+	IOReturn create_host_surface_for_texture(VMsvga2TextureBuffer*);
+	IOReturn alloc_and_load_texture(VMsvga2TextureBuffer*);
+	IOReturn tex_subimage_2d(VMsvga2TextureBuffer* tx,
+							 struct GLDTexSubImage2DStruc const* desc);
+	void setup_drawbuffer_registers(uint32_t*);
+
+	/*
+	 * Intel Pipeline processor
+	 */
+	void CleanupIpp();
 	uint32_t cache_shader(uint32_t const* source, uint32_t num_dwords);
 	void purge_shader_cache();
 	void adjust_texture_coords(uint8_t* vertex_array,
 							   size_t num_vertices,
 							   void const* decls,
 							   size_t num_decls);
-
-	/*
-	 * Intel Pipeline processor
-	 */
 	uint8_t calc_color_write_enable(void);
 	bool cache_misc_reg(uint8_t regnum, uint32_t value);
 	void ipp_discard_renderstate(void);
 	void ip_prim3d_poly(uint32_t const* vertex_data, size_t num_vertex_dwords);
 	void ip_prim3d_direct(uint32_t prim_kind, uint32_t const* vertex_data, size_t num_vertex_dwords);
-	uint32_t ip_prim3d(uint32_t* p);
-	uint32_t ip_load_immediate(uint32_t* p);
-	uint32_t ip_clear_params(uint32_t* p);
+	uint32_t ip_prim3d(uint32_t* p, uint32_t cmd);
+	uint32_t ip_load_immediate(uint32_t* p, uint32_t cmd);
+	uint32_t ip_clear_params(uint32_t* p, uint32_t cmd);
 	void ip_3d_map_state(uint32_t* p);
 	void ip_3d_sampler_state(uint32_t* p);
 	void ip_misc_render_state(uint32_t selector, uint32_t* p);
 	void ip_independent_alpha_blend(uint32_t cmd);
 	void ip_backface_stencil_ops(uint32_t cmd);
 	void ip_print_ps(uint32_t const*, uint32_t);
-	void ip_select_and_load_ps(uint32_t* p);
+	void ip_select_and_load_ps(uint32_t* p, uint32_t cmd);
 	void ip_load_ps_const(uint32_t* p);
-	uint32_t decode_mi(uint32_t* p);
-	uint32_t decode_2d(uint32_t* p);
-	uint32_t decode_3d(uint32_t* p);
+	void ip_buf_info(uint32_t* p);
+	void ip_draw_rect(uint32_t* p);
+	uint32_t decode_mi(uint32_t* p, uint32_t cmd);
+	uint32_t decode_2d(uint32_t* p, uint32_t cmd);
+	uint32_t decode_3d_1d(uint32_t* p, uint32_t cmd);
+	uint32_t decode_3d(uint32_t* p, uint32_t cmd);
 	uint32_t submit_buffer(uint32_t* kernel_buffer_ptr, uint32_t size_dwords);
 
 public:

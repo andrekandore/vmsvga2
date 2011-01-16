@@ -80,30 +80,6 @@ struct GLDTexSubImage2DStruc {	// starting info->p[1]
 };
 
 /*
- * A GLD Texture of types TEX_TYPE_STD or TEX_TYPE_OOB begins
- *   with an array of 72 structures of the following type.
- *   This corresponds to 6 faces X 12 mipmaps per face
- *   [A total of 0x900 bytes of headers].  After that the
- *   pixel data is stored, as pointed to by pixels_in_client
- *   (equivalently offset_in_client).
- *
- * The f0 and f1 are used to calculate the addresses of
- *   multiple layers when the depth is > 1.  There are
- *   different volume texture layouts for GMA900 and GMA950.
- */
-struct GLDTextureHeader {
-	uint64_t pixels_in_client;	// 0 (64-bit virtual address of mipmap)
-	uint32_t offset_in_client;	// 8 (offset from beginning of texture storage)
-	uint32_t f0;				// 12
-	uint16_t width_bytes;		// 16
-	uint16_t height;			// 18 (in scan lines)
-	uint32_t fixed;				// 20 (always 0x3CC0000U, used to build SRC_COPY_BLT commands)
-	uint32_t f1;				// 24
-	uint16_t pitch;				// 28 (in bytes)
-	uint16_t depth;				// 30 (in planes)
-};
-
-/*
  * format of SRC_COPY_BLIT (5 DWORD params)
  */
 struct SRC_COPY_BLIT_STRUC {
@@ -114,6 +90,21 @@ struct SRC_COPY_BLIT_STRUC {
 	uint32_t dst_addr;		// gart address
 	uint32_t source_pitch;	// in bytes
 	uint32_t src_addr;		// gart address
+};
+
+struct FBODescriptor
+{
+	uint16_t width;
+	uint16_t height;
+	uint8_t f0;
+	struct {
+		uint8_t face;
+		uint8_t mipmap;
+		uint16_t g0;
+		uint16_t x;
+		uint16_t y;
+		uint32_t g1;
+	} txs[2];
 };
 
 #pragma mark -
@@ -217,7 +208,7 @@ int decipher_format(uint8_t mapsurf, uint8_t mt)
 }
 
 static
-int default_format(uint8_t bytespp)
+int default_color_format(uint8_t bytespp, uint8_t sys_obj_type)
 {
 	switch (bytespp) {
 		case 4U:
@@ -225,9 +216,41 @@ int default_format(uint8_t bytespp)
 		case 2U:
 			return SVGA3D_A1R5G5B5;
 		case 1U:
-			return SVGA3D_LUMINANCE8 /* SVGA3D_BUFFER */;	// TBD: gotta solve this
+			return sys_obj_type != TEX_TYPE_AGPREF ? SVGA3D_LUMINANCE8 : SVGA3D_BUFFER;
 	}
 	return SVGA3D_FORMAT_INVALID;
+}
+
+static
+int default_depth_format(uint8_t bytespp)
+{
+	switch (bytespp) {
+		case 4U:
+			return SVGA3D_Z_D24S8;
+		case 2U:
+			return SVGA3D_Z_D16;
+		case 1U:
+			return SVGA3D_LUMINANCE8;
+	}
+	return SVGA3D_FORMAT_INVALID;
+}
+
+static inline
+int select_default_format(VMsvga2TextureBuffer* tx, int usage)
+{
+	return usage ? default_depth_format(tx->bytespp) : default_color_format(tx->bytespp, tx->sys_obj_type);
+}
+
+static inline
+uint8_t sanitize_face(uint8_t face)
+{
+	return face >= 6U ? 0U : face;
+}
+
+static inline
+uint8_t sanitize_mipmap(uint8_t mipmap)
+{
+	return mipmap >= 12U ? 0U : mipmap;
 }
 
 static
@@ -235,7 +258,7 @@ bool isPagedOff(GLDSysObject* sys_obj, uint8_t face, uint8_t mipmap)
 {
 	if (!sys_obj || face >= 6U || mipmap >= 16U)
 		return false;
-	return (sys_obj->pageoff[face] & ~sys_obj->pageon[face] & (1U << mipmap)) != 0U;
+	return ((sys_obj->pageoff[face] & ~sys_obj->pageon[face]) >> mipmap) & 1U;
 }
 
 static
@@ -250,27 +273,9 @@ bool areAnyPagedOff(GLDSysObject* sys_obj)
 	return false;
 }
 
-static
-IOReturn mapGLDTextureHeader(VMsvga2TextureBuffer* tx, IOMemoryMap** map)
-{
-	IOMemoryMap* mmap;
-
-	if (!tx)
-		return kIOReturnBadArgument;
-	if (!tx->xfer.md)
-		return kIOReturnNotReady;
-	mmap = tx->xfer.md->createMappingInTask(kernel_task, 0U, kIOMapAnywhere);
-	if (!mmap)
-		return kIOReturnNoResources;
-#if 0
-	if (mmap->getLength() < 72U * sizeof(GLDTextureHeader)) {
-		mmap->release();
-		return kIOReturnNotReadable;
-	}
-#endif
-	*map = mmap;
-	return kIOReturnSuccess;
-}
+IOReturn mapGLDTextureHeader(VMsvga2TextureBuffer* tx, IOMemoryMap** map);
+IOReturn prepare_transfer_for_io(VMsvga2Accel* provider, VendorTransferBuffer* xfer);
+void complete_transfer_io(VMsvga2Accel* provider, VendorTransferBuffer* xfer);
 
 #pragma mark -
 #pragma mark Private Dispatch Tables [Apple]
@@ -383,6 +388,25 @@ dispatch_function_t dispatch_process_2[] =
 #pragma mark -
 #pragma mark Private Methods
 #pragma mark -
+HIDDEN
+
+void CLASS::CleanupApp()
+{
+	int i;
+	/*
+	 * TBD: There may be left over refcounted textures on m_txs.
+	 *   should we expect m_shared to destroy them?
+	 *   We shouldn't because there may be other GL contexts
+	 *   connected to the same m_shared, so we should lock
+	 *   m_shared and deref them. [Make sure to do this
+	 *   before releasing m_shared.]
+	 */
+	for (i = 0; i != 2; ++i)
+		if (m_fbo[i]) {
+			IOFree(m_fbo[i], sizeof(FBODescriptor));
+			m_fbo[i] = 0;
+		}
+}
 
 HIDDEN
 uint32_t CLASS::processCommandBuffer(VendorCommandDescriptor* result)
@@ -421,7 +445,9 @@ uint32_t CLASS::processCommandBuffer(VendorCommandDescriptor* result)
 		if (cb_iter.limit <= cb_iter.p)
 			break;
 	} while (cb_iter.cmd);
+#ifdef GL_DEV
 	GLLog(3, "%s:   processed %d stream commands, error == %#x\n", __FUNCTION__, commands_processed, m_stream_error);
+#endif
 	result->next = &m_command_buffer.kernel_ptr->downstream[0] + cb_iter.dso_bytes / sizeof(uint32_t);
 	result->ds_ptr = m_command_buffer.xfer.gart_ptr + static_cast<uint32_t>(sizeof(VendorCommandBufferHeader)) + cb_iter.dso_bytes;
 	result->ds_count_dwords = cb_iter.ds_count_dwords;
@@ -544,21 +570,21 @@ HIDDEN
 void CLASS::get_texture(VendorGLStreamInfo* info, VMsvga2TextureBuffer* tx, bool flag)
 {
 #if 0
-	VMsvga2TextureBuffer* otx;
+	VMsvga2TextureBuffer* ltx;
 #endif
 	if (tx->sys_obj->in_use) {
 		submit_midbuffer(info);
 		alloc_and_load_texture(tx);
 #if 0
-		if (flag & !m_command_buffer.gart_ptr)
-			mapTransferToGART(&m_command_buffer);
+		if (flag & !m_command_buffer.xfer.gart_ptr)
+			mapTransferToGART(&m_command_buffer.xfer);
 #endif
 	}
 #if 0
-	otx = tx;
-	if (otx->sys_obj_type == TEX_TYPE_IOSURFACE)
-		otx = otx->linked_agp;
-	if (otx->0x6C) {
+	ltx = tx;
+	if (ltx->sys_obj_type == TEX_TYPE_IOSURFACE)
+		ltx = ltx->linked_agp;
+	if (ltx->glk.gart_ptr) {
 		/*
 		 * TBD: circular linked-list juggling
 		 *   on m_provider->0x688, and prev-next pair
@@ -582,12 +608,22 @@ void CLASS::dirtyTexture(VMsvga2TextureBuffer* tx, uint8_t face, uint8_t mipmap)
 }
 
 HIDDEN
-void CLASS::get_tex_data(VMsvga2TextureBuffer* tx, uint32_t* tex_gart_address, uint32_t* tex_pitch)
+void CLASS::get_tex_data(VMsvga2TextureBuffer* tx, uint32_t* tex_gart_address, uint32_t* tex_pitch, int usage)
 {
-	/*
-	 * TBD
-	 */
-	*tex_gart_address = 0U;
+	switch (tx->sys_obj_type) {
+		case TEX_TYPE_SURFACE:
+			if (tx->linked_surface) {
+				if (usage)
+					tx->linked_surface->getSurfacesForGL(0, tex_gart_address);	// Note: depth, ignores error
+				else
+					tx->linked_surface->getSurfacesForGL(tex_gart_address, 0);	// Note: color, ignores error
+			} else
+				*tex_gart_address = SVGA_ID_INVALID;
+			break;
+		default:
+			*tex_gart_address = tx->surface_id;
+			break;
+	}
 	*tex_pitch = 512U;
 }
 
@@ -595,9 +631,6 @@ HIDDEN
 void CLASS::write_tex_data(uint32_t i, uint32_t* q, VMsvga2TextureBuffer* tx)
 {
 #if 0
-	/*
-	 * TBD
-	 */
 	int fmt;
 	uint32_t width, pitch;
 	uint16_t height, depth;
@@ -610,19 +643,6 @@ void CLASS::write_tex_data(uint32_t i, uint32_t* q, VMsvga2TextureBuffer* tx)
 	pitch = (((d1 >> 21) + 1U) & 0x7FFU) * static_cast<uint32_t>(sizeof(uint32_t));
 	mapsurf = bit_select(d0, 7, 3);
 	mt = bit_select(d0, 3, 4);
-#if 0
-	GLLog(3, "%s:   tex %u data1 width %u, height %u, MAPSURF %u, MT %u, UF %u, TS %u, TW %u\n", __FUNCTION__,
-		  q[0], width, height, mapsurf, mt,
-		  bit_select(d0, 2, 1),
-		  bit_select(d0, 1, 1),
-		  d0 & 1U);
-	GLLog(3, "%s:   tex %u data2 pitch %u, cube-face-ena %#x, max-lod %#x, mip-layout %u, depth %u\n", __FUNCTION__,
-		  q[0], pitch,
-		  bit_select(d1, 15, 6),
-		  bit_select(d1,  9, 6),
-		  bit_select(d1,  8, 1),
-		  depth);
-#endif
 	fmt = decipher_format(mapsurf, mt);
 	if (fmt != tx->surface_format ||
 		width != tx->width ||
@@ -651,6 +671,12 @@ void CLASS::write_tex_data(uint32_t i, uint32_t* q, VMsvga2TextureBuffer* tx)
 			 *   q[1] for all surface types, including TEX_TYPE_SURFACE.
 			 */
 			break;
+		case TEX_TYPE_AGPREF:
+			if (isIdValid(tx->yuv_shadow))
+				q[0] = tx->yuv_shadow;
+			else
+				q[0] = tx->surface_id;
+			break;
 		default:
 			q[0] = tx->surface_id;
 			break;
@@ -670,10 +696,7 @@ IOReturn CLASS::create_host_surface_for_texture(VMsvga2TextureBuffer* tx)
 
 	if (!m_provider)
 		return kIOReturnNotReady;
-	if (!tx ||
-		!tx->bytespp ||
-		tx->num_faces > 6U ||
-		tx->min_mipmap + tx->num_mipmaps > 12U)
+	if (!tx)
 		return kIOReturnBadArgument;
 	if (tx->sys_obj_type == TEX_TYPE_SURFACE)
 		return kIOReturnSuccess;
@@ -766,10 +789,7 @@ IOReturn CLASS::alloc_and_load_texture(VMsvga2TextureBuffer* tx)
 
 	if (!m_provider)
 		return kIOReturnNotReady;
-	if (!tx ||
-		!tx->bytespp ||
-		tx->num_faces > 6U ||
-		tx->min_mipmap + tx->num_mipmaps > 12U)
+	if (!tx)
 		return kIOReturnBadArgument;
 	if (tx->surface_format == SVGA3D_FORMAT_INVALID) {
 		GLLog(1, "%s: invalid surface format\n", __FUNCTION__);
@@ -827,7 +847,7 @@ IOReturn CLASS::alloc_and_load_texture(VMsvga2TextureBuffer* tx)
 		goto clean1;
 	}
 	hostImage.sid = tx->surface_id;
-	rc = prepare_transfer_for_io(&ltx->xfer);
+	rc = prepare_transfer_for_io(m_provider, &ltx->xfer);
 	if (rc != kIOReturnSuccess) {
 		GLLog(1, "%s: prepare_transfer_for_io return %#x\n", __FUNCTION__, rc);
 		goto clean1;
@@ -840,7 +860,6 @@ IOReturn CLASS::alloc_and_load_texture(VMsvga2TextureBuffer* tx)
 			copyBox.d = tx->depth;
 			hostImage.face = 0U;
 			hostImage.mipmap = 0U;
-			dirtyTexture(tx, hostImage.face, hostImage.mipmap);
 			rc = m_provider->surfaceDMA3DEx(&hostImage,
 											SVGA3D_WRITE_HOST_VRAM,
 											&copyBox,
@@ -864,7 +883,6 @@ IOReturn CLASS::alloc_and_load_texture(VMsvga2TextureBuffer* tx)
 					extra.mem_offset_in_gmr = base_offset + gld_th->offset_in_client;
 					extra.mem_limit = base_limit - gld_th->offset_in_client;
 					extra.mem_pitch = gld_th->pitch;
-					dirtyTexture(tx, hostImage.face, hostImage.mipmap);
 					rc = m_provider->surfaceDMA3DEx(&hostImage,
 													SVGA3D_WRITE_HOST_VRAM,
 													&copyBox,
@@ -875,13 +893,15 @@ IOReturn CLASS::alloc_and_load_texture(VMsvga2TextureBuffer* tx)
 				}
 			}
 			mmap->release();
+			for (hostImage.face = 0U; hostImage.face != tx->num_faces; ++hostImage.face)
+				tx->sys_obj->pageon[hostImage.face] |= tx->sys_obj->pageoff[hostImage.face];
 			break;
 	}
-	complete_transfer_io(&ltx->xfer); // ugh... to get rid of this need set up a garbage-collection mechanism
+	complete_transfer_io(m_provider, &ltx->xfer); // ugh... to get rid of this need set up a garbage-collection mechanism
 	return kIOReturnSuccess;
 
 clean2:
-	complete_transfer_io(&ltx->xfer);
+	complete_transfer_io(m_provider, &ltx->xfer);
 clean1:
 	if (mmap)
 		mmap->release();
@@ -925,7 +945,7 @@ IOReturn CLASS::tex_subimage_2d(VMsvga2TextureBuffer* tx,
 		return rc;
 	}
 	hostImage.sid = tx->surface_id;
-	rc = prepare_transfer_for_io(&m_command_buffer.xfer);
+	rc = prepare_transfer_for_io(m_provider, &m_command_buffer.xfer);
 	if (rc != kIOReturnSuccess) {
 		GLLog(1, "%s: prepare_transfer_for_io return %#x\n", __FUNCTION__, rc);
 		return rc;
@@ -941,32 +961,54 @@ IOReturn CLASS::tex_subimage_2d(VMsvga2TextureBuffer* tx,
 HIDDEN
 void CLASS::setup_drawbuffer_registers(uint32_t* p)
 {
-#if 0
+	uint32_t gart_pitch;
+
 	/*
 	 * First command sets gart_ptr and pitch of
 	 *   render target color buffer
 	 */
 	p[0] = 0x7D8E0001U; /* 3DSTATE_BUF_INFO_CMD */
-	p[1] = 0x3800000U;	/* BUF_3D_USE_FENCE | BUF_3D_ID_COLOR_BACK */
-	p[2] = 0U;
+	p[1] = 0x03800000U; /* BUF_3D_ID_COLOR_BACK | BUF_3D_USE_FENCE */
 	/*
 	 * Second command sets gart_ptr and pitch of
 	 *   render target depth buffer
 	 */
 	p[3] = 0x7D8E0001U; /* 3DSTATE_BUF_INFO_CMD */
-	p[4] = 0x7800000U;	/* BUF_3D_USE_FENCE | BUF_3D_ID_DEPTH */
-	p[5] = 0U;
+	p[4] = 0x07800000U;	/* BUF_3D_ID_DEPTH | BUF_3D_USE_FENCE */
 	/*
 	 * DRAW_RECT is Intel's version of setViewPort()
 	 */
 	p[6]  = 0x7D800003U; /* 3DSTATE_DRAW_RECT_CMD */
-	p[7]  = this->0x304;	/* DRAW_RECT_DIS_DEPTH_OFS, DRAW_DITHER_OFS_X, DRAW_DITHER_OFS_Y */
-	p[8]  = this->0x308;	/* ymin:xmin */
-	p[9]  = this->0x30C;	/* ymax:xmax */
-	p[10] = this->0x310;	/* yorg:xorg */
-#else
-	bzero(&p[0], 11U * sizeof(uint32_t));
-#endif
+	if (m_fbo[0]) {
+		if (m_txs[17]) {
+			get_tex_data(m_txs[17], &p[2], &gart_pitch, 0);
+			p[1] |= (m_fbo[0]->txs[0].face << 8) | m_fbo[0]->txs[0].mipmap;
+		} else
+			p[2] = SVGA_ID_INVALID;
+		if (m_txs[18]) {
+			get_tex_data(m_txs[18], &p[5], &gart_pitch, 1);
+			p[1] |= (m_fbo[0]->txs[1].face << 8) | m_fbo[0]->txs[1].mipmap;
+		} else
+			p[5] = SVGA_ID_INVALID;
+		m_drawrect[0] = m_fbo[0]->txs[m_drawbuf_params[0]].x;
+		m_drawrect[1] = m_fbo[0]->txs[m_drawbuf_params[0]].y;
+		m_drawrect[2] = m_fbo[0]->width;
+		m_drawrect[3] = m_fbo[0]->height;
+	} else if (m_surface_client) {
+		m_surface_client->getSurfacesForGL(&p[2], &p[5]);
+		/*
+		 * This viewPort setting is probably not right,
+		 *   but it'll do for now.
+		 */
+		m_drawrect[0] = 0U;
+		m_drawrect[1] = 0U;
+		m_surface_client->getBoundsForGL(&m_drawrect[2], &m_drawrect[3], 0, 0);
+	} else {
+		p[2] = SVGA_ID_INVALID;
+		p[5] = SVGA_ID_INVALID;
+		bzero(&m_drawrect[0], sizeof m_drawrect);
+	}
+	memcpy(&p[7], &m_drawrect[0], sizeof m_drawrect);
 }
 
 #pragma mark -
@@ -989,21 +1031,21 @@ void CLASS::process_token_TextureVolatile(VendorGLStreamInfo* info)
 	}
 	switch (tx->sys_obj_type) {
 		case TEX_TYPE_STD:
-			tx->sys_obj->f1 |= static_cast<uint8_t>(q);
+			tx->sys_obj->vstate |= static_cast<uint8_t>(q);
 			if (q & 0x10U)
 				tx->xfer.md->setPurgeable(kIOMemoryPurgeableVolatile, &old_state);
 			break;
 		case TEX_TYPE_OOB:
-			tx->sys_obj->f1 |= static_cast<uint8_t>(q);
+			tx->sys_obj->vstate |= static_cast<uint8_t>(q);
 			if (q & 0x10U) {
-				tx->linked_agp->sys_obj->f1 |= 0x10U;
+				tx->linked_agp->sys_obj->vstate |= 0x10U;
 				tx->linked_agp->xfer.md->setPurgeable(kIOMemoryPurgeableVolatile, &old_state);
 			}
 			break;
 		case TEX_TYPE_AGPREF:
 			if (q & 0x10U) {
-				tx->sys_obj->f1 |= 0x10U;
-				tx->linked_agp->sys_obj->f1 |= 0x10U;
+				tx->sys_obj->vstate |= 0x10U;
+				tx->linked_agp->sys_obj->vstate |= 0x10U;
 				tx->linked_agp->xfer.md->setPurgeable(kIOMemoryPurgeableVolatile, &old_state);
 			}
 			break;
@@ -1026,27 +1068,27 @@ void CLASS::process_token_TextureNonVolatile(VendorGLStreamInfo* info)
 	}
 	switch (tx->sys_obj_type) {
 		case TEX_TYPE_STD:
-			tx->sys_obj->f1 &= ~0x11U;
+			tx->sys_obj->vstate &= ~0x11U;
 			tx->xfer.md->setPurgeable(kIOMemoryPurgeableNonVolatile, &old_state);
 			if (old_state == kIOMemoryPurgeableEmpty)
-				tx->sys_obj->f1 |= 0x20U;
+				tx->sys_obj->vstate |= 0x20U;
 			break;
 		case TEX_TYPE_OOB:
-			tx->sys_obj->f1 &= ~0x11U;
-			tx->linked_agp->sys_obj->f1 &= ~0x11U;
+			tx->sys_obj->vstate &= ~0x11U;
+			tx->linked_agp->sys_obj->vstate &= ~0x11U;
 			tx->linked_agp->xfer.md->setPurgeable(kIOMemoryPurgeableNonVolatile, &old_state);
 			if (old_state == kIOMemoryPurgeableEmpty) {
-				tx->sys_obj->f1 |= 0x20U;
-				tx->linked_agp->sys_obj->f1 |= 0x20U;
+				tx->sys_obj->vstate |= 0x20U;
+				tx->linked_agp->sys_obj->vstate |= 0x20U;
 			}
 			break;
 		case TEX_TYPE_AGPREF:
-			tx->sys_obj->f1 &= ~0x11U;
-			tx->linked_agp->sys_obj->f1 &= ~0x11U;
+			tx->sys_obj->vstate &= ~0x11U;
+			tx->linked_agp->sys_obj->vstate &= ~0x11U;
 			tx->linked_agp->xfer.md->setPurgeable(kIOMemoryPurgeableNonVolatile, &old_state);
 			if (old_state == kIOMemoryPurgeableEmpty) {
-				tx->sys_obj->f1 |= 0x20U;
-				tx->linked_agp->sys_obj->f1 |= 0x20U;
+				tx->sys_obj->vstate |= 0x20U;
+				tx->linked_agp->sys_obj->vstate |= 0x20U;
 				tx->sys_obj->in_use = 1U;
 			}
 			break;
@@ -1071,108 +1113,208 @@ void CLASS::process_token_SetSurfaceState(VendorGLStreamInfo* info)
 HIDDEN
 void CLASS::process_token_BindDrawFBO(VendorGLStreamInfo* info)
 {
-	uint32_t i, tx_id, count = info->p[3];
+	uint32_t i, tx_id, count;
+	uint8_t face, mipmap;
 	VMsvga2TextureBuffer* tx;
+	FBODescriptor* fbo;
 
-	GLLog(1, "%s() Unsupported\n", __FUNCTION__);
-	/*
-	 * TBD
-	 *   Note: The wipe size is correct.  The loop releases
-	 *   the texture references to avoid a leak.
-	 */
-	if (count > 2U)
-		count = 2U;
-	for (i = 0U; i != count; ++i) {
-		tx_id = info->p[4U * i + 4U];
-		if (tx_id == 0xFFFFFFFFU)
-			continue;
-		tx = m_shared->findTextureBuffer(tx_id);
-		if (!tx) {
-			m_stream_error = 2;
-			return;
-		}
-#if 0
-		__sync_fetch_and_add(&tx->sys_obj->refcount, -0xFFFF);
-#endif
-		if (__sync_fetch_and_add(&tx->sys_obj->refcount, -0x10000) == 0x10000)
-			m_shared->delete_texture(tx);
-	}
-	bzero(&info->p[0], 12U * sizeof(uint32_t));
-}
-
-HIDDEN
-void CLASS::process_token_BindReadFBO(VendorGLStreamInfo* info)
-{
-	uint32_t i, tx_id, count = info->p[3];
-	VMsvga2TextureBuffer* tx;
-
-	GLLog(1, "%s() Unsupported\n", __FUNCTION__);
-	/*
-	 * TBD
-	 *   Note: The wipe size is correct.  The loop releases
-	 *   the texture references to avoid a leak.
-	 */
-	if (count > 2U)
-		count = 2U;
-	for (i = 0U; i != count; ++i) {
-		tx_id = info->p[4U * i + 4U];
-		if (tx_id == 0xFFFFFFFFU)
-			continue;
-		tx = m_shared->findTextureBuffer(tx_id);
-		if (!tx) {
-			m_stream_error = 2;
-			return;
-		}
-#if 0
-		__sync_fetch_and_add(&tx->sys_obj->refcount, -0xFFFF);
-#endif
-		if (__sync_fetch_and_add(&tx->sys_obj->refcount, -0x10000) == 0x10000)
-			m_shared->delete_texture(tx);
-	}
-	bzero(&info->p[0], 12U * sizeof(uint32_t));
-}
-
-HIDDEN
-void CLASS::process_token_UnbindDrawFBO(VendorGLStreamInfo* info)
-{
-#if 0
-	uint32_t i;
-	VMsvga2TextureBuffer* tx;
-#endif
-
-	GLLog(1, "%s() Unsupported\n", __FUNCTION__);
-#if 0
-	if (this->0x204) {
-		for (i = 0U; i != 2U; ++i) {	// loops over color & depth buffers
+	if (m_fbo[0])
+		for (i = 0U; i != 2U; ++i) {
 			tx = m_txs[17U + i];
 			if (!tx)
 				continue;
 			dirtyTexture(tx,
-						 byte ptr this->0x204->[12U * i + 8U],	// face
-						 byte ptr this->0x204->[12U * i + 9U]);	// mipmap
+						 m_fbo[0]->txs[i].face,
+						 m_fbo[0]->txs[i].mipmap);
 			removeTextureFromStream(tx);
 			if (__sync_fetch_and_add(&tx->sys_obj->refcount, -1) == 1)
 				m_shared->delete_texture(tx);
 			m_txs[17U + i] = 0;
 		}
-		IOFree(this->0x204, 32U);
-		this->0x204 = 0;
+	else {
+		m_fbo[0] = static_cast<typeof fbo>(IOMalloc(sizeof *fbo));
+		if (!m_fbo[0]) {
+			m_stream_error = 2;
+			return;
+		}
 	}
+	fbo = m_fbo[0];
+	bzero(fbo, sizeof *fbo);
+	fbo->width = info->p[1] & 0xFFFFU;
+	fbo->height = info->p[1] >> 16;
+	fbo->f0 = info->p[2];
+#ifdef GL_DEV
+	GLLog(3, "%s: w == %u, h == %u, f0 == %u\n", __FUNCTION__,
+		  fbo->width, fbo->height, fbo->f0);
 #endif
+	count = info->p[3];
+	if (count > 2U)
+		count = 2U;
+	for (i = 0U; i != count; ++i) {
+		tx_id = info->p[4U * i + 4U];
+		if (tx_id == 0xFFFFFFFFU)
+			continue;
+		tx = m_shared->findTextureBuffer(tx_id);
+		if (!tx) {
+			m_stream_error = 2;
+			return;
+		}
+#ifdef GL_DEV
+		GLLog(3, "%s: tx_id[%u] == %u, sid == %u\n", __FUNCTION__, i, tx_id, tx->surface_id);
+#endif
+		addTextureToStream(tx);
+		if (tx->surface_format == SVGA3D_FORMAT_INVALID) {
+			tx->surface_format = select_default_format(tx, count);
+#ifdef GL_DEV
+			GLLog(3, "%s: texture %u format %u\n", __FUNCTION__, tx->sys_obj->object_id, tx->surface_format);
+#endif
+		}
+		if (info->f3 && !m_stream_error)
+			get_texture(info, tx, 0);
+		face = sanitize_face(info->p[4U * i + 5U] >> 24);
+		mipmap = sanitize_mipmap(info->p[4U * i + 5U] >> 18);
+		dirtyTexture(tx, face, mipmap);
+		fbo->txs[i].face = face;
+		fbo->txs[i].mipmap = mipmap;
+		fbo->txs[i].g0 = info->p[4U * i + 5U] & 0xFFFFU;
+		fbo->txs[i].x = info->p[4U * i + 6U] & 0xFFFFU;
+		fbo->txs[i].y = info->p[4U * i + 6U] >> 16;
+		fbo->txs[i].g1 = info->p[4U * i + 7U];
+#ifdef GL_DEV
+		GLLog(3, "%s: %u - face == %u, mipmap == %u, g0 == %#x, x == %u, y == %u, g1 == %#x\n", __FUNCTION__,
+			  i,
+			  fbo->txs[i].face,
+			  fbo->txs[i].mipmap,
+			  fbo->txs[i].g0,
+			  fbo->txs[i].x,
+			  fbo->txs[i].y,
+			  fbo->txs[i].g1);
+#endif
+		m_txs[17U + i] = tx;
+		__sync_fetch_and_add(&tx->sys_obj->refcount, -0xFFFF);
+	}
+	bzero(&info->p[0], 12U * sizeof(uint32_t));
+#if 0
+	if (info->f3 && !m_command_buffer.xfer.gart_ptr)
+		mapTransferToGART(&m_command_buffer.xfer);
+#endif
+}
+
+HIDDEN
+void CLASS::process_token_BindReadFBO(VendorGLStreamInfo* info)
+{
+	uint32_t i, tx_id, count;
+	VMsvga2TextureBuffer* tx;
+	FBODescriptor* fbo;
+
+	if (m_fbo[1])
+		for (i = 0U; i != 2U; ++i) {
+			tx = m_txs[19U + i];
+			if (!tx)
+				continue;
+			removeTextureFromStream(tx);
+			if (__sync_fetch_and_add(&tx->sys_obj->refcount, -1) == 1)
+				m_shared->delete_texture(tx);
+			m_txs[19U + i] = 0;
+		}
+	else {
+		m_fbo[1] = static_cast<typeof fbo>(IOMalloc(sizeof *fbo));
+		if (!m_fbo[1]) {
+			m_stream_error = 2;
+			return;
+		}
+	}
+	fbo = m_fbo[1];
+	bzero(fbo, sizeof *fbo);
+	fbo->width = info->p[1] & 0xFFFFU;
+	fbo->height = info->p[1] >> 16;
+	fbo->f0 = info->p[2];
+#ifdef GL_DEV
+	GLLog(3, "%s: w == %u, h == %u, f0 == %u\n", __FUNCTION__,
+		  fbo->width, fbo->height, fbo->f0);
+#endif
+	count = info->p[3];
+	if (count > 2U)
+		count = 2U;
+	for (i = 0U; i != count; ++i) {
+		tx_id = info->p[4U * i + 4U];
+		if (tx_id == 0xFFFFFFFFU)
+			continue;
+		tx = m_shared->findTextureBuffer(tx_id);
+		if (!tx) {
+			m_stream_error = 2;
+			return;
+		}
+#ifdef GL_DEV
+		GLLog(3, "%s: tx_id[%u] == %u, sid == %u\n", __FUNCTION__, i, tx_id, tx->surface_id);
+#endif
+		addTextureToStream(tx);
+		if (tx->surface_format == SVGA3D_FORMAT_INVALID) {
+			tx->surface_format = select_default_format(tx, count);
+#ifdef GL_DEV
+			GLLog(3, "%s: texture %u format %u\n", __FUNCTION__, tx->sys_obj->object_id, tx->surface_format);
+#endif
+		}
+		if (info->f3 && !m_stream_error)
+			get_texture(info, tx, 0);
+		fbo->txs[i].face = sanitize_face(info->p[4U * i + 5U] >> 24);
+		fbo->txs[i].mipmap = sanitize_mipmap(info->p[4U * i + 5U] >> 16);
+		fbo->txs[i].g0 = info->p[4U * i + 5U] & 0xFFFFU;
+		fbo->txs[i].x = info->p[4U * i + 6U] & 0xFFFFU;
+		fbo->txs[i].y = info->p[4U * i + 6U] >> 16;
+		fbo->txs[i].g1 = info->p[4U * i + 7U];
+#ifdef GL_DEV
+		GLLog(3, "%s: %u - face == %u, mipmap == %u, g0 == %#x, x == %u, y == %u, g1 == %#x\n", __FUNCTION__,
+			  i,
+			  fbo->txs[i].face,
+			  fbo->txs[i].mipmap,
+			  fbo->txs[i].g0,
+			  fbo->txs[i].x,
+			  fbo->txs[i].y,
+			  fbo->txs[i].g1);
+#endif
+		m_txs[19U + i] = tx;
+		__sync_fetch_and_add(&tx->sys_obj->refcount, -0xFFFF);
+	}
+	bzero(&info->p[0], 12U * sizeof(uint32_t));
+#if 0
+	if (info->f3 && !m_command_buffer.xfer.gart_ptr)
+		mapTransferToGART(&m_command_buffer.xfer);
+#endif
+}
+
+HIDDEN
+void CLASS::process_token_UnbindDrawFBO(VendorGLStreamInfo* info)
+{
+	uint32_t i;
+	VMsvga2TextureBuffer* tx;
+
+	if (m_fbo[0]) {
+		for (i = 0U; i != 2U; ++i) {	// loops over color & depth buffers
+			tx = m_txs[17U + i];
+			if (!tx)
+				continue;
+			dirtyTexture(tx,
+						 m_fbo[0]->txs[i].face,
+						 m_fbo[0]->txs[i].mipmap);
+			removeTextureFromStream(tx);
+			if (__sync_fetch_and_add(&tx->sys_obj->refcount, -1) == 1)
+				m_shared->delete_texture(tx);
+			m_txs[17U + i] = 0;
+		}
+		IOFree(m_fbo[0], sizeof(FBODescriptor));
+		m_fbo[0] = 0;
+	}
 	info->p[0] = 0U;
 }
 
 HIDDEN
 void CLASS::process_token_UnbindReadFBO(VendorGLStreamInfo* info)
 {
-#if 0
 	uint32_t i;
 	VMsvga2TextureBuffer* tx;
-#endif
 
-	GLLog(1, "%s() Unsupported\n", __FUNCTION__);
-#if 0
-	if (this->0x208) {
+	if (m_fbo[1]) {
 		for (i = 0U; i != 2U; ++i) {	// loops over color & depth buffers
 			tx = m_txs[19U + i];
 			if (!tx)
@@ -1182,10 +1324,9 @@ void CLASS::process_token_UnbindReadFBO(VendorGLStreamInfo* info)
 				m_shared->delete_texture(tx);
 			m_txs[19U + i] = 0;
 		}
-		IOFree(this->0x208, 32U);
-		this->0x208 = 0;
+		IOFree(m_fbo[1], sizeof(FBODescriptor));
+		m_fbo[1] = 0;
 	}
-#endif
 	info->p[0] = 0U;
 }
 
@@ -1295,39 +1436,38 @@ void CLASS::discard_token_NoVertexBuffer(VendorGLStreamInfo*)
 HIDDEN
 void CLASS::discard_token_DrawBuffer(VendorGLStreamInfo* info)
 {
+	switch (info->p[1]) {
+		case 1U:
+			m_drawbuf_params[0] = 0U;
+			break;
+		case 7U:
+			m_drawbuf_params[0] = 2U;
+			break;
+		case 8U:
+			m_drawbuf_params[0] = 3U;
+			break;
+		default:
+			m_drawbuf_params[0] = 1U;
+			break;
+	}
 #if 0
 	/*
-	 * word ptr this->0xA8
-	 * word ptr this->0xAA
+	 * Some test for a depth buffer
 	 */
-	switch (info->p[1]) {
-		case 1:
-			this->0xA8 = 0;
-			break;
-		case 7:
-			this->0xA8 = 2;
-			break;
-		case 8:
-			this->0xA8 = 3;
-			break;
-		default:
-			this->0xA8 = 1;
-			break;
-	}
 	if (!(byte ptr this->0x90 & 0x20U))
 		return;
+#endif
 	switch (info->p[1]) {
-		case 7:
-			this->0xAA = 5;
+		case 7U:
+			m_drawbuf_params[1] = 5U;
 			break;
-		case 8:
-			this->0xAA = 6;
+		case 8U:
+			m_drawbuf_params[1] = 6U;
 			break;
 		default:
-			this->0xAA = 4;
+			m_drawbuf_params[1] = 4U;
 			break;
 	}
-#endif
 }
 
 HIDDEN void CLASS::discard_token_Noop(VendorGLStreamInfo*) {} // Null
@@ -1424,7 +1564,7 @@ void CLASS::process_token_Texture(VendorGLStreamInfo* info)
 		addTextureToStream(tx);
 		if (tx->surface_format == SVGA3D_FORMAT_INVALID) {
 			tx->surface_format = decipher_format(bit_select(q[1], 7, 3), bit_select(q[1], 3, 4));
-#ifdef GL_DEV
+#if 0
 			GLLog(3, "%s: texture %u format %u\n", __FUNCTION__, tx->sys_obj->object_id, tx->surface_format);
 #endif
 		}
@@ -1481,6 +1621,9 @@ void CLASS::process_token_NoTex(VendorGLStreamInfo* info)
 	info->p[1] = 0U;
 }
 
+/*
+ * Note: Couldn't find any place in the GLD that calls process_token_VertexBuffer
+ */
 HIDDEN
 void CLASS::process_token_VertexBuffer(VendorGLStreamInfo* info)
 {
@@ -1508,20 +1651,23 @@ void CLASS::process_token_VertexBuffer(VendorGLStreamInfo* info)
 	if (!m_txs[16]->xfer.gart_ptr) {
 		submit_midbuffer(info);
 #if 0
-		mapTransferToGART(tx);
-		if (!m_command_buffer.gart_ptr)
-			mapTransferToGART(&m_command_buffer);
+		mapTransferToGART(&tx.xfer);
+		if (!m_command_buffer.xfer.gart_ptr)
+			mapTransferToGART(&m_command_buffer.xfer);
 #endif
 	}
 #if 0
 	info->p[0] = 0x4CU; // TBD... strange doesn't look like an opcode, maybe middle of an Intel CMD
-	info->p[1] = tx->gart_ptr + 128U;	// Looks like this is a gart_ptr for a TEX_TYPE_VB texture with offset 0x80
+	info->p[1] = tx->xfer.gart_ptr + 128U;	// Looks like this is a gart_ptr for a TEX_TYPE_VB texture with offset 0x80
 #else
 	info->p[0] = 0U;
 	info->p[1] = 0U;
 #endif
 }
 
+/*
+ * Note: Couldn't find any place in the GLD that calls process_token_NoVertexBuffer
+ */
 HIDDEN
 void CLASS::process_token_NoVertexBuffer(VendorGLStreamInfo* info)
 {
@@ -1541,59 +1687,47 @@ void CLASS::process_token_NoVertexBuffer(VendorGLStreamInfo* info)
 HIDDEN
 void CLASS::process_token_DrawBuffer(VendorGLStreamInfo* info)
 {
-#if 0
-	/*
-	 * word ptr this->0xA8
-	 * word ptr this->0xAA
-	 */
-	if (dword ptr this->0x204) {
-		this->0xA8 = info->p[1] == 17U ? 1 : info->p[1];
-		this->0xAA = m_txs[18] != 0 ? 1 : this->0xA8;
+	if (m_fbo[0]) {
+		m_drawbuf_params[0] = (info->p[1] != 17U ? info->p[1] : 1U);
+		m_drawbuf_params[1] = (m_txs[18] ? 1U : m_drawbuf_params[0]);
 		goto finish;
 	}
 	if (!m_surface_client)
 		goto finish;
 	switch (info->p[1]) {
-		case 1:
-			this->0xA8 = 0;
+		case 1U:
+			m_drawbuf_params[0] = 0U;
 			break;
-		case 7:
-			this->0xA8 = 2;
+		case 7U:
+			m_drawbuf_params[0] = 2U;
 			break;
-		case 8:
-			this->0xA8 = 3;
+		case 8U:
+			m_drawbuf_params[0] = 3U;
 			break;
 		default:
-			this->0xA8 = 1;
+			m_drawbuf_params[0] = 1U;
 			break;
 	}
 	switch (info->p[1]) {
-		case 7:
-			this->0xAA = 5;
+		case 7U:
+			m_drawbuf_params[1] = 5U;
 			break;
-		case 8:
-			this->0xAA = 6;
+		case 8U:
+			m_drawbuf_params[1] = 6U;
 			break;
 		default:
-			this->0xAA = 4;
+			m_drawbuf_params[1] = 4U;
 			break;
 	}
 finish:
-#endif
 	setup_drawbuffer_registers(info->p);
 }
 
 HIDDEN
 void CLASS::process_token_SetFence(VendorGLStreamInfo* info)
 {
-	/*
-	 * TBD: support pipeline fences somehow
-	 */
-	GLLog(1, "%s() Unsupported\n", __FUNCTION__);
-#if 0
-	uint32_t val = info->p[1];
-	struct { uint32_t u; uint32_t v; } *q;
-	if (val * sizeof *q >= m_type2_len) {
+	uint32_t fence_num = info->p[1];
+	if (fence_num * sizeof(GLDFence) >= m_fences_len) {
 		info->cmd = 0U;
 		info->ds_count_dwords = 0;
 #if 0
@@ -1602,16 +1736,14 @@ void CLASS::process_token_SetFence(VendorGLStreamInfo* info)
 		m_stream_error = 2;
 		return;
 	}
-	info->p[0] = 0x2000000U;	// MI_FLUSH
+	info->p[0] = 0x02000000U;	// MI_FLUSH
 	info->p[1] = 0x10800001U;	// MI_STORE_DATA_INDEX
 	info->p[2] = 64U;
-	info->p[3] = 0U /* m_provider->0x50 */;
-	q = reinterpret_cast<typeof q>(m_type2_ptr);
-	q[val].u = 0U /* m_provider->0x50++ */;
-	q[val].v = 0U;
+	info->p[3] = fence_num /* m_provider->0x50 */;
+	m_fences_ptr[fence_num].u = 0U /* m_provider->0x50++ */;
+	m_fences_ptr[fence_num].v = 0U;
+#if 0
 	++info->f2;
-#else
-	bzero(&info->p[0], 4U * sizeof(uint32_t));
 #endif
 }
 
@@ -1652,18 +1784,18 @@ void CLASS::process_token_TexSubImage2D(VendorGLStreamInfo* info)
 	 *  not complete format]
 	 */
 	if (tx->surface_format == SVGA3D_FORMAT_INVALID) {
-		tx->surface_format = default_format(tx->bytespp);
+		tx->surface_format = default_color_format(tx->bytespp, tx->sys_obj_type);
 #ifdef GL_DEV
 		GLLog(3, "%s: texture %u format %u\n", __FUNCTION__, tx->sys_obj->object_id, tx->surface_format);
 #endif
 	}
 	get_texture(info, tx, true);
 #if 0
-	get_tex_data(tx, &dest_gart_addr, &dest_pitch);
+	get_tex_data(tx, &dest_gart_addr, &dest_pitch, 0);
 	height = tx->vram_tile_pages >> 32; /* should be texture height, how did it get here? */;
 	face = helper->face;
 	mipmap = helper->mipmap;
-	if (face > 6U)
+	if (face >= 6U)
 		face = 0U;
 	if (mipmap >= 16U)
 		mipmap = 0U;
@@ -1676,7 +1808,7 @@ void CLASS::process_token_TexSubImage2D(VendorGLStreamInfo* info)
 	info->p[7] = 0U;
 	info->p[8] = 0U;
 #else
-	if (helper->face > 6U)
+	if (helper->face >= 6U)
 		helper->face = 0U;
 	if (helper->mipmap >= 16U)
 		helper->mipmap = 0U;
@@ -1719,7 +1851,7 @@ void CLASS::process_token_CopyPixelsDst(VendorGLStreamInfo* info)
 	if (mipmap >= 16U)
 		mipmap = 0U;
 	dirtyTexture(tx, face, mipmap);
-	get_tex_data(tx, &gart_ptr, &gart_pitch);
+	get_tex_data(tx, &gart_ptr, &gart_pitch, 0);
 	gart_ptr += (info->p[2] & 0xFFFFU) + (info->p[2] >> 16) * gart_pitch;
 	/*
 	 * Note: this switches the render target to the texture...
@@ -1763,16 +1895,8 @@ void CLASS::process_token_CopyPixelsSrcFBO(VendorGLStreamInfo* info)
 HIDDEN
 void CLASS::process_token_DrawRect(VendorGLStreamInfo* info)
 {
-	GLLog(1, "%s() Unsupported\n", __FUNCTION__);
-	/*
-	 * TBD: Should prepare parameters for setViewPort() here
-	 */
 	info->p[0] = 0x7D800003U; /* 3DSTATE_DRAW_RECT_CMD */
-#if 0
-	memcpy(&info->p[1], this->0x304U, 4U * sizeof(uint32_t));
-#else
-	bzero(&info->p[1], 4U * sizeof(uint32_t));
-#endif
+	memcpy(&info->p[1], &m_drawrect[0], sizeof m_drawrect);
 }
 
 HIDDEN

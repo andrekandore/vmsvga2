@@ -872,7 +872,7 @@ GLDReturn gldCreateContextInternal(gld_context_t** struct_out,
 	memcpy(&context->f9[0], &context->f3[3], 3 * sizeof(uint64_t));
 	context->f7[0] = 0;
 	context->f7[1] = 0;
-	bzero(&context->ptr_pack[0], sizeof context->ptr_pack);
+	bzero(&context->stages[0], sizeof context->stages);
 	bzero(&context->f13[0], sizeof context->f13);
 	bzero(&context->f14[0], sizeof context->f14);
 	glrInitializeHardwareState(context, pixel_format);
@@ -1375,7 +1375,7 @@ GLDReturn gldModifyTexture(gld_shared_t* shared, gld_texture_t* texture, uint8_t
 		texture->f9[arg3] |= (1U << arg4);
 	if (!(arg2 & 1))
 		return kCGLNoError;
-	texture->f13 = 0;
+	texture->format_index = 0U;
 	sys_obj = texture->obj;
 	if (!sys_obj)
 		return kCGLNoError;

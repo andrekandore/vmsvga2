@@ -72,6 +72,16 @@ IOExternalMethod iofbFuncsCache[kIOVMDeviceNumMethods] =
 };
 
 #pragma mark -
+#pragma mark Global Functions
+#pragma mark -
+
+static inline
+bool isPagedOn(GLDSysObject* sys_obj, uint8_t face, uint8_t mipmap)
+{
+	return ((~sys_obj->pageoff[face] & sys_obj->pageon[face]) >> mipmap) & 1U;
+}
+
+#pragma mark -
 #pragma mark Private Methods
 #pragma mark -
 
@@ -128,15 +138,18 @@ IOReturn CLASS::clientMemoryForType(UInt32 type, IOOptionBits* options, IOMemory
 	DVLog(2, "%s(%u, options_out, memory_out)\n", __FUNCTION__, static_cast<unsigned>(type));
 	if (!options || !memory)
 		return kIOReturnBadArgument;
-	IOBufferMemoryDescriptor* md = IOBufferMemoryDescriptor::withOptions(kIOMemoryPageable |
-																		 kIOMemoryKernelUserShared |
-																		 kIODirectionInOut,
-																		 PAGE_SIZE,
-																		 PAGE_SIZE);
+#if 0
+	// GLD never calls this
+	IOBufferMemoryDescriptor* md = IOBufferMemoryDescriptor::inTaskWithOptions(0,
+																			   kIOMemoryPageable |
+																			   kIOMemoryKernelUserShared |
+																			   kIODirectionInOut,
+																			   page_size,
+																			   page_size);
 	*memory = md;
 	*options = kIOMapAnywhere;
 	return kIOReturnSuccess;
-#if 0
+#else
 	return super::clientMemoryForType(type, options, memory);
 #endif
 }
@@ -199,17 +212,11 @@ HIDDEN
 IOReturn CLASS::create_shared()
 {
 	DVLog(2, "%s()\n", __FUNCTION__);
-	// lockAccel()
-	if (m_shared) {
-		// unlockAccel
+	if (m_shared)
 		return kIOReturnError;
-	}
 	m_shared = VMsvga2Shared::factory(m_owning_task, m_provider, m_log_level);
-	if (!m_shared) {
-		// unlockAccel
+	if (!m_shared)
 		return kIOReturnNoResources;
-	}
-	// unlockAccel()
 	return kIOReturnSuccess;
 }
 
@@ -221,7 +228,7 @@ IOReturn CLASS::get_config(uint32_t* c1, uint32_t* c2, uint32_t* c3, uint32_t* c
 	*c1 = 0U;	// used by GLD to discern Intel 915/965/Ironlake(HD)
 #ifdef GL_DEV
 #if 0
-	*c2 = static_cast<uint32_t>(m_provider->getLogLevelGLD()) & 7U;		// TBD: is this safe?
+	*c2 = static_cast<uint32_t>(m_provider->getLogLevelGLD()) & 7U;
 #else
 	*c2 = 1U;	// set GLD logging to error level
 #endif
@@ -233,7 +240,7 @@ IOReturn CLASS::get_config(uint32_t* c1, uint32_t* c2, uint32_t* c3, uint32_t* c
 #if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ >= 1060
 	*c5 = m_provider->getSurfaceRootUUID();
 #else
-	*c5 = 0;
+	*c5 = 0U;
 #endif
 	DVLog(2, "%s(*%u, *%u, *%u, *%u, *%#x)\n", __FUNCTION__, *c1, *c2, *c3, *c4, *c5);
 	return kIOReturnSuccess;
@@ -295,12 +302,11 @@ IOReturn CLASS::get_name(char* name_out, size_t* name_out_size)
 }
 
 HIDDEN
-IOReturn CLASS::wait_for_stamp(uintptr_t c1)
+IOReturn CLASS::wait_for_stamp(uintptr_t stamp)
 {
-	DVLog(2, "%s(%lu)\n", __FUNCTION__, c1);
-	/*
-	 * TBD
-	 */
+	DVLog(2, "%s(%lu)\n", __FUNCTION__, stamp);
+	if (stamp && m_provider)
+		m_provider->SyncToFence(static_cast<uint32_t>(stamp));
 	return kIOReturnSuccess;
 }
 
@@ -322,8 +328,8 @@ IOReturn CLASS::new_texture(struct VendorNewTextureDataStruc const* struct_in,
 	if (m_log_level >= 3) {
 		DVLog(3, "%s:   type == %u, num_faces == %u, num_mipmaps == %u, min_mipmap == %u, bytespp == %u\n", __FUNCTION__,
 			  struct_in->type, struct_in->num_faces, struct_in->num_mipmaps, struct_in->min_mipmap, struct_in->bytespp);
-		DVLog(3, "%s:   width == %u, height == %u, depth == %u, f0 == %#x, pitch == %u, read_only == %u\n", __FUNCTION__,
-			  struct_in->width, struct_in->height, struct_in->depth, struct_in->f0, struct_in->pitch, struct_in->read_only);
+		DVLog(3, "%s:   width == %u, height == %u, depth == %u, vram_pitch == %#x, pitch == %u, read_only == %u\n", __FUNCTION__,
+			  struct_in->width, struct_in->height, struct_in->depth, struct_in->vram_pitch, struct_in->pitch, struct_in->read_only);
 		DVLog(3, "%s:   f1... %#x, %#x, %#x\n", __FUNCTION__,
 			  struct_in->f1[0], struct_in->f1[1], struct_in->f1[2]);
 		DVLog(3, "%s:   size... %u, %u\n", __FUNCTION__,
@@ -334,6 +340,10 @@ IOReturn CLASS::new_texture(struct VendorNewTextureDataStruc const* struct_in,
 #endif
 	if (struct_in->num_faces != 1U &&
 		struct_in->num_faces != 6U)
+		return kIOReturnBadArgument;
+	if (struct_in->min_mipmap + struct_in->num_mipmaps > 12U)
+		return kIOReturnBadArgument;
+	if (struct_in->type > TEX_TYPE_IOSURFACE && !struct_in->bytespp)
 		return kIOReturnBadArgument;
 	*struct_out_size = sizeof *struct_out;
 	bzero(struct_out, sizeof *struct_out);
@@ -425,9 +435,10 @@ IOReturn CLASS::new_texture(struct VendorNewTextureDataStruc const* struct_in,
 	p->width = struct_in->width;
 	p->height = struct_in->height;
 	p->depth = struct_in->depth;
-	p->f0 = struct_in->f0;
+	p->vram_pitch = struct_in->vram_pitch;
 	p->pitch = struct_in->pitch;
-	p->bytespp = struct_in->bytespp;
+	if (struct_in->type != TEX_TYPE_SURFACE)
+		p->bytespp = struct_in->bytespp;
 	if (!m_shared->initializeTexture(p, struct_in)) {
 		m_shared->unlockShared();
 		return kIOReturnError;
@@ -435,6 +446,7 @@ IOReturn CLASS::new_texture(struct VendorNewTextureDataStruc const* struct_in,
 	m_shared->unlockShared();
 #if LOGGING_LEVEL >= 1
 	if (m_log_level >= 3) {
+		DVLog(3, "%s:   id == %u\n", __FUNCTION__, p->sys_obj->object_id);
 		DVLog(3, "%s:   struct_out.pad == %#x\n", __FUNCTION__, struct_out->pad);
 		DVLog(3, "%s:   struct_out.tx_data == %#llx\n", __FUNCTION__, struct_out->tx_data);
 		DVLog(3, "%s:   struct_out.sys_obj_addr == %#llx\n", __FUNCTION__, struct_out->sys_obj_addr);
@@ -446,14 +458,14 @@ IOReturn CLASS::new_texture(struct VendorNewTextureDataStruc const* struct_in,
 HIDDEN
 IOReturn CLASS::delete_texture(uintptr_t texture_id)
 {
-	VMsvga2TextureBuffer* p;
+	VMsvga2TextureBuffer* tx;
 	DVLog(2, "%s(%lu)\n", __FUNCTION__, texture_id);
 	if (!m_shared)
 		return kIOReturnNotReady;
 	m_shared->lockShared();
-	p = m_shared->findTextureBuffer(static_cast<uint32_t>(texture_id));
-	if (p)
-		m_shared->delete_texture(p);
+	tx = m_shared->findTextureBuffer(static_cast<uint32_t>(texture_id));
+	if (tx)
+		m_shared->delete_texture(tx);
 	m_shared->unlockShared();
 	return kIOReturnSuccess;
 }
@@ -461,11 +473,32 @@ IOReturn CLASS::delete_texture(uintptr_t texture_id)
 HIDDEN
 IOReturn CLASS::page_off_texture(struct sIODevicePageoffTexture const* struct_in, size_t struct_in_size)
 {
+	VMsvga2TextureBuffer* tx;
 	DVLog(2, "%s(struct_in, %lu)\n", __FUNCTION__, struct_in_size);
-	DVLog(2, "%s:   struct_in { %#x, %#x }\n", __FUNCTION__, struct_in->data[0], struct_in->data[1]);
-	/*
-	 * TBD
-	 */
+	DVLog(3, "%s:   texture_id == %u, face == %u, mipmap == %u\n", __FUNCTION__,
+		  struct_in->texture_id, struct_in->face, struct_in->mipmap);
+	if (!m_shared)
+		return kIOReturnNotReady;
+	if (struct_in->face >= 6U || struct_in->mipmap >= 12U)
+		return kIOReturnBadArgument;
+	m_shared->lockShared();
+#if 0
+	if (!byte ptr m_provider->0x80) {
+		m_shared->unlockShared();
+		return kIOReturnSuccess;
+	}
+#endif
+	tx = m_shared->findTextureBuffer(struct_in->texture_id);
+	if (!tx || !tx->sys_obj) {
+		m_shared->unlockShared();
+		return kIOReturnBadArgument;
+	}
+	if (isPagedOn(tx->sys_obj, struct_in->face, struct_in->mipmap))
+		m_shared->pageoffDirtyTexture(tx);
+#if 0
+	m_provider->SyncToFence(tx->sys_obj->stamps[0]); // already done in pageoffDirtyTexture
+#endif
+	m_shared->unlockShared();
 	return kIOReturnSuccess;
 }
 
@@ -481,21 +514,21 @@ IOReturn CLASS::get_channel_memory(struct sIODeviceChannelMemoryData* struct_out
 	DVLog(2, "%s(struct_out, %lu)\n", __FUNCTION__, *struct_out_size);
 	if (*struct_out_size < sizeof *struct_out)
 		return kIOReturnBadArgument;
-	if (m_channel_memory_map) {
-		*struct_out_size = sizeof *struct_out;
-		struct_out->addr = m_channel_memory_map->getAddress();
-		return kIOReturnSuccess;
-	}
+	if (m_channel_memory_map)
+		goto done;
 	channel_memory = m_provider->getChannelMemory();
 	if (!channel_memory)
 		return kIOReturnNoResources;
 	m_channel_memory_map = channel_memory->createMappingInTask(m_owning_task,
 															   0,
-															   kIOMapAnywhere /* | kIOMapUnique */);
+															   kIOMapAnywhere | kIOMapReadOnly /* | kIOMapUnique */,
+															   0,
+															   page_size);
 	if (!m_channel_memory_map)
 		return kIOReturnNoResources;
+done:
 	*struct_out_size = sizeof *struct_out;
-	struct_out->addr = m_channel_memory_map->getAddress();
+	struct_out->addr = m_channel_memory_map->getAddress() + SVGA_FIFO_FENCE * sizeof(uint32_t) - 64;
 	DVLog(3, "%s:   mapped to client @%#llx\n", __FUNCTION__, struct_out->addr);
 	return kIOReturnSuccess;
 }
@@ -507,7 +540,7 @@ IOReturn CLASS::get_channel_memory(struct sIODeviceChannelMemoryData* struct_out
 HIDDEN
 IOReturn CLASS::kernel_printf(char const* str, size_t str_size)
 {
-	DVLog(2, "%s: %.80s\n", __FUNCTION__, str);	// TBD: limit str by str_size
+	DVLog(2, "%s: %.80s\n", __FUNCTION__, str);
 	return kIOReturnSuccess;
 }
 

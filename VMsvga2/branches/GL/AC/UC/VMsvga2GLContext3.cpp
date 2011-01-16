@@ -33,6 +33,7 @@
 #define GL_INCL_PRIVATE
 #include "GLCommon.h"
 #include "Shaders.h"
+#include "UCGLDCommonTypes.h"
 #include "VLog.h"
 #include "VMsvga2Accel.h"
 #include "VMsvga2GLContext.h"
@@ -452,6 +453,25 @@ void make_diag(float* matrix, float d0, float d1, float d2, float d3)
 #pragma mark -
 
 HIDDEN
+void CLASS::CleanupIpp()
+{
+	if (m_provider && isIdValid(m_context_id)) {
+		purge_shader_cache();
+#if 0
+		unload_fixed_shaders();
+#endif
+		m_provider->destroyContext(m_context_id);
+		m_provider->FreeContextID(m_context_id);
+		m_context_id = SVGA_ID_INVALID;
+	}
+	purge_arrays();
+	if (m_float_cache) {
+		IOFreeAligned(m_float_cache, 64U * sizeof(float));
+		m_float_cache = 0;
+	}
+}
+
+HIDDEN
 uint32_t CLASS::cache_shader(uint32_t const* source, uint32_t num_dwords)
 {
 	MD5_CTX md5_ctx;
@@ -832,10 +852,10 @@ void CLASS::ip_prim3d_direct(uint32_t prim_kind, uint32_t const* vertex_data, si
 }
 
 HIDDEN
-uint32_t CLASS::ip_prim3d(uint32_t* p)
+uint32_t CLASS::ip_prim3d(uint32_t* p, uint32_t cmd)
 {
 	DefineRegion<1U> tmpRegion;
-	uint32_t cmd = *p, skip = (cmd & 0xFFFFU) + 2U, primkind = bit_select(cmd, 18, 5);
+	uint32_t skip = (cmd & 0xFFFFU) + 2U, primkind = bit_select(cmd, 18, 5);
 	float const* pf;
 
 	if (cmd & (1U << 23)) {
@@ -914,9 +934,9 @@ uint32_t CLASS::ip_prim3d(uint32_t* p)
 }
 
 HIDDEN
-uint32_t CLASS::ip_load_immediate(uint32_t* p)
+uint32_t CLASS::ip_load_immediate(uint32_t* p, uint32_t cmd)
 {
-	uint32_t i, cmd = p[0], skip = (cmd & 0xFU) + 2U, *limit = p + skip;
+	uint32_t i, skip = (cmd & 0xFU) + 2U, *limit = p + skip;
 	SVGA3dRenderState rs[11];
 
 	for (i = 0U, ++p; i != 8U && p < limit; ++i)
@@ -1077,9 +1097,9 @@ uint32_t CLASS::ip_load_immediate(uint32_t* p)
 }
 
 HIDDEN
-uint32_t CLASS::ip_clear_params(uint32_t* p)
+uint32_t CLASS::ip_clear_params(uint32_t* p, uint32_t cmd)
 {
-	uint32_t skip = (p[0] & 0xFFFFU) + 2U;
+	uint32_t skip = (cmd & 0xFFFFU) + 2U;
 	if (skip < 7U)
 		return skip;
 	m_intel_state.clear.mask = p[1];
@@ -1114,6 +1134,19 @@ void CLASS::ip_3d_map_state(uint32_t* p)
 				  i, q[0], width, height,
 				  bit_select(q[1], 7, 3),
 				  bit_select(q[1], 3, 4));
+#endif
+#if 0
+			GLLog(3, "%s:   tex %u data1 width %u, height %u, MAPSURF %u, MT %u, UF %u, TS %u, TW %u\n", __FUNCTION__,
+				  q[0], width, height, mapsurf, mt,
+				  bit_select(q[1], 2, 1),
+				  bit_select(q[1], 1, 1),
+				  q[1] & 1U);
+			GLLog(3, "%s:   tex %u data2 pitch %u, cube-face-ena %#x, max-lod %#x, mip-layout %u, depth %u\n", __FUNCTION__,
+				  q[0], pitch,
+				  bit_select(q[2], 15, 6),
+				  bit_select(q[2],  9, 6),
+				  bit_select(q[2],  8, 1),
+				  depth);
 #endif
 			f[0] = 1.0F / static_cast<float>(width);
 			f[1] = 1.0F / static_cast<float>(height);
@@ -1212,7 +1245,7 @@ void CLASS::ip_misc_render_state(uint32_t selector, uint32_t* p)
 	switch (selector) {
 		case 0U:
 #if 0
-			GLLog(3, "%s: depth scale %u\n", __FUNCTION__,
+			GLLog(3, "%s: 3DSTATE_DEPTH_OFFSET_SCALE %u\n", __FUNCTION__,
 				  static_cast<uint32_t>(*reinterpret_cast<float*>(&p[1]) * 32767.0F));
 #endif
 			rs[0].state = SVGA3D_RS_SLOPESCALEDEPTHBIAS;
@@ -1220,11 +1253,21 @@ void CLASS::ip_misc_render_state(uint32_t selector, uint32_t* p)
 			m_provider->setRenderState(m_context_id, 1U, &rs[0]);
 			break;
 		case 1U:
+#if 0
+			GLLog(3, "%s: 3DSTATE_SCISSOR_ENABLE %#x\n", __FUNCTION__, p[0] & 0xFFFFFFU);
+#endif
 			rs[0].state = SVGA3D_RS_SCISSORTESTENABLE;
 			rs[0].uintValue = bit_select(p[0], 0, 1);
 			m_provider->setRenderState(m_context_id, 1U, &rs[0]);
 			break;
 		case 2U:
+#if 0
+			GLLog(3, "%s: 3DSTATE_SCISSOR_RECT_0_CMD %u %u %u %u\n", __FUNCTION__,
+				  bit_select(p[1], 16, 16),
+				  bit_select(p[1],  0, 16),
+				  bit_select(p[2], 16, 16),
+				  bit_select(p[2],  0, 16));
+#endif
 			scissorRect.x = bit_select(p[1],  0, 16);
 			scissorRect.y = bit_select(p[1], 16, 16);
 			scissorRect.w = bit_select(p[2],  0, 16) - scissorRect.x + 1;
@@ -1232,6 +1275,9 @@ void CLASS::ip_misc_render_state(uint32_t selector, uint32_t* p)
 			m_provider->setScissorRect(m_context_id, &scissorRect);
 			break;
 		case 3U:
+#if 0
+			GLLog(3, "%s: 3DSTATE_CONST_BLEND_COLOR_CMD %#x\n", __FUNCTION__, p[1]);
+#endif
 			rs[0].state = SVGA3D_RS_BLENDCOLOR;
 			rs[0].uintValue = p[1];
 			m_provider->setRenderState(m_context_id, 1U, &rs[0]);
@@ -1396,7 +1442,7 @@ void CLASS::ip_print_ps(uint32_t const* p, uint32_t num_dwords)
 #endif
 
 HIDDEN
-void CLASS::ip_select_and_load_ps(uint32_t* p)
+void CLASS::ip_select_and_load_ps(uint32_t* p, uint32_t cmd)
 {
 	/*
 	 * Simplified shader support
@@ -1404,7 +1450,7 @@ void CLASS::ip_select_and_load_ps(uint32_t* p)
 #if 0
 	uint32_t s4 = m_intel_state.imm_s[4];
 #else
-	uint32_t shader_id = cache_shader(p + 1, (p[0] & 0xFFFFU) + 1U);
+	uint32_t shader_id = cache_shader(p + 1, (cmd & 0xFFFFU) + 1U);
 	if (shader_id == m_active_shid)
 		return;
 #endif
@@ -1462,8 +1508,8 @@ void CLASS::ip_load_ps_const(uint32_t* p)
 	if (!svga3d)
 		return;
 	p += 2;
-	for (i = 0U; i != 16U; ++i)
-		if (mask & (1U << i)) {
+	for (i = 0U; i != 16U; ++i, mask >>= 1)
+		if (mask & 1U) {
 #if 0
 			GLLog(3, "%s:   const %u == [%#x, %#x, %#x, %#x]\n", __FUNCTION__,
 				  i, p[0], p[1], p[2], p[3]);
@@ -1475,9 +1521,56 @@ void CLASS::ip_load_ps_const(uint32_t* p)
 }
 
 HIDDEN
-uint32_t CLASS::decode_mi(uint32_t* p)
+void CLASS::ip_buf_info(uint32_t* p)
 {
-	uint32_t cmd = *p, skip = 0U;
+	SVGA3dSurfaceImageId hostImage;
+	uint8_t kind;
+	SVGA3D* svga3d;
+	kind = bit_select(p[1], 24, 3);
+	if (kind != 3U && kind != 7U)
+		return;
+	hostImage.sid = p[2];
+	hostImage.face = bit_select(p[1], 8, 8);
+	hostImage.mipmap = bit_select(p[1], 0, 8);
+#ifdef GL_DEV
+	GLLog(3, "%s: kind == %u, face == %u, mipmap == %u, sid == %u\n", __FUNCTION__,
+		  kind, hostImage.face, hostImage.mipmap, hostImage.sid);
+#endif
+	svga3d = m_provider->lock3D();
+	if (!svga3d)
+		return;
+	/*
+	 * Possibly should set stencil same as depth
+	 */
+	svga3d->SetRenderTarget(m_context_id, kind == 3U ? SVGA3D_RT_COLOR0 : SVGA3D_RT_DEPTH, &hostImage);
+	m_provider->unlock3D();
+}
+
+HIDDEN
+void CLASS::ip_draw_rect(uint32_t* p)
+{
+	SVGA3dRect rect;
+	SVGA3D* svga3d;
+	rect.x = p[1];
+	rect.y = p[2];
+	rect.w = p[3];
+	rect.h = p[4];
+#ifdef GL_DEV
+	GLLog(3, "%s: [%u, %u, %u, %u]\n", __FUNCTION__, rect.x, rect.y, rect.w, rect.h);
+#endif
+	svga3d = m_provider->lock3D();
+	if (!svga3d)
+		return;
+	svga3d->SetViewport(m_context_id, &rect);
+	svga3d->SetZRange(m_context_id, 0.0F, 1.0F);
+	m_provider->unlock3D();
+}
+
+HIDDEN
+uint32_t CLASS::decode_mi(uint32_t* p, uint32_t cmd)
+{
+	uint32_t skip = 0U, fence_num;
+	SVGA3D* svga3d;
 	switch (bit_select(cmd, 23, 6)) {
 		case  0U: /* MI_NOOP */
 		case  2U: /* MI_USER_INTERRUPT */
@@ -1502,21 +1595,33 @@ uint32_t CLASS::decode_mi(uint32_t* p)
 			skip = 2U;
 			break;
 		case 32U: /* MI_STORE_DATA_IMM */
-		case 33U: /* MI_STORE_DATA_INDEX */
 			skip = (cmd & 0x3FU) + 2U;
 			break;
-	}
-	if (!skip) {
-		GLLog(1, "%s:   Unknown cmd %#x\n", __FUNCTION__, cmd);
-		skip = 1U;
+		case 33U: /* MI_STORE_DATA_INDEX */
+			skip = (cmd & 0x3FU) + 2U;
+			if (p[1] != 64U)
+				break;
+			fence_num = p[2];
+			if (fence_num * sizeof(GLDFence) >= m_fences_len)
+				break;
+			svga3d = m_provider->lock3D();
+			if (!svga3d)
+				break;
+			m_fences_ptr[fence_num].u = svga3d->InsertFence();
+			m_provider->unlock3D();
+#if 0
+			GLLog(3, "%s: setting fence %u to %u\n", __FUNCTION__,
+				  fence_num, m_fences_ptr[fence_num].u);
+#endif
+			break;
 	}
 	return skip;
 }
 
 HIDDEN
-uint32_t CLASS::decode_2d(uint32_t* p)
+uint32_t CLASS::decode_2d(uint32_t* p, uint32_t cmd)
 {
-	uint32_t cmd = *p, skip = 0U;
+	uint32_t skip = 0U;
 	switch (bit_select(cmd, 22, 7)) {
 		case    1U: /* XY_SETUP_BLT */
 		case    3U: /* XY_SETUP_CLIP_BLT */
@@ -1544,21 +1649,101 @@ uint32_t CLASS::decode_2d(uint32_t* p)
 			skip = (cmd & 0xFFU) + 2U;
 			break;
 		case 0x43U: /* SRC_COPY_BLT */
-			skip = (cmd & 0xFFU) + 2U;
+#ifdef GL_DEV
 			GLLog(3, "%s:   SRC_COPY_BLT\n", __FUNCTION__);
+#endif
+			skip = (cmd & 0xFFU) + 2U;
 			break;
-	}
-	if (!skip) {
-		GLLog(1, "%s:   Unknown cmd %#x\n", __FUNCTION__, cmd);
-		skip = 1U;
 	}
 	return skip;
 }
 
 HIDDEN
-uint32_t CLASS::decode_3d(uint32_t* p)
+uint32_t CLASS::decode_3d_1d(uint32_t* p, uint32_t cmd)
 {
-	uint32_t cmd = *p, skip = 0U;
+	uint32_t skip = (cmd & 0xFFFFU) + 2U;
+	switch (bit_select(cmd, 16, 8)) {
+		case 0x00U: /* 3DSTATE_MAP_STATE */
+			ip_3d_map_state(p);
+			break;
+		case 0x01U: /* 3DSTATE_SAMPLER_STATE */
+			ip_3d_sampler_state(p);
+			break;
+		case 0x04U: /* 3DSTATE_LOAD_STATE_IMMEDIATE_1 */
+			skip = ip_load_immediate(p, cmd);
+			break;
+		case 0x05U: /* 3DSTATE_PIXEL_SHADER_PROGRAM */
+			ip_select_and_load_ps(p, cmd);
+			break;
+		case 0x06U: /* 3DSTATE_PIXEL_SHADER_CONSTANTS */
+			ip_load_ps_const(p);
+			break;
+		case 0x80U: /* 3DSTATE_DRAW_RECT_CMD */
+			ip_draw_rect(p);
+			break;
+		case 0x81U: /* 3DSTATE_SCISSOR_RECT_0_CMD */
+			ip_misc_render_state(2U, p);
+			break;
+		case 0x83U: /* 3DSTATE_STIPPLE */
+#if 0
+			GLLog(3, "%s: 3DSTATE_STIPPLE En %u, %#x\n", __FUNCTION__,
+				  bit_select(p[1], 16,  1),
+				  bit_select(p[1],  0, 16));
+#endif
+			break;
+		case 0x85U: /* 3DSTATE_DST_BUF_VARS_CMD */
+#if 0
+			if (cache_misc_reg(5U, p[1])) {
+				GLLog(3, "%s: 3DSTATE_DST_BUF_VARS_CMD Upper %#x, DHB %u, DVB %u, "
+					  "YUV %u, COLOR %u, DEPTH %u, VLS %u\n", __FUNCTION__,
+					  bit_select(p[1], 24, 8),
+					  bit_select(p[1], 20, 4),
+					  bit_select(p[1], 16, 4),
+					  bit_select(p[1], 12, 3),
+					  bit_select(p[1],  8, 4),
+					  bit_select(p[1],  2, 2),
+					  bit_select(p[1],  0, 2));
+			}
+#endif
+			break;
+		case 0x88U: /* 3DSTATE_CONST_BLEND_COLOR_CMD */
+			ip_misc_render_state(3U, p);
+			break;
+		case 0x89U: /* 3DSTATE_FOG_MODE_CMD */
+#ifdef GL_DEV
+			GLLog(3, "%s: 3DSTATE_FOG_MODE_CMD FFMEn %u, FF %u, FIMEn %u, FI %u, "
+				  "C1C2MEn %u, DMEn %u, C1 %u, C2 %u, D1 %u\n", __FUNCTION__,
+				  bit_select(p[1], 31, 1),
+				  bit_select(p[1], 28, 2),
+				  bit_select(p[1], 27, 1),
+				  bit_select(p[1], 25, 1),
+				  bit_select(p[1], 24, 1),
+				  bit_select(p[1], 23, 1),
+				  bit_select(p[1],  4, 16),
+				  bit_select(p[2], 16, 1),
+				  bit_select(p[3], 16, 1));
+#endif
+			break;
+		case 0x8EU: /* 3DSTATE_BUF_INFO_CMD */
+			ip_buf_info(p);
+			break;
+		case 0x97U: /* 3DSTATE_DEPTH_OFFSET_SCALE */
+			ip_misc_render_state(0U, p);
+			break;
+		case 0x9CU: /* 3DSTATE_CLEAR_PARAMETERS */
+			skip = ip_clear_params(p, cmd);
+			break;
+		default:
+			GLLog(1, "%s:   Unknown cmd %#x\n", __FUNCTION__, cmd);
+			break;
+	}
+	return skip;
+}
+
+HIDDEN
+uint32_t CLASS::decode_3d(uint32_t* p, uint32_t cmd)
+{
+	uint32_t skip = 0U;
 	switch (bit_select(cmd, 24, 5)) {
 		case 0x06U: /* 3DSTATE_AA_CMD */
 #ifdef GL_DEV
@@ -1614,15 +1799,14 @@ uint32_t CLASS::decode_3d(uint32_t* p)
 			skip = 1U;
 			break;
 		case 0x15U: /* 3DSTATE_FOG_COLOR_CMD */
+#ifdef GL_DEV
 			GLLog(3, "%s: 3DSTATE_FOG_COLOR_CMD %#x\n", __FUNCTION__, cmd & 0xFFFFFFU);
+#endif
 			skip = 1U;
 			break;
 		case 0x1CU:
 			switch (bit_select(cmd, 16, 8)) {
 				case 0x80U: /* 3DSTATE_SCISSOR_ENABLE */
-#if 0
-					GLLog(3, "%s: 3DSTATE_SCISSOR_ENABLE %#x\n", __FUNCTION__, cmd & 0xFFFFFFU);
-#endif
 					ip_misc_render_state(1U, p);
 					skip = 1U;
 					break;
@@ -1635,95 +1819,11 @@ uint32_t CLASS::decode_3d(uint32_t* p)
 			}
 			break;
 		case 0x1DU:
-			skip = (cmd & 0xFFFFU) + 2U;
-			switch (bit_select(cmd, 16, 8)) {
-				case 0x00U: /* 3DSTATE_MAP_STATE */
-					ip_3d_map_state(p);
-					break;
-				case 0x01U: /* 3DSTATE_SAMPLER_STATE */
-					ip_3d_sampler_state(p);
-					break;
-				case 0x04U: /* 3DSTATE_LOAD_STATE_IMMEDIATE_1 */
-					skip = ip_load_immediate(p);
-					break;
-				case 0x05U: /* 3DSTATE_PIXEL_SHADER_PROGRAM */
-					ip_select_and_load_ps(p);
-					break;
-				case 0x06U: /* 3DSTATE_PIXEL_SHADER_CONSTANTS */
-					ip_load_ps_const(p);
-					break;
-				case 0x81U: /* 3DSTATE_SCISSOR_RECT_0_CMD */
-#if 0
-					GLLog(3, "%s: 3DSTATE_SCISSOR_RECT_0_CMD %u %u %u %u\n", __FUNCTION__,
-						  bit_select(p[1], 16, 16),
-						  bit_select(p[1],  0, 16),
-						  bit_select(p[2], 16, 16),
-						  bit_select(p[2],  0, 16));
-#endif
-					ip_misc_render_state(2U, p);
-					break;
-				case 0x83U: /* 3DSTATE_STIPPLE */
-#if 0
-					GLLog(3, "%s: 3DSTATE_STIPPLE En %u, %#x\n", __FUNCTION__,
-						  bit_select(p[1], 16,  1),
-						  bit_select(p[1],  0, 16));
-#endif
-					break;
-				case 0x85U: /* 3DSTATE_DST_BUF_VARS_CMD */
-#if 0
-					if (cache_misc_reg(5U, p[1])) {
-						GLLog(3, "%s: 3DSTATE_DST_BUF_VARS_CMD Upper %#x, DHB %u, DVB %u, "
-							  "YUV %u, COLOR %u, DEPTH %u, VLS %u\n", __FUNCTION__,
-							  bit_select(p[1], 24, 8),
-							  bit_select(p[1], 20, 4),
-							  bit_select(p[1], 16, 4),
-							  bit_select(p[1], 12, 3),
-							  bit_select(p[1],  8, 4),
-							  bit_select(p[1],  2, 2),
-							  bit_select(p[1],  0, 2));
-					}
-#endif
-					break;
-				case 0x88U: /* 3DSTATE_CONST_BLEND_COLOR_CMD */
-#if 0
-					GLLog(3, "%s: 3DSTATE_CONST_BLEND_COLOR_CMD %#x\n", __FUNCTION__, p[1]);
-#endif
-					ip_misc_render_state(3U, p);
-					break;
-				case 0x89U: /* 3DSTATE_FOG_MODE_CMD */
-					GLLog(3, "%s: 3DSTATE_FOG_MODE_CMD FFMEn %u, FF %u, FIMEn %u, FI %u, "
-						  "C1C2MEn %u, DMEn %u, C1 %u, C2 %u, D1 %u\n", __FUNCTION__,
-						  bit_select(p[1], 31, 1),
-						  bit_select(p[1], 28, 2),
-						  bit_select(p[1], 27, 1),
-						  bit_select(p[1], 25, 1),
-						  bit_select(p[1], 24, 1),
-						  bit_select(p[1], 23, 1),
-						  bit_select(p[1],  4, 16),
-						  bit_select(p[2], 16, 1),
-						  bit_select(p[3], 16, 1));
-					break;
-				case 0x97U: /* 3DSTATE_DEPTH_OFFSET_SCALE */
-#if 0
-					GLLog(3, "%s: 3DSTATE_DEPTH_OFFSET_SCALE %#x\n", __FUNCTION__, p[1]);
-#endif
-					ip_misc_render_state(0U, p);
-					break;
-				case 0x9CU: /* 3DSTATE_CLEAR_PARAMETERS */
-					skip = ip_clear_params(p);
-					break;
-				case 0x80U: /* 3DSTATE_DRAW_RECT_CMD */
-				case 0x8EU: /* 3DSTATE_BUF_INFO_CMD */
-					break;
-			}
+			skip = decode_3d_1d(p, cmd);
 			break;
 		case 0x1FU: /* PRIM3D */
-			skip = ip_prim3d(p);
+			skip = ip_prim3d(p, cmd);
 			break;
-	}
-	if (!skip) {
-		GLLog(1, "%s:   Unknown cmd %#x\n", __FUNCTION__, cmd);
-		skip = 1U;
 	}
 	return skip;
 }
@@ -1744,13 +1844,13 @@ uint32_t CLASS::submit_buffer(uint32_t* kernel_buffer_ptr, uint32_t size_dwords)
 		skip = 0U;
 		switch (cmd >> 29) {
 			case 0U:
-				skip = decode_mi(p);
+				skip = decode_mi(p, cmd);
 				break;
 			case 2U:
-				skip = decode_2d(p);
+				skip = decode_2d(p, cmd);
 				break;
 			case 3U:
-				skip = decode_3d(p);
+				skip = decode_3d(p, cmd);
 				break;
 		}
 		if (!skip) {
@@ -1758,5 +1858,9 @@ uint32_t CLASS::submit_buffer(uint32_t* kernel_buffer_ptr, uint32_t size_dwords)
 			skip = 1U;
 		}
 	}
+	/*
+	 * Note: original inserts a fence and returns the fence
+	 *   should probably do the same for finish()
+	 */
 	return 0U;
 }

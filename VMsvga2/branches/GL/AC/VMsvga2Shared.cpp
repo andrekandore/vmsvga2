@@ -52,9 +52,10 @@ OSDefineMetaClassAndStructors(VMsvga2Shared, OSObject);
 
 extern "C" {
 
-/*
- * defined in com.apple.kpi.unsupported
- */
+#pragma mark -
+#pragma mark From com.apple.kpi.unsupported
+#pragma mark -
+
 vm_map_t get_task_map(task_t);
 kern_return_t mach_vm_region(vm_map_t               map,
 							 mach_vm_offset_t       *address,              /* IN/OUT */
@@ -66,7 +67,7 @@ kern_return_t mach_vm_region(vm_map_t               map,
 }
 
 #pragma mark -
-#pragma mark Private Methods
+#pragma mark Global Functions
 #pragma mark -
 
 static inline
@@ -75,6 +76,105 @@ bool isIdValid(uint32_t id)
 	return static_cast<int>(id) >= 0;
 }
 
+static inline
+bool isPagedOn(GLDSysObject* sys_obj, uint8_t face, uint8_t mipmap)
+{
+	return ((~sys_obj->pageoff[face] & sys_obj->pageon[face]) >> mipmap) & 1U;
+}
+
+HIDDEN
+IOReturn prepare_transfer_for_io(VMsvga2Accel* provider, VendorTransferBuffer* xfer)
+{
+	IOReturn rc;
+
+	if (!provider)
+		return kIOReturnNotReady;
+	if (!xfer)
+		return kIOReturnBadArgument;
+	if (isIdValid(xfer->gmr_id))
+		return kIOReturnSuccess;
+	if (!xfer->md)
+		return kIOReturnNotReady;
+	xfer->gmr_id = provider->AllocGMRID();
+	if (!isIdValid(xfer->gmr_id)) {
+#if 0
+		SHLog(1, "%s: Out of GMR IDs\n", __FUNCTION__);
+#endif
+		return kIOReturnNoResources;
+	}
+	rc = xfer->md->prepare();
+	if (rc != kIOReturnSuccess)
+		goto clean1;
+	rc = provider->createGMR(xfer->gmr_id, xfer->md);
+	if (rc != kIOReturnSuccess)
+		goto clean2;
+	return kIOReturnSuccess;
+
+clean2:
+	xfer->md->complete();
+clean1:
+	provider->FreeGMRID(xfer->gmr_id);
+	xfer->gmr_id = SVGA_ID_INVALID;
+	return rc;
+}
+
+HIDDEN
+void sync_transfer_io(VMsvga2Accel* provider, VendorTransferBuffer* xfer)
+{
+	if (!provider || !xfer || !xfer->fence)
+		return;
+	provider->SyncToFence(xfer->fence);
+	xfer->fence = 0U;
+}
+
+HIDDEN
+void complete_transfer_io(VMsvga2Accel* provider, VendorTransferBuffer* xfer)
+{
+	if (!provider || !xfer || !isIdValid(xfer->gmr_id))
+		return;
+	sync_transfer_io(provider, xfer);
+	provider->destroyGMR(xfer->gmr_id);
+	if (xfer->md)
+		xfer->md->complete();
+	provider->FreeGMRID(xfer->gmr_id);
+	xfer->gmr_id = SVGA_ID_INVALID;
+}
+
+HIDDEN
+void discard_transfer(VendorTransferBuffer* xfer)
+{
+	if (!xfer || !xfer->md)
+		return;
+	xfer->md->release();
+	xfer->md = 0;
+}
+
+HIDDEN
+IOReturn mapGLDTextureHeader(VMsvga2TextureBuffer* tx, IOMemoryMap** map)
+{
+	IOMemoryMap* mmap;
+
+	if (!tx || !map)
+		return kIOReturnBadArgument;
+	if (!tx->xfer.md)
+		return kIOReturnNotReady;
+	mmap = tx->xfer.md->createMappingInTask(kernel_task, 0, kIOMapAnywhere | kIOMapReadOnly);
+	if (!mmap)
+		return kIOReturnNoResources;
+#if 0
+	if (mmap->getLength() < 72U * sizeof(GLDTextureHeader)) {
+		mmap->release();
+		return kIOReturnNotReadable;
+	}
+#endif
+	*map = mmap;
+	return kIOReturnSuccess;
+}
+
+#pragma mark -
+#pragma mark Private Methods
+#pragma mark -
+
 HIDDEN
 IOReturn CLASS::alloc_client_shared(struct GLDSysObject** sys_obj, mach_vm_address_t* client_addr)
 {
@@ -82,11 +182,12 @@ IOReturn CLASS::alloc_client_shared(struct GLDSysObject** sys_obj, mach_vm_addre
 	GLDSysObject* p;
 	IOBufferMemoryDescriptor* client_sys_objs;
 	if (!m_client_sys_objs_map) {
-		client_sys_objs = IOBufferMemoryDescriptor::withOptions(kIOMemoryKernelUserShared |
-																kIOMemoryPageable |
-																kIODirectionInOut,
-																CLIENT_SYS_OBJS_SIZE,
-																PAGE_SIZE);
+		client_sys_objs = IOBufferMemoryDescriptor::inTaskWithOptions(kernel_task,
+																	  kIOMemoryKernelUserShared |
+																	  kIOMemoryPageable |
+																	  kIODirectionInOut,
+																	  CLIENT_SYS_OBJS_SIZE,
+																	  page_size);
 		if (!client_sys_objs)
 			return kIOReturnNoMemory;
 		m_client_sys_objs_map = client_sys_objs->createMappingInTask(m_owning_task,
@@ -267,12 +368,14 @@ void CLASS::finalize_texture(class VMsvga2Accel* provider, VMsvga2TextureBuffer*
 		texture->client_map->release();
 		texture->client_map = 0;
 	}
-	if (texture->xfer.md) {
-		texture->xfer.md->release();
-		texture->xfer.md = 0;
-	}
+	discard_transfer(&texture->xfer);
 	if (!provider)
 		return;
+	if (isIdValid(texture->yuv_shadow)) {
+		provider->destroySurface(texture->yuv_shadow);
+		provider->FreeSurfaceID(texture->yuv_shadow);
+		texture->yuv_shadow = SVGA_ID_INVALID;
+	}
 	if (isIdValid(texture->surface_id)) {
 		provider->destroySurface(texture->surface_id);
 		provider->FreeSurfaceID(texture->surface_id);
@@ -329,19 +432,19 @@ VMsvga2TextureBuffer* CLASS::new_agp_texture(mach_vm_address_t pixels,
 	down_pixels = pixels & -PAGE_SIZE;
 	if (!down_pixels) {
 		IOBufferMemoryDescriptor* bmd =
-		IOBufferMemoryDescriptor::inTaskWithOptions(m_owning_task,
-													kIOMemoryKernelUserShared |
-													kIOMemoryPageable |
-													kIOMemoryPurgeable |
-													kIODirectionInOut /* | m_provider->0x934 */,
-													up_size,
-													PAGE_SIZE);
+		IOBufferMemoryDescriptor::inTaskWithPhysicalMask(m_owning_task,
+														 kIOMemoryKernelUserShared |
+														 kIOMemoryPageable |
+														 kIOMemoryPurgeable |
+														 kIODirectionInOut /* | m_provider->0x934 */,
+														 up_size,
+														 ((1ULL << (32 + PAGE_SHIFT)) - 1U) & -PAGE_SIZE);
 		if (!bmd) {
 			SHLog(1, "%s: IOBufferMemoryDescriptor allocation failed\n", __FUNCTION__);
 			return 0;
 		}
 		md = bmd;
-		IOMemoryMap* mm = bmd->map(kIODirectionIn /* | m_provider->0x934 */);
+		IOMemoryMap* mm = bmd->createMappingInTask(kernel_task, 0, kIOMapAnywhere /* | kIODirectionIn | m_provider->0x934 */);
 		if (mm) {
 			bzero(reinterpret_cast<void*>(mm->getVirtualAddress()), up_size);
 			mm->release();
@@ -392,8 +495,6 @@ common:
 		return 0;
 	}
 	p2->xfer.md = md;
-	p2->xfer.gmr_id = SVGA_ID_INVALID;
-	p2->xfer.fence = 0U;
 	p2->agp_offset_in_page = offset_in_page;
 	p2->agp_addr = down_pixels;
 	p2->agp_size = md->getLength();
@@ -403,20 +504,20 @@ common:
 #if 0
 	if (!m_provider->addTransferToGART(p2))
 		m_provider->freeToAllocGART(0, 0, this, p2);
-	if (p2->offset0x4) {
-		clock_get_system_nanotime(&p2->0x10, &p2->0x14);
-		p2->0x24 = this;
+	if (p2->xfer.gart_ptr) {
+		clock_get_system_nanotime(&p2->xfer.0x10, &p2->xfer.0x14);
+		p2->xfer.0x24 = this;
 		/*
 		 * link to a doubly-linked list in m_provider
 		 */
-		edx = p2->0x18;
-		eax = p2->0x1C;
-		edx->0x1C = eax;
-		eax->0x18 = edx;
-		p2->0x18 = m_provider->0x774;
-		p2->0x1C = m_provider + 0x75C;
+		edx = p2->xfer.0x18;
+		eax = p2->xfer.0x1C;
+		edx->xfer.0x1C = eax;
+		eax->xfer.0x18 = edx;
+		p2->xfer.0x18 = m_provider->0x774;
+		p2->xfer.0x1C = m_provider + 0x75C;
 		m_provider->0x774 = p2;
-		p2->0x18->0x1C = p2;
+		p2->xfer.0x18->xfer.0x1C = p2;
 	}
 	++m_provider->0x7BC;
 #endif
@@ -488,7 +589,9 @@ VMsvga2TextureBuffer* CLASS::common_texture_init(uint8_t object_type)
 	sys_obj->type = object_type;
 	sys_obj->in_use = 1U;
 	p->sys_obj_type = object_type;
-	p->surface_id = static_cast<uint32_t>(-1);
+	p->xfer.gmr_id = SVGA_ID_INVALID;
+	p->surface_id = SVGA_ID_INVALID;
+	p->yuv_shadow = SVGA_ID_INVALID;
 	p->surface_format = SVGA3D_FORMAT_INVALID;
 	return p;
 }
@@ -545,7 +648,7 @@ void CLASS::free()
 
 HIDDEN
 VMsvga2TextureBuffer* CLASS::new_surface_texture(uint32_t surface_id,
-												 uint32_t arg1,
+												 uint32_t fb_idx_mask,
 												 mach_vm_address_t* sys_obj_client_addr)
 {
 	class VMsvga2Surface* surface;
@@ -564,12 +667,12 @@ VMsvga2TextureBuffer* CLASS::new_surface_texture(uint32_t surface_id,
 	}
 	p->creator = this;
 	p->linked_surface = surface;
-	p->agp_flag = arg1;
-	p->agp_addr = surface_id;
+	p->fb_idx_mask = fb_idx_mask;
+	p->cgs_surface_id = surface_id;
 	link_texture_at_head(p);
 	*sys_obj_client_addr = p->sys_obj_client_addr;
 #if 0
-	p->0x84 = surface->0xE64;
+	p->next_surface = surface->0xE64;
 	surface->0xE64 = p;
 	surface->reset_req_bits();
 	surface->prune_buffers();
@@ -577,6 +680,7 @@ VMsvga2TextureBuffer* CLASS::new_surface_texture(uint32_t surface_id,
 	++m_provider->0x7BC;
 #else
 	p->surface_format = surface->getSurfaceFormat();
+	p->bytespp = surface->getBytesPerPixel();
 #endif
 	return p;
 }
@@ -636,23 +740,21 @@ VMsvga2TextureBuffer* CLASS::new_texture(uint32_t size0,
 		SHLog(1, "%s: common_texture_init failed\n", __FUNCTION__);
 		goto clean1;
 	}
-	bmd = IOBufferMemoryDescriptor::inTaskWithOptions(m_owning_task,
-													  kIOMemoryKernelUserShared |
-													  kIOMemoryPageable |
-													  kIOMemoryPurgeable |
-													  kIODirectionInOut /* | m_provider->0x934 */,
-													  total_size,
-													  PAGE_SIZE);
+	bmd = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(m_owning_task,
+														   kIOMemoryKernelUserShared |
+														   kIOMemoryPageable |
+														   kIOMemoryPurgeable |
+														   kIODirectionInOut /* | m_provider->0x934 */,
+														   total_size,
+														   ((1ULL << (32 + PAGE_SHIFT)) - 1U) & -PAGE_SIZE);
 	if (!bmd) {
 		SHLog(1, "%s: IOBufferMemoryDescriptor allocation failed\n", __FUNCTION__);
 		goto clean2;
 	}
 	p2->xfer.md = bmd;
-	p2->xfer.gmr_id = SVGA_ID_INVALID;
-	p2->xfer.fence = 0U;
 	p2->creator = this;
 	p2->client_map = bmd->createMappingInTask(m_owning_task,
-											  0U,
+											  0,
 											  kIOMapAnywhere);
 	if (!p2->client_map) {
 		SHLog(1, "%s: createMappingInTask failed\n", __FUNCTION__);
@@ -723,16 +825,109 @@ VMsvga2TextureBuffer* CLASS::new_agpref_texture(mach_vm_address_t pixels1,
 }
 
 HIDDEN
+IOReturn CLASS::pageoffDirtyTexture(VMsvga2TextureBuffer* tx)
+{
+	IOReturn rc;
+	uint8_t sys_obj_type;
+	IOMemoryMap* mmap;
+	SVGA3dSurfaceImageId hostImage;
+	SVGA3dCopyBox copyBox;
+	VMsvga2Accel::ExtraInfoEx extra;
+	VMsvga2TextureBuffer* ltx;
+	GLDTextureHeader *headers, *gld_th;
+	vm_offset_t base_offset;
+	vm_size_t base_limit;
+
+	if (tx->sys_obj->vstate & 0x11U) {	// is the descriptor in volatile state?
+		tx->sys_obj->vstate |= 2U;
+		return kIOReturnSuccess;
+	}
+	if (!m_provider)
+		return kIOReturnNotReady;
+	if (!isIdValid(tx->surface_id))
+		return kIOReturnNotReady;
+	sys_obj_type = tx->sys_obj_type;
+	if (sys_obj_type != TEX_TYPE_STD &&
+		sys_obj_type != TEX_TYPE_OOB)
+		return kIOReturnUnsupported;
+	mmap = 0;
+	hostImage.sid = tx->surface_id;
+	bzero(&copyBox, sizeof copyBox);
+	bzero(&extra, sizeof extra);
+	extra.suffix_flags = 2U;
+	ltx = tx;
+	headers = 0;
+	base_offset = 0U;
+	base_limit = 0xFFFFFFFFU;
+	if (sys_obj_type == TEX_TYPE_OOB) {
+		if (!tx->linked_agp)
+			return kIOReturnBadArgument;
+		ltx = tx->linked_agp;
+		base_offset = static_cast<vm_offset_t>(ltx->agp_offset_in_page);
+		base_limit = ltx->agp_size - base_offset;
+	} else if (tx->xfer.md)
+		base_limit = tx->xfer.md->getLength();
+	rc = mapGLDTextureHeader(tx, &mmap);
+	if (rc != kIOReturnSuccess) {
+		SHLog(1, "%s: mapGLDTextureHeader return %#x\n", __FUNCTION__, rc);
+		return rc;
+	}
+	headers = reinterpret_cast<typeof headers>(mmap->getVirtualAddress()) + tx->min_mipmap;
+	rc = prepare_transfer_for_io(m_provider, &ltx->xfer);
+	if (rc != kIOReturnSuccess) {
+		SHLog(1, "%s: prepare_transfer_for_io return %#x\n", __FUNCTION__, rc);
+		goto clean1;
+	}
+	extra.mem_gmr_id = ltx->xfer.gmr_id;
+	for (hostImage.face = 0U;
+		 hostImage.face != tx->num_faces;
+		 ++hostImage.face, headers += 12) {
+		for (gld_th = headers, hostImage.mipmap = 0U;
+			 hostImage.mipmap != tx->num_mipmaps;
+			 ++hostImage.mipmap, ++gld_th) {
+			if (!gld_th->offset_in_client ||
+				!isPagedOn(tx->sys_obj, hostImage.face, hostImage.mipmap))
+				continue;
+			copyBox.w = gld_th->width_bytes / tx->bytespp;
+			copyBox.h = gld_th->height;
+			copyBox.d = gld_th->depth;
+			extra.mem_offset_in_gmr = base_offset + gld_th->offset_in_client;
+			extra.mem_limit = base_limit - gld_th->offset_in_client;
+			extra.mem_pitch = gld_th->pitch;
+			rc = m_provider->surfaceDMA3DEx(&hostImage,
+											SVGA3D_READ_HOST_VRAM,
+											&copyBox,
+											&extra,
+											&ltx->xfer.fence);
+			if (rc != kIOReturnSuccess)
+				goto clean2;
+		}
+	}
+	mmap->release();
+	for (hostImage.face = 0U; hostImage.face != tx->num_faces; ++hostImage.face)
+		tx->sys_obj->pageoff[hostImage.face] |= tx->sys_obj->pageon[hostImage.face];
+	complete_transfer_io(m_provider, &ltx->xfer);
+	return kIOReturnSuccess;
+
+clean2:
+	complete_transfer_io(m_provider, &ltx->xfer);
+clean1:
+	if (mmap)
+		mmap->release();
+	return rc;
+}
+
+HIDDEN
 bool CLASS::initializeTexture(VMsvga2TextureBuffer* tx, VendorNewTextureDataStruc const* tds)
 {
 	tx->vram_tile_pages = tds->pixels[2];
-	tx->vram_page_bytes = PAGE_SIZE;
+	tx->vram_page_bytes = static_cast<uint32_t>(page_size);
 	if (tx->sys_obj_type != TEX_TYPE_IOSURFACE)
-		return 1;
+		return true;
 	/*
 	 * TBD: Rest of initialization for io_surface_texture
 	 */
-	return 1;
+	return true;
 }
 
 HIDDEN

@@ -29,6 +29,7 @@
 #ifndef __GLCOMMON_H__
 #define __GLCOMMON_H__
 
+#if defined(GL_INCL_SHARED) || defined(GL_INCL_PUBLIC)
 struct VendorTransferBuffer {
 	uint32_t pad1;			//   0
 	uint32_t gart_ptr;		//   4
@@ -40,6 +41,7 @@ struct VendorTransferBuffer {
 	uint32_t gmr_id;
 	uint32_t fence;
 };
+#endif
 
 #if 0
 struct GLKMemoryElement {
@@ -47,14 +49,14 @@ struct GLKMemoryElement {
 	uint32_t pitch;			//    4
 	uint32_t f0;			//    8
 	uint16_t f1[4];			// 0x0C
-	// 0x14 end
+							// 0x14 end
 };
 #endif
 
 #ifdef GL_INCL_SHARED
 struct VMsvga2TextureBuffer
 {
-	struct VendorTransferBuffer xfer;
+	VendorTransferBuffer xfer;
 									// offset 0x10 - 0x28 all dwords
 									// offset 0x20 initialized to 0xE34
 	class IOMemoryMap* client_map;	// offset 0x28
@@ -69,7 +71,7 @@ struct VMsvga2TextureBuffer
 	uint32_t width;					// offset 0x40
 	uint16_t height;				// offset 0x44
 	uint16_t depth;					// offset 0x46
-	uint32_t f0;					// offset 0x48
+	uint32_t vram_pitch;			// offset 0x48
 	uint32_t pitch;					// offset 0x4C
 	uint32_t vram_bytes;			// offset 0x50
 	uint32_t f1;					// offset 0x54
@@ -78,27 +80,37 @@ struct VMsvga2TextureBuffer
 	VMsvga2TextureBuffer* next;		// offset 0x64
 	VMsvga2TextureBuffer* prev;		// offset 0x68
 									// Note - GLKMemoryElement at offset 0x6C (20 bytes)
-	union {							// offset 0x80 Note: 0x80 - 0x98 are a sub-structure (probably a union)
-		VMsvga2TextureBuffer* linked_agp;
-		mach_vm_address_t agp_offset_in_page;
-		class VMsvga2Surface* linked_surface;
+	struct {						// Host Memory Element instead
+		uint32_t surface_id;
+		int surface_format;
+		uint32_t yuv_shadow;
 	};
-	uint32_t agp_flag;				// offset 0x88
-	mach_vm_offset_t agp_addr;		// offset 0x8C
-	vm_size_t agp_size;				// offset 0x94
+	union {							// offset 0x80 Note: 0x80 - 0x98 a sub-structure
+		VMsvga2TextureBuffer* linked_agp;	// for TEX_TYPE_AGPREF, TEX_TYPE_OOB
+		struct {							// for TEX_TYPE_AGP
+			mach_vm_address_t agp_offset_in_page;
+			uint32_t agp_flag;				// offset 0x88
+			mach_vm_offset_t agp_addr;		// offset 0x8C
+			vm_size_t agp_size;				// offset 0x94
+		};
+		struct {							// for TEX_TYPE_SURFACE
+			class VMsvga2Surface* linked_surface;
+			class VMsvga2Surface* next_surface;	// offset 0x84
+			uint32_t fb_idx_mask;			// offset 0x88
+			uint32_t cgs_surface_id;		// offset 0x8C
+		};
+	};
 	uint64_t vram_tile_pages;		// offset 0x98
 	uint32_t vram_page_bytes;		// offset 0xA0
 									// offset 0xA4 - 0xAC are dwords
 									// ends   0xAC
-	uint32_t surface_id;
-	int surface_format;
 };
 #endif /* GL_INCL_SHARED */
 
 #ifdef GL_INCL_PUBLIC
 struct VMsvga2CommandBuffer
 {
-	struct VendorTransferBuffer xfer;
+	VendorTransferBuffer xfer;
 	uint32_t pad3[4];
 	uint32_t submit_stamp;
 	struct VendorCommandBufferHeader* kernel_ptr;

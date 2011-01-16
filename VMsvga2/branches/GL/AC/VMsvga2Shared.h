@@ -93,7 +93,7 @@ public:
 	VMsvga2TextureBuffer* findTextureBuffer(uint32_t object_id);
 	bool initializeTexture(VMsvga2TextureBuffer*, struct VendorNewTextureDataStruc const*);
 	VMsvga2TextureBuffer* new_surface_texture(uint32_t surface_id,
-											  uint32_t arg1,
+											  uint32_t fb_idx_mask,
 											  mach_vm_address_t* sys_obj_client_addr);
 	VMsvga2TextureBuffer* new_iosurface_texture(uint32_t, uint32_t, uint32_t, uint32_t, mach_vm_address_t*);
 	VMsvga2TextureBuffer* new_texture(uint32_t size0,
@@ -108,6 +108,7 @@ public:
 											 size_t texture_size,
 											 uint32_t read_only,
 											 mach_vm_address_t* sys_obj_client_addr);
+	IOReturn pageoffDirtyTexture(VMsvga2TextureBuffer*);
 	void delete_texture(VMsvga2TextureBuffer* texture) { delete_texture_internal(m_provider, this, texture); }
 	void lockShared() { IOLockLock(m_shared_lock); }
 	void unlockShared() { IOLockUnlock(m_shared_lock); }

@@ -103,7 +103,9 @@ private:
 	/*
 	 * GL Area
 	 */
+#if 0
 	IOMemoryDescriptor* m_channel_memory;
+#endif
 
 	/*
 	 * Private support methods
@@ -325,7 +327,7 @@ public:
 #if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ >= 1060
 	unsigned getSurfaceRootUUID() const { return m_surface_root_uuid; }
 #endif
-	IOMemoryDescriptor* getChannelMemory() const { return m_channel_memory; }
+	IOMemoryDescriptor* getChannelMemory() const;
 	uint32_t getVRAMSize() const;
 	vm_offset_t offsetInVRAM(void* vram_ptr);
 	class VMsvga2Surface* findSurfaceForID(uint32_t surface_id);

@@ -181,7 +181,8 @@ typedef struct _gld_context_t {
 	uint32_t f10;					// ( BC,  F0)
 	uint32_t f11;					// ( C0,  F4)
 	uint64_t f12[2];				// ( C4,  F8)
-	void* ptr_pack[16];				// ( D4, 108)
+	struct _gld_texture_t* stages[16];
+									// ( D4, 108) - 16 Sampler Stages
 	void* f13[4];					// (114, 188)
 	uint32_t f14[8];				// (124, 1A8)
 	uint32_t* cb_iter[3];			// (144, 1C8) - 3 pointers for iterating over command buffer
@@ -249,7 +250,8 @@ typedef struct _gld_texture_t {
 	void* f11;      // (68, 80)
 	struct GLDSysObject* obj;
 					// (6C, 88)
-	uint8_t f13;    // (70, 90)
+	uint8_t format_index;
+					// (70, 90) - index for struct describing pixel format [sIntelTextureInfo]
 	uint8_t f14;    // (71, 91)
 	uint32_t f15[2];// (74, 94)
                     // (7C, A0)

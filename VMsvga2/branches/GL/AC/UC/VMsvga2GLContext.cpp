@@ -131,6 +131,15 @@ uint32_t GMR_VRAM(void)
 	return static_cast<uint32_t>(-2) /* SVGA_GMR_FRAMEBUFFER */;
 }
 
+static inline
+void memset32(void* dest, uint32_t value, size_t size)
+{
+	__asm__ volatile ("cld; rep stosl" : "+c" (size), "+D" (dest) : "a" (value) : "memory");
+}
+
+void complete_transfer_io(VMsvga2Accel* provider, VendorTransferBuffer* xfer);
+void discard_transfer(VendorTransferBuffer* xfer);
+
 #pragma mark -
 #pragma mark Private Methods
 #pragma mark -
@@ -142,6 +151,10 @@ void CLASS::Init()
 	m_arrays.sid = SVGA_ID_INVALID;
 	m_arrays.gmr_id = SVGA_ID_INVALID;
 	m_active_shid = SVGA_ID_INVALID - 1;
+	m_command_buffer.xfer.gmr_id = SVGA_ID_INVALID;
+	m_context_buffer0.xfer.gmr_id = SVGA_ID_INVALID;
+	m_context_buffer1.xfer.gmr_id = SVGA_ID_INVALID;
+	memset32(&m_intel_state.surface_ids[0], SVGA_ID_INVALID, 16U);
 }
 
 HIDDEN
@@ -161,28 +174,18 @@ void CLASS::Cleanup()
 		m_gc->release();
 		m_gc = 0;
 	}
-	complete_transfer_io(&m_command_buffer.xfer);
+	complete_transfer_io(m_provider, &m_command_buffer.xfer);
 	discard_transfer(&m_command_buffer.xfer);
 	discard_transfer(&m_context_buffer0.xfer);
 	discard_transfer(&m_context_buffer1.xfer);
-	if (m_type2) {
-		m_type2->release();
-		m_type2 = 0;
+	if (m_fences) {
+		m_fences->release();
+		m_fences = 0;
+		m_fences_len = 0U;
+		m_fences_ptr = 0;
 	}
-	if (m_provider && isIdValid(m_context_id)) {
-		purge_shader_cache();
-#if 0
-		unload_fixed_shaders();
-#endif
-		m_provider->destroyContext(m_context_id);
-		m_provider->FreeContextID(m_context_id);
-		m_context_id = SVGA_ID_INVALID;
-	}
-	purge_arrays();
-	if (m_float_cache) {
-		IOFreeAligned(m_float_cache, 64U * sizeof(float));
-		m_float_cache = 0;
-	}
+	CleanupIpp();
+	CleanupApp();
 }
 
 HIDDEN
@@ -193,11 +196,12 @@ bool CLASS::allocCommandBuffer(VMsvga2CommandBuffer* buffer, size_t size)
 	/*
 	 * Intel915 ors an optional flag @ IOAccelerator+0x924
 	 */
-	bmd = IOBufferMemoryDescriptor::withOptions(kIOMemoryKernelUserShared |
-												kIOMemoryPageable |
-												kIODirectionInOut,
-												size,
-												page_size);
+	bmd = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(kernel_task,
+														   kIOMemoryKernelUserShared |
+														   kIOMemoryPageable |
+														   kIODirectionInOut,
+														   size,
+														   ((1ULL << (32 + PAGE_SHIFT)) - 1U) & -PAGE_SIZE);
 	buffer->xfer.md = bmd;
 	if (!bmd)
 		return false;
@@ -223,11 +227,12 @@ bool CLASS::allocAllContextBuffers()
 	IOBufferMemoryDescriptor* bmd;
 	VendorCommandBufferHeader* p;
 
-	bmd = IOBufferMemoryDescriptor::withOptions(kIOMemoryKernelUserShared |
-												kIOMemoryPageable |
-												kIODirectionInOut,
-												4096U,
-												page_size);
+	bmd = IOBufferMemoryDescriptor::inTaskWithOptions(kernel_task,
+													  kIOMemoryKernelUserShared |
+													  kIOMemoryPageable |
+													  kIODirectionInOut,
+													  PAGE_SIZE,
+													  page_size);
 	m_context_buffer0.xfer.md = bmd;
 	if (!bmd)
 		return false;
@@ -239,14 +244,17 @@ bool CLASS::allocAllContextBuffers()
 	p->flags = 1;
 	p->data[3] = 1007;
 
+#if 0
+	// This buffer is never used, so skip it
 	/*
 	 * Intel915 ors an optional flag @ IOAccelerator+0x924
 	 */
-	bmd = IOBufferMemoryDescriptor::withOptions(kIOMemoryKernelUserShared |
-												kIOMemoryPageable |
-												kIODirectionInOut,
-												4096U,
-												page_size);
+	bmd = IOBufferMemoryDescriptor::inTaskWithOptions(kernel_task,
+													  kIOMemoryKernelUserShared |
+													  kIOMemoryPageable |
+													  kIODirectionInOut,
+													  PAGE_SIZE,
+													  page_size);
 	if (!bmd)
 		return false; // TBD frees previous ones
 	m_context_buffer1.xfer.md = bmd;
@@ -258,6 +266,7 @@ bool CLASS::allocAllContextBuffers()
 	p->flags = 1;
 	p->data[3] = 1007;
 	// TBD: allocates another one like this
+#endif
 	return true;
 }
 
@@ -269,71 +278,6 @@ IOReturn CLASS::get_status(uint32_t* status)
 	 */
 	*status = 1;
 	return kIOReturnSuccess;
-}
-
-HIDDEN
-IOReturn CLASS::prepare_transfer_for_io(VendorTransferBuffer* xfer)
-{
-	IOReturn rc;
-
-	if (!m_provider)
-		return kIOReturnNotReady;
-	if (!xfer)
-		return kIOReturnBadArgument;
-	if (isIdValid(xfer->gmr_id))
-		return kIOReturnSuccess;
-	if (!xfer->md)
-		return kIOReturnNotReady;
-	xfer->gmr_id = m_provider->AllocGMRID();
-	if (!isIdValid(xfer->gmr_id)) {
-		GLLog(1, "%s: Out of GMR IDs\n", __FUNCTION__);
-		return kIOReturnNoResources;
-	}
-	rc = xfer->md->prepare();
-	if (rc != kIOReturnSuccess)
-		goto clean1;
-	rc = m_provider->createGMR(xfer->gmr_id, xfer->md);
-	if (rc != kIOReturnSuccess)
-		goto clean2;
-	return kIOReturnSuccess;
-
-clean2:
-	xfer->md->complete();
-clean1:
-	m_provider->FreeGMRID(xfer->gmr_id);
-	xfer->gmr_id = SVGA_ID_INVALID;
-	return rc;
-}
-
-HIDDEN
-void CLASS::sync_trasfer_io(VendorTransferBuffer* xfer)
-{
-	if (!m_provider || !xfer || !xfer->fence)
-		return;
-	m_provider->SyncToFence(xfer->fence);
-	xfer->fence = 0U;
-}
-
-HIDDEN
-void CLASS::complete_transfer_io(VendorTransferBuffer* xfer)
-{
-	if (!m_provider || !xfer || !isIdValid(xfer->gmr_id))
-		return;
-	sync_trasfer_io(xfer);
-	m_provider->destroyGMR(xfer->gmr_id);
-	if (xfer->md)
-		xfer->md->complete();
-	m_provider->FreeGMRID(xfer->gmr_id);
-	xfer->gmr_id = SVGA_ID_INVALID;
-}
-
-HIDDEN
-void CLASS::discard_transfer(VendorTransferBuffer* xfer)
-{
-	if (!xfer || !xfer->md)
-		return;
-	xfer->md->release();
-	xfer->md = 0;
 }
 
 HIDDEN
@@ -510,6 +454,7 @@ IOReturn CLASS::clientMemoryForType(UInt32 type, IOOptionBits* options, IOMemory
 	VendorCommandBufferHeader* p;
 	IOMemoryDescriptor* md;
 	IOBufferMemoryDescriptor* bmd;
+	void* fptr;
 	size_t d;
 	VendorCommandDescriptor result;
 	uint32_t pcbRet;
@@ -555,7 +500,7 @@ IOReturn CLASS::clientMemoryForType(UInt32 type, IOOptionBits* options, IOMemory
 			m_shared->unlockShared();
 			if ((pcbRet & 2U) && m_surface_client)
 				m_surface_client->touchRenderTarget();
-			complete_transfer_io(&m_command_buffer.xfer);
+			complete_transfer_io(m_provider, &m_command_buffer.xfer);
 			lockAccel(m_provider);
 			/*
 			 * AB58: reinitialize buffer
@@ -592,36 +537,38 @@ IOReturn CLASS::clientMemoryForType(UInt32 type, IOOptionBits* options, IOMemory
 			unlockAccel(m_provider);
 			return kIOReturnSuccess;
 		case 2:
-			if (!m_type2) {
-				m_type2_len = page_size;
-				bmd = IOBufferMemoryDescriptor::withOptions(kIOMemoryKernelUserShared |
-															kIOMemoryPageable |
-															kIODirectionInOut,
-															m_type2_len,
-															page_size);
-				m_type2 = bmd;
+			if (!m_fences) {
+				m_fences_len = page_size;
+				bmd = IOBufferMemoryDescriptor::inTaskWithOptions(kernel_task,
+																  kIOMemoryKernelUserShared |
+																  kIOMemoryPageable |
+																  kIODirectionInOut,
+																  m_fences_len,
+																  page_size);
+				m_fences = bmd;
 				if (!bmd)
 					return kIOReturnNoResources;
-				m_type2_ptr = static_cast<VendorCommandBufferHeader*>(bmd->getBytesNoCopy());
+				m_fences_ptr = static_cast<typeof m_fences_ptr>(bmd->getBytesNoCopy());
 			} else {
-				d = 2U * m_type2_len;
-				bmd = IOBufferMemoryDescriptor::withOptions(kIOMemoryKernelUserShared |
-															kIOMemoryPageable |
-															kIODirectionInOut,
-															d,
-															page_size);
+				d = 2U * m_fences_len;
+				bmd = IOBufferMemoryDescriptor::inTaskWithOptions(kernel_task,
+																  kIOMemoryKernelUserShared |
+																  kIOMemoryPageable |
+																  kIODirectionInOut,
+																  d,
+																  page_size);
 				if (!bmd)
 					return kIOReturnNoResources;
-				p = static_cast<VendorCommandBufferHeader*>(bmd->getBytesNoCopy());
-				memcpy(p, m_type2_ptr, m_type2_len);
-				m_type2->release();
-				m_type2 = bmd;
-				m_type2_len = d;
-				m_type2_ptr = p;
+				fptr = bmd->getBytesNoCopy();
+				memcpy(fptr, m_fences_ptr, m_fences_len);
+				m_fences->release();
+				m_fences = bmd;
+				m_fences_len = d;
+				m_fences_ptr = static_cast<typeof m_fences_ptr>(fptr);
 			}
-			m_type2->retain();
+			m_fences->retain();
 			*options = 0;
-			*memory = m_type2;
+			*memory = m_fences;
 			return kIOReturnSuccess;
 		case 3:
 #if 0
@@ -963,11 +910,11 @@ IOReturn CLASS::finish()
 }
 
 HIDDEN
-IOReturn CLASS::wait_for_stamp(uintptr_t c1)
+IOReturn CLASS::wait_for_stamp(uintptr_t stamp)
 {
-	GLLog(2, "%s(%lu)\n", __FUNCTION__, c1);
-	if (c1 && m_provider)
-		m_provider->SyncToFence(static_cast<uint32_t>(c1));
+	GLLog(2, "%s(%lu)\n", __FUNCTION__, stamp);
+	if (stamp && m_provider)
+		m_provider->SyncToFence(static_cast<uint32_t>(stamp));
 	return kIOReturnSuccess;
 }
 

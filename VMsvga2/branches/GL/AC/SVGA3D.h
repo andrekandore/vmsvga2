@@ -58,6 +58,7 @@ public:
 	bool Init(SVGADevice*);
 	uint32_t getHWVersion() const { return HWVersion; }
 	void FIFOCommitAll();			// passthrough
+	uint32_t InsertFence();			// passthrough
 	bool BeginPresent(uint32_t sid, SVGA3dCopyRect **rects, size_t numRects);
 	bool BeginPresentReadback(SVGA3dRect **rects, size_t numRects);
 	bool BeginBlitSurfaceToScreen(SVGA3dSurfaceImageId const* srcImage,

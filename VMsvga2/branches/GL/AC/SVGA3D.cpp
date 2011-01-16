@@ -94,6 +94,11 @@ void CLASS::FIFOCommitAll()
 	return m_svga->FIFOCommitAll();
 }
 
+uint32_t CLASS::InsertFence()
+{
+	return m_svga->InsertFence();
+}
+
 bool CLASS::BeginDefineSurface(uint32_t sid,                // IN
 							   SVGA3dSurfaceFlags flags,    // IN
 							   SVGA3dSurfaceFormat format,  // IN

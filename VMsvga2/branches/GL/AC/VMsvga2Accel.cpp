@@ -569,27 +569,25 @@ IOReturn CLASS::fbNotificationHandler(void* ref,
 HIDDEN
 void CLASS::initGLStuff()
 {
-	m_channel_memory = IOBufferMemoryDescriptor::withOptions(kIOMemoryKernelUserShared |
-															 kIOMemoryPageable |
-															 kIODirectionOut,
-															 page_size,
-															 page_size);
 #if 0
-	if (m_channel_memory)
-		m_channel_memory->prepare(kIODirectionInOut);
+	m_channel_memory = IOBufferMemoryDescriptor::inTaskWithOptions(0,
+																   kIOMemoryKernelUserShared |
+																   kIOMemoryPageable |
+																   kIODirectionOut,
+																   page_size,
+																   page_size);
 #endif
 }
 
 HIDDEN
 void CLASS::cleanGLStuff()
 {
-	if (m_channel_memory) {
 #if 0
-		m_channel_memory->complete();
-#endif
+	if (m_channel_memory) {
 		m_channel_memory->release();
 		m_channel_memory = 0;
 	}
+#endif
 }
 
 HIDDEN
@@ -2068,6 +2066,14 @@ void CLASS::unlockAccel()
 }
 
 HIDDEN
+IOMemoryDescriptor* CLASS::getChannelMemory() const
+{
+	if (!m_provider)
+		return 0;
+	return m_provider->getDeviceMemoryWithRegister(kIOPCIConfigBaseAddress2);
+}
+
+HIDDEN
 uint32_t CLASS::getVRAMSize() const
 {
 	if (m_svga)
@@ -2364,7 +2370,7 @@ IOReturn CLASS::createGMR(uint32_t gmrId, IOMemoryDescriptor* md)
 	if (num_physical_ranges + num_pages > m_svga->getMaxGMRDescriptorLength())
 		return kIOReturnNoResources;
 	helper = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(kernel_task,
-															  0U,
+															  kIODirectionInOut,
 															  num_pages << PAGE_SHIFT,
 															  ((1ULL << max_bits) - 1ULL) & -PAGE_SIZE);
 	if (!helper)
