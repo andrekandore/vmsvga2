@@ -73,7 +73,7 @@ void cb_chkpt(gld_context_t*, int);
  */
 void glrAccum(gld_context_t*, uint32_t, float);
 void glrClear(gld_context_t*, uint32_t);
-int glrReadPixels(gld_context_t*, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, size_t, uint32_t, void*);
+int glrReadPixels(gld_context_t*, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, void*, uint32_t, void*);
 void glrDrawPixels(gld_context_t*);
 void glrCopyPixels(gld_context_t*);
 void glrRenderBitmap(gld_context_t*);

@@ -139,6 +139,12 @@ void memset32(void* dest, uint32_t value, size_t size)
 
 void complete_transfer_io(VMsvga2Accel* provider, VendorTransferBuffer* xfer);
 void discard_transfer(VendorTransferBuffer* xfer);
+#if 0
+IOReturn prepare_transfer_for_io(VMsvga2Accel* provider, VendorTransferBuffer* xfer);
+void sync_transfer_io(VMsvga2Accel* provider, VendorTransferBuffer* xfer);
+void readHostVramSimple(VMsvga2Accel* m_provider, uint32_t sid, size_t offset_in_vram, uint32_t w, uint32_t h, uint32_t pitch, uint32_t* fence);
+void blitGarbageToScreen(VMsvga2Accel* m_provider, size_t offset_in_vram, uint32_t w, uint32_t h, uint32_t pitch);
+#endif
 
 #pragma mark -
 #pragma mark Private Methods
@@ -371,48 +377,6 @@ IOReturn CLASS::upload_arrays(size_t num_bytes)
 									  &extra,
 									  &m_arrays.fence);
 }
-
-#if 0
-HIDDEN
-IOReturn CLASS::load_fixed_shaders()
-{
-	uint32_t i;
-	SVGA3D* svga3d;
-	if (!m_provider || !isIdValid(m_context_id))
-		return kIOReturnNotReady;
-	svga3d = m_provider->lock3D();
-	if (!svga3d)
-		return kIOReturnNotReady;
-	for (i = 0U; i != NUM_FIXED_SHADERS; ++i)
-		svga3d->DefineShader(m_context_id,
-							 i + 1U,
-							 SVGA3D_SHADERTYPE_PS,
-							 reinterpret_cast<uint32_t const*>(g_pointers[i]),
-							 g_lengths[i]);
-	m_provider->unlock3D();
-	m_shaders_loaded = true;
-	return kIOReturnSuccess;
-}
-
-HIDDEN
-void CLASS::unload_fixed_shaders()
-{
-	uint32_t i;
-	SVGA3D* svga3d;
-	if (!m_shaders_loaded ||
-		!isIdValid(m_context_id) ||
-		!m_provider)
-		return;
-	svga3d = m_provider->lock3D();
-	if (!svga3d)
-		return;
-	svga3d->SetShader(m_context_id, SVGA3D_SHADERTYPE_PS, SVGA_ID_INVALID);
-	for (i = 0U; i != NUM_FIXED_SHADERS; ++i)
-		svga3d->DestroyShader(m_context_id, i + 1U, SVGA3D_SHADERTYPE_PS);
-	m_provider->unlock3D();
-	m_shaders_loaded = false;
-}
-#endif
 
 #pragma mark -
 #pragma mark IOUserClient Methods
@@ -666,9 +630,6 @@ bool CLASS::start(IOService* provider)
 		m_context_id = SVGA_ID_INVALID;
 		goto bad;
 	}
-#if 0
-	load_fixed_shaders();	// Note: ignore error
-#endif
 	// TBD getVRAMDescriptors
 	if (!allocAllContextBuffers()) {
 		GLLog(1, "%s: allocAllContextBuffers failed\n", __FUNCTION__);
@@ -885,19 +846,149 @@ bad_exit:
 HIDDEN
 IOReturn CLASS::read_buffer(struct sIOGLContextReadBufferData const* struct_in, size_t struct_in_size)
 {
+#if 0
+	IOReturn rc;
+	VendorTransferBuffer xfer;
+	SVGA3dSurfaceImageId hostImage;
+	SVGA3dCopyBox copyBox;
+	VMsvga2Accel::ExtraInfoEx extra;
+#ifdef GL_DEV
+	uint8_t* data_ptr;
+	size_t dpo;
+	uint32_t small_buf, sw, sh, spitch, ssize;
+#endif
+#endif
+
 	GLLog(2, "%s(struct_in, %lu)\n", __FUNCTION__, struct_in_size);
 	if (struct_in_size < sizeof *struct_in)
 		return kIOReturnBadArgument;
-#if LOG_LEVEL >= 1
-	if (m_log_level >= 3) {
-		for (int i = 0; i < 8; ++i)
-			GLLog(3, "%s:  struct_in[%d] == %#x\n", __FUNCTION__, i, struct_in->data[i]);
+	GLLog(3, "%s:  x == %u, y == %u, w == %u, h == %u, data_type == %u, pitch == %u, addr == %#llx\n", __FUNCTION__,
+		  struct_in->x, struct_in->y, struct_in->width, struct_in->height,
+		  struct_in->data_type, struct_in->pitch, struct_in->addr);
+#if 0
+	// var_20 = 0xa0a;
+	// var_34 = 3;
+	// var_74 = struct_in->data[0];
+	// var_70 = struct_in->data[1];
+	// var_6c = struct_in->data[2];
+	// var_68 = struct_in->data[3];
+	// var_60 = struct_in->addr;
+	switch (struct_in->data_type) {
+		case 0U: // 7D47
+			selector = 1U;
+			break;
+		case 1U: // 7D50
+			selector = 0U;
+			break;
+		case 4U: // 7D59
+			selector = 4U;
+			break;
+		case 7U: // 7D62
+			selector = 2U;
+			break;
+		case 8U: // 7D6B
+			selector = 3U;
+			break;
+		case 10U: // 7D35
+			selector = 5U;
+			break;
+		case 11U: // 7D3E
+			selector = 6U;
+			break;
+		default:
+			return kIOReturnBadArgument;
 	}
 #endif
+#if 0
 	/*
-	 * TBD
+	 * Known data types
+	 *   4U - depth buffer
 	 */
-	return kIOReturnUnsupported /* kIOReturnSuccess */;
+	if (!m_surface_client)	// Note: Apple's code doesn't implement read_buffer on a ReadFBO (!)
+		return kIOReturnCannotLock;
+	if (struct_in->data_type != 4U)
+		return kIOReturnUnsupported;
+	bzero(&hostImage, sizeof hostImage);
+	if (!m_surface_client->getSurfacesForGL(0, &hostImage.sid))
+		return kIOReturnCannotLock;
+	if (!isIdValid(hostImage.sid))
+		return kIOReturnNotAttached;
+#ifdef GL_DEV
+	m_surface_client->getBoundsForGL(&sw, &sh, 0, 0);
+	GLLog(3, "%s: depth surface id %u, w == %u, h == %u\n", __FUNCTION__, hostImage.sid, sw, sh);
+#endif
+	bzero(&xfer, sizeof xfer);
+	xfer.gmr_id = SVGA_ID_INVALID;
+	bzero(&copyBox, sizeof copyBox);
+	copyBox.x = struct_in->x;
+	copyBox.y = struct_in->y;
+	copyBox.w = struct_in->width;
+	copyBox.h = struct_in->height;
+	copyBox.d = 1U;
+	bzero(&extra, sizeof extra);
+	extra.mem_offset_in_gmr = static_cast<vm_offset_t>(struct_in->addr & page_mask);
+#ifdef GL_DEV
+	GLLog(3, "%s: offset_in_gmr == %#x\n", __FUNCTION__, static_cast<unsigned>(extra.mem_offset_in_gmr));
+#endif
+	extra.mem_pitch = struct_in->pitch;
+	extra.mem_limit = 0xFFFFFFFFU;
+	extra.suffix_flags = 2U;
+	/*
+	 * Note: should check that address doesn't refer to a read-only region,
+	 *   but Apple's code doesn't do this.
+	 */
+	xfer.md = IOMemoryDescriptor::withAddressRange(struct_in->addr,
+												   struct_in->height * struct_in->pitch,
+												   kIODirectionInOut,
+												   m_owning_task);
+	if (!xfer.md)
+		return kIOReturnNoResources;
+	rc = prepare_transfer_for_io(m_provider, &xfer);
+	if (rc != kIOReturnSuccess) {
+		discard_transfer(&xfer);
+		return rc;
+	}
+	extra.mem_gmr_id = xfer.gmr_id;
+#ifdef GL_DEV
+	small_buf = 'vmwr';
+	xfer.md->writeBytes(extra.mem_offset_in_gmr, &small_buf, sizeof small_buf);
+#endif
+#if 0
+	rc = m_provider->surfaceDMA3DEx(&hostImage,
+									SVGA3D_READ_HOST_VRAM,
+									&copyBox,
+									&extra,
+									&xfer.fence);
+#else
+	spitch = sw * 4U;
+	ssize = sh * spitch;
+	data_ptr = static_cast<typeof data_ptr>(m_provider->VRAMMalloc(ssize));
+	dpo = m_provider->offsetInVRAM(data_ptr);
+	memset32(data_ptr, 0xFF0000U, ssize / 4U);
+	readHostVramSimple(m_provider,
+					   hostImage.sid,
+					   dpo,
+					   sw,
+					   sh,
+					   spitch,
+					   &xfer.fence);
+	rc = kIOReturnSuccess;
+#endif
+#ifdef GL_DEV
+	m_provider->SyncToFence(xfer.fence);
+	blitGarbageToScreen(m_provider, dpo, sw, sh, spitch);
+	small_buf = *reinterpret_cast<uint32_t*>(data_ptr + struct_in->y * spitch + struct_in->x * 4);
+	xfer.md->writeBytes(extra.mem_offset_in_gmr, &small_buf, sizeof small_buf);
+//	if (xfer.md->readBytes(extra.mem_offset_in_gmr, &small_buf, sizeof small_buf) >= sizeof small_buf)
+		GLLog(3, "%s:   pixel value after == %#x, %s\n", __FUNCTION__, small_buf,
+			  small_buf == 'vmwr' ? "failed" : "succeeded");
+#endif
+	complete_transfer_io(m_provider, &xfer);
+	discard_transfer(&xfer);
+	m_provider->VRAMFree(data_ptr);
+	return rc;
+#endif
+	return kIOReturnSuccess;
 }
 
 HIDDEN

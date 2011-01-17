@@ -101,13 +101,6 @@ private:
 #endif
 
 	/*
-	 * GL Area
-	 */
-#if 0
-	IOMemoryDescriptor* m_channel_memory;
-#endif
-
-	/*
 	 * Private support methods
 	 */
 	void Cleanup();
@@ -125,8 +118,6 @@ private:
 								   SInt32 event,
 								   void* info);
 #endif
-	void initGLStuff();
-	void cleanGLStuff();
 	void dumpSurfaceCaps(uint32_t caps);
 	void dumpGPUCaps();
 	void getGPUCaps();
@@ -227,17 +218,9 @@ public:
 									void /* IOAccelDeviceRegion */ const* region,
 									ExtraInfo const* extra);
 	IOReturn surfacePresentReadback(void /* IOAccelDeviceRegion */ const* region);
-#if 0
-	IOReturn setupRenderContext(uint32_t cid,
-								uint32_t color_sid,
-								uint32_t depth_sid,
-								uint32_t width,
-								uint32_t height);
-#else
 	IOReturn setRenderTarget(uint32_t cid,
 							 SVGA3dRenderTargetType rtype,
 							 uint32_t sid);
-#endif
 	IOReturn clear(uint32_t cid,
 				   SVGA3dClearFlag flags,
 				   void /* IOAccelDeviceRegion */ const* region,

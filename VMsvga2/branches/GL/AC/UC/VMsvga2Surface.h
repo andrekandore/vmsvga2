@@ -146,10 +146,6 @@ private:
 		uint8_t volatile rt_dirty;
 	} m_gl;
 
-#ifdef TESTING
-	void runTest();
-#endif
-
 	/*
 	 * Private support methods
 	 */

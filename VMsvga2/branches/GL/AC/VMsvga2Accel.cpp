@@ -332,7 +332,6 @@ void CLASS::Cleanup()
 		m_surface_root = 0;
 	}
 #endif
-	cleanGLStuff();
 	if (bHaveSVGA3D) {
 		bHaveSVGA3D = false;
 		svga3d.Init(0);
@@ -567,30 +566,6 @@ IOReturn CLASS::fbNotificationHandler(void* ref,
 #endif
 
 HIDDEN
-void CLASS::initGLStuff()
-{
-#if 0
-	m_channel_memory = IOBufferMemoryDescriptor::inTaskWithOptions(0,
-																   kIOMemoryKernelUserShared |
-																   kIOMemoryPageable |
-																   kIODirectionOut,
-																   page_size,
-																   page_size);
-#endif
-}
-
-HIDDEN
-void CLASS::cleanGLStuff()
-{
-#if 0
-	if (m_channel_memory) {
-		m_channel_memory->release();
-		m_channel_memory = 0;
-	}
-#endif
-}
-
-HIDDEN
 void CLASS::dumpSurfaceCaps(uint32_t caps)
 {
 	for (int i = 0; i != 25; ++i)
@@ -797,7 +772,6 @@ bool CLASS::start(IOService* provider)
 #else
 		setProperty("IOGLBundleName", "AppleIntelGMA950GLDriver");
 #endif
-		initGLStuff();
 	}
 	/*
 	 * Stupid bug in AppleVA attempts to CFRelease a NULL pointer
@@ -1428,42 +1402,6 @@ exit:
 	return kIOReturnSuccess;
 }
 
-#if 0
-HIDDEN
-IOReturn CLASS::setupRenderContext(uint32_t cid,
-								   uint32_t color_sid,
-								   uint32_t depth_sid,
-								   uint32_t width,
-								   uint32_t height)
-{
-	SVGA3dRenderState* rs;
-	SVGA3dSurfaceImageId colorImage;
-	SVGA3dSurfaceImageId depthImage;
-	SVGA3dRect rect;
-
-	if (!bHaveSVGA3D)
-		return kIOReturnNoDevice;
-	bzero(&colorImage, sizeof(SVGA3dSurfaceImageId));
-	bzero(&depthImage, sizeof(SVGA3dSurfaceImageId));
-	bzero(&rect, sizeof(SVGA3dRect));
-	colorImage.sid = color_sid;
-	depthImage.sid = depth_sid;
-	rect.w = width;
-	rect.h = height;
-	m_framebuffer->lockDevice();
-	svga3d.SetRenderTarget(cid, SVGA3D_RT_COLOR0, &colorImage);
-	svga3d.SetRenderTarget(cid, SVGA3D_RT_DEPTH, &depthImage);
-	svga3d.SetViewport(cid, &rect);
-	svga3d.SetZRange(cid, 0.0F, 1.0F);
-	if (svga3d.BeginSetRenderState(cid, &rs, 1)) {
-		rs->state = SVGA3D_RS_SHADEMODE;
-		rs->uintValue = SVGA3D_SHADEMODE_SMOOTH;
-		m_svga->FIFOCommitAll();
-	}
-	m_framebuffer->unlockDevice();
-	return kIOReturnSuccess;
-}
-#else
 HIDDEN
 IOReturn CLASS::setRenderTarget(uint32_t cid,
 								SVGA3dRenderTargetType rtype,
@@ -1480,7 +1418,6 @@ IOReturn CLASS::setRenderTarget(uint32_t cid,
 	m_framebuffer->unlockDevice();
 	return kIOReturnSuccess;
 }
-#endif
 
 HIDDEN
 IOReturn CLASS::clear(uint32_t cid,

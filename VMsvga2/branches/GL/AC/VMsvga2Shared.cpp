@@ -906,6 +906,9 @@ IOReturn CLASS::pageoffDirtyTexture(VMsvga2TextureBuffer* tx)
 	mmap->release();
 	for (hostImage.face = 0U; hostImage.face != tx->num_faces; ++hostImage.face)
 		tx->sys_obj->pageoff[hostImage.face] |= tx->sys_obj->pageon[hostImage.face];
+	tx->sys_obj->vstate &= ~0x20U;
+	if (sys_obj_type == TEX_TYPE_OOB)
+		ltx->sys_obj->vstate &= ~0x20U;
 	complete_transfer_io(m_provider, &ltx->xfer);
 	return kIOReturnSuccess;
 

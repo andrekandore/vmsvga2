@@ -107,6 +107,13 @@ struct FBODescriptor
 	} txs[2];
 };
 
+template<unsigned N>
+union DefineRegion
+{
+	uint8_t b[sizeof(IOAccelDeviceRegion) + N * sizeof(IOAccelBounds)];
+	IOAccelDeviceRegion r;
+};
+
 #pragma mark -
 #pragma mark Global Functions
 #pragma mark -
@@ -276,6 +283,11 @@ bool areAnyPagedOff(GLDSysObject* sys_obj)
 IOReturn mapGLDTextureHeader(VMsvga2TextureBuffer* tx, IOMemoryMap** map);
 IOReturn prepare_transfer_for_io(VMsvga2Accel* provider, VendorTransferBuffer* xfer);
 void complete_transfer_io(VMsvga2Accel* provider, VendorTransferBuffer* xfer);
+void set_region(IOAccelDeviceRegion* rgn,
+				uint32_t x,
+				uint32_t y,
+				uint32_t w,
+				uint32_t h);
 
 #pragma mark -
 #pragma mark Private Dispatch Tables [Apple]
@@ -413,9 +425,6 @@ uint32_t CLASS::processCommandBuffer(VendorCommandDescriptor* result)
 {
 	VendorGLStreamInfo cb_iter;
 	uint32_t upper, commands_processed;
-#if 0
-	int i, lim;
-#endif
 
 	cb_iter.dso_bytes = 0U;
 	cb_iter.p = &m_command_buffer.kernel_ptr->downstream[-1];
@@ -723,6 +732,8 @@ IOReturn CLASS::create_host_surface_for_texture(VMsvga2TextureBuffer* tx)
 			mipmaps->depth = tx->depth;
 			svga3d->FIFOCommitAll();
 			m_provider->unlock3D();
+			if (!isIdValid(tx->yuv_shadow))
+				check_create_yuv_shadow(tx);
 			break;
 		case TEX_TYPE_STD:
 		case TEX_TYPE_OOB:
@@ -798,6 +809,10 @@ IOReturn CLASS::alloc_and_load_texture(VMsvga2TextureBuffer* tx)
 	sys_obj_type = tx->sys_obj_type;
 	if (sys_obj_type == TEX_TYPE_SURFACE)
 		return kIOReturnSuccess;
+	if (tx->sys_obj->vstate & 0x10U) {
+		tx->sys_obj->vstate |= 2U;
+		return kIOReturnSuccess;
+	}
 	mmap = 0;
 	bzero(&copyBox, sizeof copyBox);
 	bzero(&extra, sizeof extra);
@@ -808,9 +823,13 @@ IOReturn CLASS::alloc_and_load_texture(VMsvga2TextureBuffer* tx)
 	base_limit = 0xFFFFFFFFU;
 	switch (sys_obj_type) {
 		case TEX_TYPE_AGPREF:
-			if (!tx->linked_agp)
-				return kIOReturnBadArgument;
 			ltx = tx->linked_agp;
+			if (!ltx)
+				return kIOReturnBadArgument;
+			if (ltx->sys_obj->vstate & 0x10U) {
+				tx->sys_obj->vstate |= 2U;
+				return kIOReturnSuccess;
+			}
 			extra.mem_offset_in_gmr = static_cast<vm_offset_t>(tx->agp_addr);	// Note: offset of pixels1, not pixels2
 			extra.mem_pitch = tx->pitch;
 			extra.mem_limit = ltx->agp_size - extra.mem_offset_in_gmr;
@@ -820,9 +839,13 @@ IOReturn CLASS::alloc_and_load_texture(VMsvga2TextureBuffer* tx)
 			if (!areAnyPagedOff(tx->sys_obj))
 				return kIOReturnSuccess;
 			if (sys_obj_type == TEX_TYPE_OOB) {
-				if (!tx->linked_agp)
-					return kIOReturnBadArgument;
 				ltx = tx->linked_agp;
+				if (!ltx)
+					return kIOReturnBadArgument;
+				if (ltx->sys_obj->vstate & 0x10U) {
+					tx->sys_obj->vstate |= 2U;
+					return kIOReturnSuccess;
+				}
 				base_offset = static_cast<vm_offset_t>(ltx->agp_offset_in_page);
 				base_limit = ltx->agp_size - base_offset;
 			} else if (tx->xfer.md)
@@ -865,6 +888,8 @@ IOReturn CLASS::alloc_and_load_texture(VMsvga2TextureBuffer* tx)
 											&copyBox,
 											&extra,
 											&ltx->xfer.fence);
+			if (isIdValid(tx->yuv_shadow))
+				copy_yuv_shadow(tx);
 			break;
 		case TEX_TYPE_STD:
 		case TEX_TYPE_OOB:
@@ -1009,6 +1034,53 @@ void CLASS::setup_drawbuffer_registers(uint32_t* p)
 		bzero(&m_drawrect[0], sizeof m_drawrect);
 	}
 	memcpy(&p[7], &m_drawrect[0], sizeof m_drawrect);
+}
+
+HIDDEN
+void CLASS::check_create_yuv_shadow(VMsvga2TextureBuffer* tx)
+{
+	uint32_t const combined = SVGA3DFORMAT_OP_CONVERT_TO_ARGB | SVGA3DFORMAT_OP_TEXTURE;
+	/*
+	 * Can generalize this for all surface types, but then to
+	 *   be fully general, also need to do this for
+	 *   TEX_TYPE_STD, TEX_TYPE_OOB, which requires handling
+	 *   faces, mipping - argh.
+	 */
+	static int const pairs[][2] = {
+		{ SVGA3D_UYVY, SVGA3D_DEVCAP_SURFACEFMT_UYVY },
+		{ SVGA3D_YUY2, SVGA3D_DEVCAP_SURFACEFMT_YUY2 }
+	};
+	int i, ns;
+	for (i = 0, ns = 0; i != 2; ++i)
+		if (tx->surface_format == pairs[i][0] &&
+			(m_provider->getDevCap(pairs[i][1]) & combined) == SVGA3DFORMAT_OP_CONVERT_TO_ARGB) {
+			ns = 1;
+			break;
+		}
+	if (!ns)
+		return;
+	tx->yuv_shadow = m_provider->AllocSurfaceID(); // Note: doesn't fail
+	if (m_provider->createSurface(tx->yuv_shadow,
+								  SVGA3D_SURFACE_HINT_TEXTURE,
+								  SVGA3D_A8R8G8B8,
+								  tx->width,
+								  tx->height) != kIOReturnSuccess) {
+		m_provider->FreeSurfaceID(tx->yuv_shadow);
+		tx->yuv_shadow = SVGA_ID_INVALID;
+	}
+#ifdef GL_DEV
+	GLLog(3, "%s: Using YUV Shadow for texture %u\n", __FUNCTION__, tx->sys_obj->object_id);
+#endif
+}
+
+HIDDEN
+void CLASS::copy_yuv_shadow(VMsvga2TextureBuffer* tx)
+{
+	DefineRegion<1U> tmpRegion;
+	VMsvga2Accel::ExtraInfo extra;
+	set_region(&tmpRegion.r, 0U, 0U, tx->width, tx->height);
+	bzero(&extra, sizeof extra);
+	m_provider->surfaceCopy(tx->surface_id, tx->yuv_shadow, &tmpRegion.r, &extra);
 }
 
 #pragma mark -
@@ -1740,9 +1812,9 @@ void CLASS::process_token_SetFence(VendorGLStreamInfo* info)
 	info->p[1] = 0x10800001U;	// MI_STORE_DATA_INDEX
 	info->p[2] = 64U;
 	info->p[3] = fence_num /* m_provider->0x50 */;
+#if 0
 	m_fences_ptr[fence_num].u = 0U /* m_provider->0x50++ */;
 	m_fences_ptr[fence_num].v = 0U;
-#if 0
 	++info->f2;
 #endif
 }

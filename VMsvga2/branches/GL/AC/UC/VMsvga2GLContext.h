@@ -86,9 +86,6 @@ private:
 	int m_log_level;
 	uint32_t m_context_id;
 	float* m_float_cache;
-#if 0
-	bool m_shaders_loaded;
-#endif
 	struct ShaderEntry* m_shader_cache;
 	/*
 	 * TBD: should shader ids be unique system-wide???
@@ -137,10 +134,6 @@ private:
 	IOReturn alloc_arrays(size_t num_bytes);
 	void purge_arrays();
 	IOReturn upload_arrays(size_t num_bytes);
-#if 0
-	IOReturn load_fixed_shaders();
-	void unload_fixed_shaders();
-#endif
 
 	/*
 	 * Apple Pipeline processor
@@ -160,6 +153,8 @@ private:
 	IOReturn tex_subimage_2d(VMsvga2TextureBuffer* tx,
 							 struct GLDTexSubImage2DStruc const* desc);
 	void setup_drawbuffer_registers(uint32_t*);
+	void check_create_yuv_shadow(VMsvga2TextureBuffer*);
+	void copy_yuv_shadow(VMsvga2TextureBuffer*);
 
 	/*
 	 * Intel Pipeline processor

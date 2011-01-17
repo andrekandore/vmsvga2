@@ -436,18 +436,6 @@ void flatshade_polygon(uint8_t* vertex_array,
 		}
 }
 
-#if 0
-static
-void make_diag(float* matrix, float d0, float d1, float d2, float d3)
-{
-	bzero(matrix, 16U * sizeof(float));
-	matrix[0]  = d0;
-	matrix[5]  = d1;
-	matrix[10] = d2;
-	matrix[15] = d3;
-}
-#endif
-
 #pragma mark -
 #pragma mark Private Methods
 #pragma mark -
@@ -457,9 +445,6 @@ void CLASS::CleanupIpp()
 {
 	if (m_provider && isIdValid(m_context_id)) {
 		purge_shader_cache();
-#if 0
-		unload_fixed_shaders();
-#endif
 		m_provider->destroyContext(m_context_id);
 		m_provider->FreeContextID(m_context_id);
 		m_context_id = SVGA_ID_INVALID;
@@ -1608,6 +1593,7 @@ uint32_t CLASS::decode_mi(uint32_t* p, uint32_t cmd)
 			if (!svga3d)
 				break;
 			m_fences_ptr[fence_num].u = svga3d->InsertFence();
+			m_fences_ptr[fence_num].v = 0U;
 			m_provider->unlock3D();
 #if 0
 			GLLog(3, "%s: setting fence %u to %u\n", __FUNCTION__,

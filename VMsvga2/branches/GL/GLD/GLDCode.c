@@ -580,24 +580,28 @@ void glrClear(gld_context_t* context, uint32_t mask)
 	cb_chkpt(context, 1);
 }
 
+/*
+ * Note: The seven parameters after contex are identical
+ *   to glReadPixels()
+ */
 int glrReadPixels(gld_context_t* context,
-				  uint32_t arg1,
-				  uint32_t arg2,
-				  uint32_t arg3,
-				  uint32_t arg4,
-				  uint32_t arg5,
-				  uint32_t arg6,
-				  size_t arg7,
+				  uint32_t x,
+				  uint32_t y,
+				  uint32_t w,
+				  uint32_t h,
+				  uint32_t format,
+				  uint32_t type,
+				  void* pixels,
 				  uint32_t arg8,
 				  void* arg9)
 {
 	typeof(glrReadPixels) *addr;
 	int rc = 0;
-	GLDLog(2, "%s(%p, %u, %u, %u, %u, %u, %u, %lu, %u, %p)\n", __FUNCTION__, context, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9);
+	GLDLog(2, "%s(%p, %d, %d, %u, %u, %#x, %#x, %p, %u, %p)\n", __FUNCTION__, context, x, y, w, h, format, type, pixels, arg8, arg9);
 	cb_chkpt(context, 0);
 	addr = (typeof(addr)) remote_dispatch[2];
 	if (addr)
-		rc = addr(context, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9);
+		rc = addr(context, x, y, w, h, format, type, pixels, arg8, arg9);
 	cb_chkpt(context, 1);
 	return rc;
 }

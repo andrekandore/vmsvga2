@@ -183,19 +183,55 @@ static
 int select_ds_format(int context_mode_bits)
 {
 	if (context_mode_bits & CGLCMB_StencilMode0) {
+#if 0
 		if (context_mode_bits & CGLCMB_DepthMode32)
 			return SVGA3D_Z_D24S8;
 		return SVGA3D_Z_D15S1;
+#else
+		return SVGA3D_Z_D24S8;
+#endif
 	}
 	if (context_mode_bits & CGLCMB_DepthMode32) {
+#if 0
 		if (context_mode_bits & CGLCMB_DepthMode16)
 			return SVGA3D_Z_D24X8;
 		return SVGA3D_Z_D32;
+#else
+		return SVGA3D_Z_D24X8;
+#endif
 	}
 	if (context_mode_bits & (CGLCMB_DepthMode16 | CGLCMB_DepthMode0))
 		return SVGA3D_Z_D16;
 	return SVGA3D_FORMAT_INVALID;
 }
+
+#if 0
+HIDDEN
+void readHostVramSimple(VMsvga2Accel* m_provider, uint32_t sid, size_t offset_in_vram, uint32_t w, uint32_t h, uint32_t pitch, uint32_t* fence)
+{
+	DefineRegion<1U> tmpRegion;
+	VMsvga2Accel::ExtraInfo extra;
+	set_region(&tmpRegion.r, 0, 0, w, h);
+	bzero(&extra, sizeof extra);
+	extra.mem_gmr_id = GMR_VRAM();
+	extra.mem_pitch = pitch;
+	extra.mem_offset_in_gmr = offset_in_vram;
+	m_provider->surfaceDMA2D(sid, SVGA3D_READ_HOST_VRAM, &tmpRegion.r, &extra, fence);
+}
+
+HIDDEN
+void blitGarbageToScreen(VMsvga2Accel* m_provider, size_t offset_in_vram, uint32_t w, uint32_t h, uint32_t pitch)
+{
+	DefineRegion<1U> tmpRegion;
+	VMsvga2Accel::ExtraInfo extra;
+	set_region(&tmpRegion.r, 0, 0, w, h);
+	bzero(&extra, sizeof extra);
+	extra.mem_gmr_id = GMR_VRAM();
+	extra.mem_pitch = pitch;
+	extra.mem_offset_in_gmr = offset_in_vram;
+	m_provider->blitToScreen(0U, &tmpRegion.r, &extra, 0);
+}
+#endif
 
 #pragma mark -
 #pragma mark IOUserClient Methods
@@ -2229,35 +2265,10 @@ IOReturn CLASS::attachGL(uint32_t context_id, int cmb)
 			return rc;
 		}
 	}
-#if 0
-	rc = m_provider->setRenderTarget(context_id, SVGA3D_RT_COLOR0, m_gl.color_sid);
-	if (rc != kIOReturnSuccess) {
-		CleanupGL();
-		return rc;
-	}
-	if (isIdValid(m_gl.depth_sid)) {
-		rc = m_provider->setRenderTarget(context_id, SVGA3D_RT_DEPTH, m_gl.depth_sid);
-		if (rc != kIOReturnSuccess) {
-			CleanupGL();
-			return rc;
-		}
-#if 0
-		m_provider->setRenderTarget(context_id, SVGA3D_RT_STENCIL, m_gl.depth_sid); // is this needed too?
-#endif
-	}
-#endif
 	m_gl.cid = context_id;
 	memcpy(&m_gl.rt_size, &m_scale.source, sizeof m_scale.source);
 	touchRenderTarget();
 	bGLMode = true;
-#if 0
-	/*
-	 * Initialization taken from VMware Examples
-	 *   Without the ViewPort setting, nothing paints
-	 */
-	m_provider->setViewPort(context_id, &m_scale.buffer);
-	m_provider->setZRange(context_id, 0.0F, 1.0F);	// is this a good range for Z?
-#endif
 	return kIOReturnSuccess;
 }
 
@@ -2277,7 +2288,6 @@ IOReturn CLASS::resizeGL()
 	if (isIdValid(m_gl.cid)) {
 		m_provider->setRenderTarget(m_gl.cid, SVGA3D_RT_COLOR0, SVGA_ID_INVALID);
 		m_provider->setRenderTarget(m_gl.cid, SVGA3D_RT_DEPTH, SVGA_ID_INVALID);
-		m_provider->setRenderTarget(m_gl.cid, SVGA3D_RT_STENCIL, SVGA_ID_INVALID);
 	}
 	m_provider->destroySurface(m_gl.color_sid);
 	rc = m_provider->createSurface(m_gl.color_sid,
@@ -2311,34 +2321,10 @@ IOReturn CLASS::resizeGL()
 		touchRenderTarget();
 		return kIOReturnSuccess;
 	}
-#if 0
-	rc = m_provider->setRenderTarget(m_gl.cid, SVGA3D_RT_COLOR0, m_gl.color_sid);
-	if (rc != kIOReturnSuccess) {
-		m_gl.cid = SVGA_ID_INVALID;
-		CleanupGL();
-		return rc;
-	}
-	if (isIdValid(m_gl.depth_sid)) {
-		rc = m_provider->setRenderTarget(m_gl.cid, SVGA3D_RT_DEPTH, m_gl.depth_sid);
-		if (rc != kIOReturnSuccess) {
-			CleanupGL();
-			return rc;
-		}
-#if 0
-		m_provider->setRenderTarget(m_gl.cid, SVGA3D_RT_STENCIL, m_gl.depth_sid); // is this needed too?
-#endif
-	}
-#endif
 	memcpy(&m_gl.rt_size, &m_scale.source, sizeof m_scale.source);
 	touchRenderTarget();
 
 set_view:
-#if 0
-	if (!isIdValid(m_gl.cid))
-		return kIOReturnSuccess;
-	m_provider->setViewPort(m_gl.cid, &m_scale.buffer);
-	m_provider->setZRange(m_gl.cid, 0.0F, 1.0F);
-#endif
 	return kIOReturnSuccess;
 }
 
@@ -2352,7 +2338,6 @@ IOReturn CLASS::detachGL()
 		return kIOReturnNotReady;
 	m_provider->setRenderTarget(m_gl.cid, SVGA3D_RT_COLOR0, SVGA_ID_INVALID);
 	m_provider->setRenderTarget(m_gl.cid, SVGA3D_RT_DEPTH, SVGA_ID_INVALID);
-	m_provider->setRenderTarget(m_gl.cid, SVGA3D_RT_STENCIL, SVGA_ID_INVALID);
 	m_gl.cid = SVGA_ID_INVALID;
 	return kIOReturnSuccess;
 }
