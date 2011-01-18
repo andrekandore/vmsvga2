@@ -158,7 +158,7 @@ IOReturn mapGLDTextureHeader(VMsvga2TextureBuffer* tx, IOMemoryMap** map)
 		return kIOReturnBadArgument;
 	if (!tx->xfer.md)
 		return kIOReturnNotReady;
-	mmap = tx->xfer.md->createMappingInTask(kernel_task, 0, kIOMapAnywhere | kIOMapReadOnly);
+	mmap = tx->xfer.md->createMappingInTask(kernel_task, 0, kIOMapAnywhere | kIOMapReadOnly, 0, page_size);
 	if (!mmap)
 		return kIOReturnNoResources;
 #if 0

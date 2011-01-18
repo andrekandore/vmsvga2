@@ -107,13 +107,6 @@ struct FBODescriptor
 	} txs[2];
 };
 
-template<unsigned N>
-union DefineRegion
-{
-	uint8_t b[sizeof(IOAccelDeviceRegion) + N * sizeof(IOAccelBounds)];
-	IOAccelDeviceRegion r;
-};
-
 #pragma mark -
 #pragma mark Global Functions
 #pragma mark -
@@ -280,14 +273,30 @@ bool areAnyPagedOff(GLDSysObject* sys_obj)
 	return false;
 }
 
+static
+bool need_yuv_shadow(VMsvga2Accel* provider, int surface_format)
+{
+	uint32_t const combined = SVGA3DFORMAT_OP_CONVERT_TO_ARGB | SVGA3DFORMAT_OP_TEXTURE;
+	/*
+	 * Can generalize this for all surface types, but then to
+	 *   be fully general, also need to do this for
+	 *   TEX_TYPE_STD, TEX_TYPE_OOB, which requires handling
+	 *   faces, mipping - argh.
+	 */
+	static int const pairs[][2] = {
+		{ SVGA3D_UYVY, SVGA3D_DEVCAP_SURFACEFMT_UYVY },
+		{ SVGA3D_YUY2, SVGA3D_DEVCAP_SURFACEFMT_YUY2 }
+	};
+	for (int i = 0; i != 2; ++i)
+		if (surface_format == pairs[i][0] &&
+			(provider->getDevCap(pairs[i][1]) & combined) == SVGA3DFORMAT_OP_CONVERT_TO_ARGB)
+			return true;
+	return false;
+}
+
 IOReturn mapGLDTextureHeader(VMsvga2TextureBuffer* tx, IOMemoryMap** map);
 IOReturn prepare_transfer_for_io(VMsvga2Accel* provider, VendorTransferBuffer* xfer);
 void complete_transfer_io(VMsvga2Accel* provider, VendorTransferBuffer* xfer);
-void set_region(IOAccelDeviceRegion* rgn,
-				uint32_t x,
-				uint32_t y,
-				uint32_t w,
-				uint32_t h);
 
 #pragma mark -
 #pragma mark Private Dispatch Tables [Apple]
@@ -680,12 +689,6 @@ void CLASS::write_tex_data(uint32_t i, uint32_t* q, VMsvga2TextureBuffer* tx)
 			 *   q[1] for all surface types, including TEX_TYPE_SURFACE.
 			 */
 			break;
-		case TEX_TYPE_AGPREF:
-			if (isIdValid(tx->yuv_shadow))
-				q[0] = tx->yuv_shadow;
-			else
-				q[0] = tx->surface_id;
-			break;
 		default:
 			q[0] = tx->surface_id;
 			break;
@@ -696,7 +699,8 @@ HIDDEN
 IOReturn CLASS::create_host_surface_for_texture(VMsvga2TextureBuffer* tx)
 {
 	IOReturn rc;
-	uint32_t face, mipmap;
+	uint32_t face, mipmap, surface_flags, surface_format;
+	bool yuv;
 	SVGA3D* svga3d;
 	SVGA3dSurfaceFace* faces;
 	SVGA3dSize* mipmaps;
@@ -714,15 +718,28 @@ IOReturn CLASS::create_host_surface_for_texture(VMsvga2TextureBuffer* tx)
 	tx->surface_id = m_provider->AllocSurfaceID();	// Note: doesn't fail
 	switch (tx->sys_obj_type) {
 		case TEX_TYPE_AGPREF:
+			surface_format = tx->surface_format;
+			surface_flags = SVGA3D_SURFACE_HINT_TEXTURE;
+			yuv = need_yuv_shadow(m_provider, surface_format);
+			if (yuv) {
+				surface_format = SVGA3D_A8R8G8B8;
+				surface_flags |= SVGA3D_SURFACE_HINT_RENDERTARGET;	// Note: maybe do this for all textures
+				tx->yuv_shadow = m_provider->AllocSurfaceID();	// Note: doesn't fail
+				GLLog(1, "%s: Using YUV Alternate for texture %u\n", __FUNCTION__, tx->sys_obj->object_id);
+			}
 			svga3d = m_provider->lock3D();
 			if (!svga3d) {
 				GLLog(1, "%s: cannot lock device\n", __FUNCTION__);
 				rc = kIOReturnNotReady;
+				if (yuv) {
+					m_provider->FreeSurfaceID(tx->yuv_shadow);
+					tx->yuv_shadow = SVGA_ID_INVALID;
+				}
 				goto clean1;
 			}
 			svga3d->BeginDefineSurface(tx->surface_id,
-									   SVGA3D_SURFACE_HINT_TEXTURE,
-									   static_cast<SVGA3dSurfaceFormat>(tx->surface_format),
+									   SVGA3dSurfaceFlags(surface_flags),
+									   SVGA3dSurfaceFormat(surface_format),
 									   &faces,
 									   &mipmaps,
 									   1U);
@@ -731,12 +748,26 @@ IOReturn CLASS::create_host_surface_for_texture(VMsvga2TextureBuffer* tx)
 			mipmaps->height = tx->height;
 			mipmaps->depth = tx->depth;
 			svga3d->FIFOCommitAll();
+			if (yuv) {
+				svga3d->BeginDefineSurface(tx->yuv_shadow,
+										   SVGA3dSurfaceFlags(0),
+										   SVGA3dSurfaceFormat(tx->surface_format),
+										   &faces,
+										   &mipmaps,
+										   1U);
+				faces->numMipLevels = 1U;
+				mipmaps->width = tx->width;
+				mipmaps->height = tx->height;
+				mipmaps->depth = tx->depth;
+				svga3d->FIFOCommitAll();
+			}
 			m_provider->unlock3D();
-			if (!isIdValid(tx->yuv_shadow))
-				check_create_yuv_shadow(tx);
 			break;
 		case TEX_TYPE_STD:
 		case TEX_TYPE_OOB:
+			surface_flags = SVGA3D_SURFACE_HINT_TEXTURE;
+			if (tx->num_faces == 6U)
+				surface_flags |= SVGA3D_SURFACE_CUBEMAP;
 			rc = mapGLDTextureHeader(tx, &mmap);
 			if (rc != kIOReturnSuccess) {
 				GLLog(1, "%s: mapGLDTextureHeader return %#x\n", __FUNCTION__, rc);
@@ -747,12 +778,12 @@ IOReturn CLASS::create_host_surface_for_texture(VMsvga2TextureBuffer* tx)
 			if (!svga3d) {
 				GLLog(1, "%s: cannot lock device\n", __FUNCTION__);
 				rc = kIOReturnNotReady;
-				goto clean2;
+				mmap->release();
+				goto clean1;
 			}
 			svga3d->BeginDefineSurface(tx->surface_id,
-									   SVGA3dSurfaceFlags(SVGA3D_SURFACE_HINT_TEXTURE |
-														  (tx->num_faces == 6U ? SVGA3D_SURFACE_CUBEMAP : 0)),
-									   static_cast<SVGA3dSurfaceFormat>(tx->surface_format),
+									   SVGA3dSurfaceFlags(surface_flags),
+									   SVGA3dSurfaceFormat(tx->surface_format),
 									   &faces,
 									   &mipmaps,
 									   tx->num_faces * tx->num_mipmaps);
@@ -776,8 +807,6 @@ IOReturn CLASS::create_host_surface_for_texture(VMsvga2TextureBuffer* tx)
 	}
 	return kIOReturnSuccess;
 
-clean2:
-	mmap->release();
 clean1:
 	m_provider->FreeSurfaceID(tx->surface_id);
 	tx->surface_id = SVGA_ID_INVALID;
@@ -793,6 +822,7 @@ IOReturn CLASS::alloc_and_load_texture(VMsvga2TextureBuffer* tx)
 	SVGA3dSurfaceImageId hostImage;
 	SVGA3dCopyBox copyBox;
 	VMsvga2Accel::ExtraInfoEx extra;
+	IOAccelBounds rect;
 	VMsvga2TextureBuffer* ltx;
 	GLDTextureHeader *headers, *gld_th;
 	vm_offset_t base_offset;
@@ -881,6 +911,8 @@ IOReturn CLASS::alloc_and_load_texture(VMsvga2TextureBuffer* tx)
 			copyBox.w = tx->width;
 			copyBox.h = tx->height;
 			copyBox.d = tx->depth;
+			if (isIdValid(tx->yuv_shadow))
+				hostImage.sid = tx->yuv_shadow;
 			hostImage.face = 0U;
 			hostImage.mipmap = 0U;
 			rc = m_provider->surfaceDMA3DEx(&hostImage,
@@ -888,8 +920,17 @@ IOReturn CLASS::alloc_and_load_texture(VMsvga2TextureBuffer* tx)
 											&copyBox,
 											&extra,
 											&ltx->xfer.fence);
-			if (isIdValid(tx->yuv_shadow))
-				copy_yuv_shadow(tx);
+			if (isIdValid(tx->yuv_shadow)) {
+				rect.x = 0;
+				rect.y = 0;
+				rect.w = tx->width;
+				rect.h = tx->height;
+				m_provider->surfaceStretch(tx->yuv_shadow,
+										   tx->surface_id,
+										   SVGA3D_STRETCH_BLT_POINT,
+										   &rect,
+										   &rect);
+			}
 			break;
 		case TEX_TYPE_STD:
 		case TEX_TYPE_OOB:
@@ -1034,53 +1075,6 @@ void CLASS::setup_drawbuffer_registers(uint32_t* p)
 		bzero(&m_drawrect[0], sizeof m_drawrect);
 	}
 	memcpy(&p[7], &m_drawrect[0], sizeof m_drawrect);
-}
-
-HIDDEN
-void CLASS::check_create_yuv_shadow(VMsvga2TextureBuffer* tx)
-{
-	uint32_t const combined = SVGA3DFORMAT_OP_CONVERT_TO_ARGB | SVGA3DFORMAT_OP_TEXTURE;
-	/*
-	 * Can generalize this for all surface types, but then to
-	 *   be fully general, also need to do this for
-	 *   TEX_TYPE_STD, TEX_TYPE_OOB, which requires handling
-	 *   faces, mipping - argh.
-	 */
-	static int const pairs[][2] = {
-		{ SVGA3D_UYVY, SVGA3D_DEVCAP_SURFACEFMT_UYVY },
-		{ SVGA3D_YUY2, SVGA3D_DEVCAP_SURFACEFMT_YUY2 }
-	};
-	int i, ns;
-	for (i = 0, ns = 0; i != 2; ++i)
-		if (tx->surface_format == pairs[i][0] &&
-			(m_provider->getDevCap(pairs[i][1]) & combined) == SVGA3DFORMAT_OP_CONVERT_TO_ARGB) {
-			ns = 1;
-			break;
-		}
-	if (!ns)
-		return;
-	tx->yuv_shadow = m_provider->AllocSurfaceID(); // Note: doesn't fail
-	if (m_provider->createSurface(tx->yuv_shadow,
-								  SVGA3D_SURFACE_HINT_TEXTURE,
-								  SVGA3D_A8R8G8B8,
-								  tx->width,
-								  tx->height) != kIOReturnSuccess) {
-		m_provider->FreeSurfaceID(tx->yuv_shadow);
-		tx->yuv_shadow = SVGA_ID_INVALID;
-	}
-#ifdef GL_DEV
-	GLLog(3, "%s: Using YUV Shadow for texture %u\n", __FUNCTION__, tx->sys_obj->object_id);
-#endif
-}
-
-HIDDEN
-void CLASS::copy_yuv_shadow(VMsvga2TextureBuffer* tx)
-{
-	DefineRegion<1U> tmpRegion;
-	VMsvga2Accel::ExtraInfo extra;
-	set_region(&tmpRegion.r, 0U, 0U, tx->width, tx->height);
-	bzero(&extra, sizeof extra);
-	m_provider->surfaceCopy(tx->surface_id, tx->yuv_shadow, &tmpRegion.r, &extra);
 }
 
 #pragma mark -

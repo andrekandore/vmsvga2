@@ -153,8 +153,6 @@ private:
 	IOReturn tex_subimage_2d(VMsvga2TextureBuffer* tx,
 							 struct GLDTexSubImage2DStruc const* desc);
 	void setup_drawbuffer_registers(uint32_t*);
-	void check_create_yuv_shadow(VMsvga2TextureBuffer*);
-	void copy_yuv_shadow(VMsvga2TextureBuffer*);
 
 	/*
 	 * Intel Pipeline processor
