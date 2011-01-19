@@ -463,7 +463,7 @@ uint32_t CLASS::processCommandBuffer(VendorCommandDescriptor* result)
 		if (cb_iter.limit <= cb_iter.p)
 			break;
 	} while (cb_iter.cmd);
-#ifdef GL_DEV
+#if LOGGING_LEVEL >= 2
 	GLLog(3, "%s:   processed %d stream commands, error == %#x\n", __FUNCTION__, commands_processed, m_stream_error);
 #endif
 	result->next = &m_command_buffer.kernel_ptr->downstream[0] + cb_iter.dso_bytes / sizeof(uint32_t);
@@ -725,7 +725,7 @@ IOReturn CLASS::create_host_surface_for_texture(VMsvga2TextureBuffer* tx)
 				surface_format = SVGA3D_A8R8G8B8;
 				surface_flags |= SVGA3D_SURFACE_HINT_RENDERTARGET;	// Note: maybe do this for all textures
 				tx->yuv_shadow = m_provider->AllocSurfaceID();	// Note: doesn't fail
-				GLLog(1, "%s: Using YUV Alternate for texture %u\n", __FUNCTION__, tx->sys_obj->object_id);
+				GLLog(3, "%s: Using YUV Alternate for texture %u\n", __FUNCTION__, tx->sys_obj->object_id);
 			}
 			svga3d = m_provider->lock3D();
 			if (!svga3d) {
@@ -1209,7 +1209,7 @@ void CLASS::process_token_BindDrawFBO(VendorGLStreamInfo* info)
 	fbo->width = info->p[1] & 0xFFFFU;
 	fbo->height = info->p[1] >> 16;
 	fbo->f0 = info->p[2];
-#ifdef GL_DEV
+#if LOGGING_LEVEL >= 2
 	GLLog(3, "%s: w == %u, h == %u, f0 == %u\n", __FUNCTION__,
 		  fbo->width, fbo->height, fbo->f0);
 #endif
@@ -1225,13 +1225,13 @@ void CLASS::process_token_BindDrawFBO(VendorGLStreamInfo* info)
 			m_stream_error = 2;
 			return;
 		}
-#ifdef GL_DEV
+#if LOGGING_LEVEL >= 2
 		GLLog(3, "%s: tx_id[%u] == %u, sid == %u\n", __FUNCTION__, i, tx_id, tx->surface_id);
 #endif
 		addTextureToStream(tx);
 		if (tx->surface_format == SVGA3D_FORMAT_INVALID) {
 			tx->surface_format = select_default_format(tx, count);
-#ifdef GL_DEV
+#if LOGGING_LEVEL >= 2
 			GLLog(3, "%s: texture %u format %u\n", __FUNCTION__, tx->sys_obj->object_id, tx->surface_format);
 #endif
 		}
@@ -1246,7 +1246,7 @@ void CLASS::process_token_BindDrawFBO(VendorGLStreamInfo* info)
 		fbo->txs[i].x = info->p[4U * i + 6U] & 0xFFFFU;
 		fbo->txs[i].y = info->p[4U * i + 6U] >> 16;
 		fbo->txs[i].g1 = info->p[4U * i + 7U];
-#ifdef GL_DEV
+#if LOGGING_LEVEL >= 2
 		GLLog(3, "%s: %u - face == %u, mipmap == %u, g0 == %#x, x == %u, y == %u, g1 == %#x\n", __FUNCTION__,
 			  i,
 			  fbo->txs[i].face,
@@ -1295,7 +1295,7 @@ void CLASS::process_token_BindReadFBO(VendorGLStreamInfo* info)
 	fbo->width = info->p[1] & 0xFFFFU;
 	fbo->height = info->p[1] >> 16;
 	fbo->f0 = info->p[2];
-#ifdef GL_DEV
+#if LOGGING_LEVEL >= 2
 	GLLog(3, "%s: w == %u, h == %u, f0 == %u\n", __FUNCTION__,
 		  fbo->width, fbo->height, fbo->f0);
 #endif
@@ -1311,13 +1311,13 @@ void CLASS::process_token_BindReadFBO(VendorGLStreamInfo* info)
 			m_stream_error = 2;
 			return;
 		}
-#ifdef GL_DEV
+#if LOGGING_LEVEL >= 2
 		GLLog(3, "%s: tx_id[%u] == %u, sid == %u\n", __FUNCTION__, i, tx_id, tx->surface_id);
 #endif
 		addTextureToStream(tx);
 		if (tx->surface_format == SVGA3D_FORMAT_INVALID) {
 			tx->surface_format = select_default_format(tx, count);
-#ifdef GL_DEV
+#if LOGGING_LEVEL >= 2
 			GLLog(3, "%s: texture %u format %u\n", __FUNCTION__, tx->sys_obj->object_id, tx->surface_format);
 #endif
 		}
@@ -1329,7 +1329,7 @@ void CLASS::process_token_BindReadFBO(VendorGLStreamInfo* info)
 		fbo->txs[i].x = info->p[4U * i + 6U] & 0xFFFFU;
 		fbo->txs[i].y = info->p[4U * i + 6U] >> 16;
 		fbo->txs[i].g1 = info->p[4U * i + 7U];
-#ifdef GL_DEV
+#if LOGGING_LEVEL >= 2
 		GLLog(3, "%s: %u - face == %u, mipmap == %u, g0 == %#x, x == %u, y == %u, g1 == %#x\n", __FUNCTION__,
 			  i,
 			  fbo->txs[i].face,
@@ -1851,7 +1851,7 @@ void CLASS::process_token_TexSubImage2D(VendorGLStreamInfo* info)
 	 */
 	if (tx->surface_format == SVGA3D_FORMAT_INVALID) {
 		tx->surface_format = default_color_format(tx->bytespp, tx->sys_obj_type);
-#ifdef GL_DEV
+#if LOGGING_LEVEL >= 2
 		GLLog(3, "%s: texture %u format %u\n", __FUNCTION__, tx->sys_obj->object_id, tx->surface_format);
 #endif
 	}

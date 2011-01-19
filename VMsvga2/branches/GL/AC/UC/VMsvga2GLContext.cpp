@@ -852,7 +852,7 @@ IOReturn CLASS::read_buffer(struct sIOGLContextReadBufferData const* struct_in, 
 	SVGA3dSurfaceImageId hostImage;
 	SVGA3dCopyBox copyBox;
 	VMsvga2Accel::ExtraInfoEx extra;
-#ifdef GL_DEV
+#if LOGGING_LEVEL >= 2
 	uint8_t* data_ptr;
 	size_t dpo;
 	uint32_t small_buf, sw, sh, spitch, ssize;
@@ -913,7 +913,7 @@ IOReturn CLASS::read_buffer(struct sIOGLContextReadBufferData const* struct_in, 
 		return kIOReturnCannotLock;
 	if (!isIdValid(hostImage.sid))
 		return kIOReturnNotAttached;
-#ifdef GL_DEV
+#if LOGGING_LEVEL >= 2
 	m_surface_client->getBoundsForGL(&sw, &sh, 0, 0);
 	GLLog(3, "%s: depth surface id %u, w == %u, h == %u\n", __FUNCTION__, hostImage.sid, sw, sh);
 #endif
@@ -927,7 +927,7 @@ IOReturn CLASS::read_buffer(struct sIOGLContextReadBufferData const* struct_in, 
 	copyBox.d = 1U;
 	bzero(&extra, sizeof extra);
 	extra.mem_offset_in_gmr = static_cast<vm_offset_t>(struct_in->addr & page_mask);
-#ifdef GL_DEV
+#if LOGGING_LEVEL >= 2
 	GLLog(3, "%s: offset_in_gmr == %#x\n", __FUNCTION__, static_cast<unsigned>(extra.mem_offset_in_gmr));
 #endif
 	extra.mem_pitch = struct_in->pitch;
@@ -949,7 +949,7 @@ IOReturn CLASS::read_buffer(struct sIOGLContextReadBufferData const* struct_in, 
 		return rc;
 	}
 	extra.mem_gmr_id = xfer.gmr_id;
-#ifdef GL_DEV
+#if LOGGING_LEVEL >= 2
 	small_buf = 'vmwr';
 	xfer.md->writeBytes(extra.mem_offset_in_gmr, &small_buf, sizeof small_buf);
 #endif
@@ -974,7 +974,7 @@ IOReturn CLASS::read_buffer(struct sIOGLContextReadBufferData const* struct_in, 
 					   &xfer.fence);
 	rc = kIOReturnSuccess;
 #endif
-#ifdef GL_DEV
+#if LOGGING_LEVEL >= 2
 	m_provider->SyncToFence(xfer.fence);
 	blitGarbageToScreen(m_provider, dpo, sw, sh, spitch);
 	small_buf = *reinterpret_cast<uint32_t*>(data_ptr + struct_in->y * spitch + struct_in->x * 4);

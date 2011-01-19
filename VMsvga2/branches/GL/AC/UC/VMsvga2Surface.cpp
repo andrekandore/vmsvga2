@@ -1440,7 +1440,7 @@ IOReturn CLASS::set_shape_backing(eIOAccelSurfaceShapeBits options,
 HIDDEN
 IOReturn CLASS::set_id_mode(uintptr_t wID, eIOAccelSurfaceModeBits modebits)
 {
-#ifdef GL_DEV
+#if LOGGING_LEVEL >= 2
 	if (wID != 1U)
 		m_log_level = imax(m_provider->getLogLevelGLD(), m_log_level); // elevate to GLD level
 #endif

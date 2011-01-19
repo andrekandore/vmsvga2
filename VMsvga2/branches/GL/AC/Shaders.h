@@ -7,7 +7,7 @@
  *
  */
 
-#define NUM_FIXED_SHADERS 6U
+#define NUM_FIXED_SHADERS 9U
 
 #ifndef __SHADERS_H__
 #define __SHADERS_H__

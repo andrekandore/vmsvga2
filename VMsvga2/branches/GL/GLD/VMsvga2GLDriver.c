@@ -896,7 +896,7 @@ GLDReturn gldCreateContext(gld_context_t** struct_out,
 	GLDReturn rc;
 
 	GLDLog(2, "%s(struct_out, %p, %p, %p, %p, %p)\n", __FUNCTION__, pixel_format, shared, arg3, arg4, arg5);
-#ifdef GL_DEV
+#if LOGGING_LEVEL >= 2
 	if (pixel_format)
 		GLDLog(1, "%s: ColorModes == %#x, DepthModes == %#x, StencilModes == %#x\n", __FUNCTION__,
 			   pixel_format->colorModes, pixel_format->depthModes, pixel_format->stencilModes);

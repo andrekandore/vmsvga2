@@ -53,6 +53,8 @@
 
 #define PRINT_PS
 
+typedef float __v4sf __attribute__((vector_size(16), may_alias));
+
 #pragma mark -
 #pragma mark Some Strings
 #pragma mark -
@@ -550,6 +552,11 @@ void CLASS::adjust_texture_coords(uint8_t* vertex_array,
 								  void const* decls,
 								  size_t num_decls)
 {
+#ifdef VECTORIZE
+	static __attribute__((aligned(8)))
+	float const const_halves[2] = { 0.5F, 0.5F };
+	__v4sf xmm0, xmm1, xmm2;
+#endif
 	SVGA3dVertexDecl const* _decls = static_cast<SVGA3dVertexDecl const*>(decls);
 	size_t i, j;
 
@@ -569,6 +576,10 @@ void CLASS::adjust_texture_coords(uint8_t* vertex_array,
 	GLLog(3, "%s:   s2 == %#x, s4 == %#x\n", __FUNCTION__,
 		  m_intel_state.imm_s[2], m_intel_state.imm_s[4] & 0x1FC4U);
 #endif
+#ifdef VECTORIZE
+	__asm__ volatile ("xorps %0, %0" "\n\t"
+					  "movlps %1, %0" : "=x"(xmm0) : "m"(const_halves[0]) );
+#endif
 	for (i = 0U; i != num_decls; ++i)
 		if (_decls[i].identity.usage == SVGA3D_DECLUSAGE_TEXCOORD &&
 			bit_select(m_intel_state.prettex_coordinates, _decls[i].identity.usageIndex, 1)) {
@@ -578,6 +589,9 @@ void CLASS::adjust_texture_coords(uint8_t* vertex_array,
 			 * Barbarically assume at least FLOAT2 and adjust
 			 *   Note: The GLD always uses FLOAT4 projective tex-coords.
 			 */
+#ifdef VECTORIZE
+			__asm__ volatile ("movaps %1, %0" : "=x"(xmm1) : "m"(*f) );
+#endif
 			for (j = 0U; j != num_vertices; ++j) {
 				float* q = reinterpret_cast<float*>(vertex_array + j * _decls[i].array.stride + _decls[i].array.offset);
 #if 0
@@ -587,8 +601,15 @@ void CLASS::adjust_texture_coords(uint8_t* vertex_array,
 					  static_cast<int>(q[2] * 32767.0F),
 					  static_cast<int>(q[3] * 32767.0F));
 #endif
-				q[0] *= f[0];
-				q[1] *= f[1];
+#ifdef VECTORIZE
+				__asm__ volatile ("movlps %0, %1" "\n\t"
+								  "addps %3, %1" "\n\t"
+								  "mulps %2, %1" "\n\t"
+								  "movlps %1, %0" : "+m"(*q), "=x"(xmm2) : "x"(xmm1), "x"(xmm0) );
+#else
+				q[0] = (q[0] + 0.5F) * f[0];
+				q[1] = (q[1] + 0.5F) * f[1];
+#endif
 			}
 		}
 #if 0
@@ -1072,7 +1093,7 @@ uint32_t CLASS::ip_load_immediate(uint32_t* p, uint32_t cmd)
 					m_provider->setRenderState(m_context_id, 1U, &rs[0]);
 					break;
 				default:
-#ifdef GL_DEV
+#if LOGGING_LEVEL >= 2
 					GLLog(3, "%s: imm%u - %#x\n", __FUNCTION__, i, m_intel_state.imm_s[i]);
 #endif
 					break;
@@ -1103,26 +1124,39 @@ uint32_t CLASS::ip_clear_params(uint32_t* p, uint32_t cmd)
 HIDDEN
 void CLASS::ip_3d_map_state(uint32_t* p)
 {
-	uint32_t i, width, height, mask = p[1], *q = p + 2;
+#ifdef VECTORIZE
+	static __attribute__((aligned(8)))
+	float const const_ones[2] = { 1.0F, 1.0F };
+	__v4sf xmm0;
+	__attribute__((aligned(8)))
+#endif
+	struct {
+		int width;
+		int height;
+	} size;
+	uint32_t i, mask = p[1], *q = p + 2;
 	float* f = m_float_cache;
 
+#ifdef VECTORIZE
+	__asm__ volatile ("movhps %1, %0" : "=x"(xmm0) : "m"(const_ones[0]) );
+#endif
 	for (i = 0U; i != 16U; ++i, f += 4, mask >>= 1)
 		if (mask & 1U) {
 			/*
 			 * cache surface ids, width & height
 			 */
 			m_intel_state.surface_ids[i] = q[0];
-			width  = bit_select(q[1], 10, 11) + 1U;
-			height = bit_select(q[1], 21, 11) + 1U;
+			size.width  = bit_select(q[1], 10, 11) + 1;
+			size.height = bit_select(q[1], 21, 11) + 1;
 #if 0
-			GLLog(3, "%s: texture stage %u, sid == %u, w == %u, h == %u, mapsurf == %u, mt == %u\n", __FUNCTION__,
-				  i, q[0], width, height,
+			GLLog(3, "%s: texture stage %u, sid == %u, w == %d, h == %d, mapsurf == %u, mt == %u\n", __FUNCTION__,
+				  i, q[0], size.width, size.height,
 				  bit_select(q[1], 7, 3),
 				  bit_select(q[1], 3, 4));
 #endif
 #if 0
-			GLLog(3, "%s:   tex %u data1 width %u, height %u, MAPSURF %u, MT %u, UF %u, TS %u, TW %u\n", __FUNCTION__,
-				  q[0], width, height, mapsurf, mt,
+			GLLog(3, "%s:   tex %u data1 width %d, height %d, MAPSURF %u, MT %u, UF %u, TS %u, TW %u\n", __FUNCTION__,
+				  q[0], size.width, size.height, mapsurf, mt,
 				  bit_select(q[1], 2, 1),
 				  bit_select(q[1], 1, 1),
 				  q[1] & 1U);
@@ -1133,10 +1167,16 @@ void CLASS::ip_3d_map_state(uint32_t* p)
 				  bit_select(q[2],  8, 1),
 				  depth);
 #endif
-			f[0] = 1.0F / static_cast<float>(width);
-			f[1] = 1.0F / static_cast<float>(height);
+#ifdef VECTORIZE
+			__asm__ volatile ("cvtpi2ps %2, %1" "\n\t"
+							  "rcpps %1, %1" "\n\t"
+							  "movaps %1, %0": "=m"(*reinterpret_cast<__v4sf*>(f)), "=x"(xmm0): "m"(size) );
+#else
+			f[0] = 1.0F / static_cast<float>(size.width);
+			f[1] = 1.0F / static_cast<float>(size.height);
 			f[2] = 1.0F;
 			f[3] = 1.0F;
+#endif
 			q += 3;
 		}
 }
@@ -1517,7 +1557,7 @@ void CLASS::ip_buf_info(uint32_t* p)
 	hostImage.sid = p[2];
 	hostImage.face = bit_select(p[1], 8, 8);
 	hostImage.mipmap = bit_select(p[1], 0, 8);
-#ifdef GL_DEV
+#if LOGGING_LEVEL >= 2
 	GLLog(3, "%s: kind == %u, face == %u, mipmap == %u, sid == %u\n", __FUNCTION__,
 		  kind, hostImage.face, hostImage.mipmap, hostImage.sid);
 #endif
@@ -1540,7 +1580,7 @@ void CLASS::ip_draw_rect(uint32_t* p)
 	rect.y = p[2];
 	rect.w = p[3];
 	rect.h = p[4];
-#ifdef GL_DEV
+#if LOGGING_LEVEL >= 2
 	GLLog(3, "%s: [%u, %u, %u, %u]\n", __FUNCTION__, rect.x, rect.y, rect.w, rect.h);
 #endif
 	svga3d = m_provider->lock3D();
@@ -1635,7 +1675,7 @@ uint32_t CLASS::decode_2d(uint32_t* p, uint32_t cmd)
 			skip = (cmd & 0xFFU) + 2U;
 			break;
 		case 0x43U: /* SRC_COPY_BLT */
-#ifdef GL_DEV
+#if LOGGING_LEVEL >= 2
 			GLLog(3, "%s:   SRC_COPY_BLT\n", __FUNCTION__);
 #endif
 			skip = (cmd & 0xFFU) + 2U;
@@ -1696,7 +1736,7 @@ uint32_t CLASS::decode_3d_1d(uint32_t* p, uint32_t cmd)
 			ip_misc_render_state(3U, p);
 			break;
 		case 0x89U: /* 3DSTATE_FOG_MODE_CMD */
-#ifdef GL_DEV
+#if LOGGING_LEVEL >= 2
 			GLLog(3, "%s: 3DSTATE_FOG_MODE_CMD FFMEn %u, FF %u, FIMEn %u, FI %u, "
 				  "C1C2MEn %u, DMEn %u, C1 %u, C2 %u, D1 %u\n", __FUNCTION__,
 				  bit_select(p[1], 31, 1),
@@ -1732,7 +1772,7 @@ uint32_t CLASS::decode_3d(uint32_t* p, uint32_t cmd)
 	uint32_t skip = 0U;
 	switch (bit_select(cmd, 24, 5)) {
 		case 0x06U: /* 3DSTATE_AA_CMD */
-#ifdef GL_DEV
+#if LOGGING_LEVEL >= 2
 			if (cache_misc_reg(0U, cmd & 0xFFFFFFU)) {
 				GLLog(3, "%s: 3DSTATE_AA_CMD EWEn %u, EW %u, RWEn %u, RW %u\n", __FUNCTION__,
 					  bit_select(cmd, 16, 1),
@@ -1744,7 +1784,7 @@ uint32_t CLASS::decode_3d(uint32_t* p, uint32_t cmd)
 			skip = 1U;
 			break;
 		case 0x07U: /* 3DSTATE_RASTER_RULES_CMD */
-#ifdef GL_DEV
+#if LOGGING_LEVEL >= 2
 			GLLog(3, "%s: 3DSTATE_RASTER_RULES_CMD %#x\n", __FUNCTION__, cmd & 0xFFFFFFU);
 #endif
 			skip = 1U;
@@ -1785,7 +1825,7 @@ uint32_t CLASS::decode_3d(uint32_t* p, uint32_t cmd)
 			skip = 1U;
 			break;
 		case 0x15U: /* 3DSTATE_FOG_COLOR_CMD */
-#ifdef GL_DEV
+#if LOGGING_LEVEL >= 2
 			GLLog(3, "%s: 3DSTATE_FOG_COLOR_CMD %#x\n", __FUNCTION__, cmd & 0xFFFFFFU);
 #endif
 			skip = 1U;
@@ -1797,7 +1837,7 @@ uint32_t CLASS::decode_3d(uint32_t* p, uint32_t cmd)
 					skip = 1U;
 					break;
 				case 0x88U: /* 3DSTATE_DEPTH_SUBRECT_DISABLE */
-#ifdef GL_DEV
+#if LOGGING_LEVEL >= 2
 					GLLog(3, "%s: 3DSTATE_DEPTH_SUBRECT_DISABLE %#x\n", __FUNCTION__, cmd & 0xFFFFFFU);
 #endif
 					skip = 1U;
