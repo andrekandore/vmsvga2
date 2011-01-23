@@ -7,18 +7,25 @@
  *
  */
 
-#define NUM_FIXED_SHADERS 9U
-
 #ifndef __SHADERS_H__
 #define __SHADERS_H__
+
+#define NUM_FIXED_SHADERS 17U
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-extern unsigned long long const g_hashes[];
-extern unsigned char const* const g_pointers[];
-extern unsigned const g_lengths[];
+struct FixedShaderDescriptor
+{
+	unsigned long long hash[2];
+	unsigned char const* bytecode;
+	unsigned length;
+	unsigned tc2s_map;
+	unsigned char tc2s_map_valids;
+};
+
+extern struct FixedShaderDescriptor const g_fixed_shaders[];
 
 #ifdef __cplusplus
 }

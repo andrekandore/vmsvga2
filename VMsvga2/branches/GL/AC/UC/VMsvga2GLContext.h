@@ -100,6 +100,7 @@ private:
 		uint8_t* kernel_ptr;
 		size_t size_bytes;
 		size_t offset_in_gmr;
+		size_t next_avail;
 		uint32_t sid;
 		uint32_t gmr_id;
 		uint32_t fence;
@@ -111,7 +112,7 @@ private:
 	struct {
 		uint32_t imm_s[16];
 		uint16_t param_cache_mask;
-		uint16_t prettex_coordinates; // pre-transformed tex coordinates
+		uint16_t unnormalized_tex_coordinates;
 		struct {
 			uint32_t mask;
 			uint32_t color;
@@ -120,6 +121,9 @@ private:
 		} clear;
 		uint32_t surface_ids[16];	// for the 16 texture stages
 		uint64_t s2t_map;	// maps samplers to texture stages (4 bits each)
+		uint32_t tc2s_map;	// maps texcoords to samplers
+		uint8_t tc2s_map_valids; // 1 bit for each tc mapped in tc2s_map
+		uint16_t bound_samplers;
 	} m_intel_state;
 
 	/*
@@ -131,9 +135,9 @@ private:
 	static void initCommandBufferHeader(VendorCommandBufferHeader*, size_t);
 	bool allocAllContextBuffers();
 	static IOReturn get_status(uint32_t*);
-	IOReturn alloc_arrays(size_t num_bytes);
+	IOReturn alloc_arrays(size_t num_bytes, uint8_t** ptr);
 	void purge_arrays();
-	IOReturn upload_arrays(size_t num_bytes);
+	IOReturn upload_arrays(uint8_t const* ptr, size_t num_bytes, uint32_t* sid);
 
 	/*
 	 * Apple Pipeline processor
@@ -158,13 +162,16 @@ private:
 	 * Intel Pipeline processor
 	 */
 	void CleanupIpp();
-	uint32_t cache_shader(uint32_t const* source, uint32_t num_dwords);
+	struct ShaderEntry const* cache_shader(uint32_t const* source, uint32_t num_dwords);
 	void purge_shader_cache();
-	void adjust_texture_coords(uint8_t* vertex_array,
+	void unbind_samplers(uint16_t mask);
+	void calc_adjustment_map(uint8_t* map) const;
+	void adjust_texture_coords(uint8_t const* map,
+							   uint8_t* vertex_array,
 							   size_t num_vertices,
 							   void const* decls,
-							   size_t num_decls);
-	uint8_t calc_color_write_enable(void);
+							   size_t num_decls) const;
+	uint8_t calc_color_write_enable(void) const;
 	bool cache_misc_reg(uint8_t regnum, uint32_t value);
 	void ipp_discard_renderstate(void);
 	void ip_prim3d_poly(uint32_t const* vertex_data, size_t num_vertex_dwords);

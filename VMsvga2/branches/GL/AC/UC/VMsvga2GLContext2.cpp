@@ -118,12 +118,11 @@ int decipher_format(uint8_t mapsurf, uint8_t mt)
 		case 1: // MAPSURF_8BIT
 			switch (mt) {
 				case 1: // MT_8BIT_L8
+				case 5: // MT_8BIT_MONO8
 					return SVGA3D_LUMINANCE8;
+				case 0: // MT_8BIT_I8
 				case 4: // MT_8BIT_A8
 					return SVGA3D_ALPHA8;
-				case 0: // MT_8BIT_I8
-				case 5: // MT_8BIT_MONO8
-					break;
 			}
 			break;
 		case 2: // MAPSURF_16BIT
@@ -214,7 +213,7 @@ int default_color_format(uint8_t bytespp, uint8_t sys_obj_type)
 		case 4U:
 			return SVGA3D_A8R8G8B8;
 		case 2U:
-			return SVGA3D_A1R5G5B5;
+			return SVGA3D_LUMINANCE16 /* SVGA3D_A1R5G5B5 */;
 		case 1U:
 			return sys_obj_type != TEX_TYPE_AGPREF ? SVGA3D_LUMINANCE8 : SVGA3D_BUFFER;
 	}
@@ -447,8 +446,8 @@ uint32_t CLASS::processCommandBuffer(VendorCommandDescriptor* result)
 	do {
 		cb_iter.cmd = *cb_iter.p;
 		upper = cb_iter.cmd >> 24;
-#if 0
-		GLLog(3, "%s:   cmd %#x length %u\n", __FUNCTION__, upper, cb_iter.cmd & 0xFFFFFFU);
+#if LOGGING_LEVEL >= 4
+		GLLog(4, "%s:   cmd %#x length %u\n", __FUNCTION__, upper, cb_iter.cmd & 0xFFFFFFU);
 #endif
 		if (upper <= 10U)
 			(this->*dispatch_process_1[upper])(&cb_iter);
@@ -463,7 +462,7 @@ uint32_t CLASS::processCommandBuffer(VendorCommandDescriptor* result)
 		if (cb_iter.limit <= cb_iter.p)
 			break;
 	} while (cb_iter.cmd);
-#if LOGGING_LEVEL >= 2
+#if LOGGING_LEVEL >= 3
 	GLLog(3, "%s:   processed %d stream commands, error == %#x\n", __FUNCTION__, commands_processed, m_stream_error);
 #endif
 	result->next = &m_command_buffer.kernel_ptr->downstream[0] + cb_iter.dso_bytes / sizeof(uint32_t);
@@ -549,11 +548,11 @@ void CLASS::addTextureToStream(VMsvga2TextureBuffer* tx)
 	/*
 	 * TBD
 	 */
-#if 0
+#if LOGGING_LEVEL >= 4
 	GLDSysObject* sys_obj = tx->sys_obj;
 	if (!sys_obj)
 		return;
-	GLLog(3, "%s: obj %u, pageoff[0] == %u, pageon[0] == %u\n", __FUNCTION__,
+	GLLog(4, "%s: obj %u, pageoff[0] == %u, pageon[0] == %u\n", __FUNCTION__,
 		  sys_obj->object_id, sys_obj->pageoff[0], sys_obj->pageon[0]);
 #endif
 }
@@ -765,9 +764,17 @@ IOReturn CLASS::create_host_surface_for_texture(VMsvga2TextureBuffer* tx)
 			break;
 		case TEX_TYPE_STD:
 		case TEX_TYPE_OOB:
-			surface_flags = SVGA3D_SURFACE_HINT_TEXTURE;
-			if (tx->num_faces == 6U)
-				surface_flags |= SVGA3D_SURFACE_CUBEMAP;
+			switch (tx->surface_format) {
+				case SVGA3D_Z_D24S8:
+				case SVGA3D_Z_D16:
+					surface_flags = SVGA3D_SURFACE_HINT_DEPTHSTENCIL;
+					break;
+				default:
+					surface_flags = SVGA3D_SURFACE_HINT_TEXTURE;
+					if (tx->num_faces == 6U)
+						surface_flags |= SVGA3D_SURFACE_CUBEMAP;
+					break;
+			}
 			rc = mapGLDTextureHeader(tx, &mmap);
 			if (rc != kIOReturnSuccess) {
 				GLLog(1, "%s: mapGLDTextureHeader return %#x\n", __FUNCTION__, rc);
@@ -790,7 +797,7 @@ IOReturn CLASS::create_host_surface_for_texture(VMsvga2TextureBuffer* tx)
 			for (face = 0U; face != tx->num_faces; ++face, headers += 12) {
 				faces[face].numMipLevels = tx->num_mipmaps;
 				for (gld_th = headers, mipmap = 0U; mipmap != tx->num_mipmaps; ++mipmap, ++gld_th, ++mipmaps) {
-					if (!gld_th->offset_in_client)
+					if (!gld_th->pixels_in_client)
 						continue;
 					mipmaps->width  = gld_th->width_bytes / tx->bytespp;
 					mipmaps->height = gld_th->height;
@@ -825,8 +832,6 @@ IOReturn CLASS::alloc_and_load_texture(VMsvga2TextureBuffer* tx)
 	IOAccelBounds rect;
 	VMsvga2TextureBuffer* ltx;
 	GLDTextureHeader *headers, *gld_th;
-	vm_offset_t base_offset;
-	vm_size_t base_limit;
 
 	if (!m_provider)
 		return kIOReturnNotReady;
@@ -846,11 +851,10 @@ IOReturn CLASS::alloc_and_load_texture(VMsvga2TextureBuffer* tx)
 	mmap = 0;
 	bzero(&copyBox, sizeof copyBox);
 	bzero(&extra, sizeof extra);
+	extra.mem_limit = 0xFFFFFFFFU;
 	extra.suffix_flags = 3U;
 	ltx = tx;
 	headers = 0;
-	base_offset = 0U;
-	base_limit = 0xFFFFFFFFU;
 	switch (sys_obj_type) {
 		case TEX_TYPE_AGPREF:
 			ltx = tx->linked_agp;
@@ -862,7 +866,6 @@ IOReturn CLASS::alloc_and_load_texture(VMsvga2TextureBuffer* tx)
 			}
 			extra.mem_offset_in_gmr = static_cast<vm_offset_t>(tx->agp_addr);	// Note: offset of pixels1, not pixels2
 			extra.mem_pitch = tx->pitch;
-			extra.mem_limit = ltx->agp_size - extra.mem_offset_in_gmr;
 			break;
 		case TEX_TYPE_STD:
 		case TEX_TYPE_OOB:
@@ -876,10 +879,7 @@ IOReturn CLASS::alloc_and_load_texture(VMsvga2TextureBuffer* tx)
 					tx->sys_obj->vstate |= 2U;
 					return kIOReturnSuccess;
 				}
-				base_offset = static_cast<vm_offset_t>(ltx->agp_offset_in_page);
-				base_limit = ltx->agp_size - base_offset;
-			} else if (tx->xfer.md)
-				base_limit = tx->xfer.md->getLength();
+			}
 			/*
 			 * TBD: is this needed for types TEX_TYPE_VB as well?
 			 */
@@ -940,14 +940,13 @@ IOReturn CLASS::alloc_and_load_texture(VMsvga2TextureBuffer* tx)
 				for (gld_th = headers, hostImage.mipmap = 0U;
 					 hostImage.mipmap != tx->num_mipmaps;
 					 ++hostImage.mipmap, ++gld_th) {
-					if (!gld_th->offset_in_client ||
+					if (!gld_th->pixels_in_client ||
 						!isPagedOff(tx->sys_obj, hostImage.face, hostImage.mipmap))
 						continue;
 					copyBox.w = gld_th->width_bytes / tx->bytespp;
 					copyBox.h = gld_th->height;
 					copyBox.d = gld_th->depth;
-					extra.mem_offset_in_gmr = base_offset + gld_th->offset_in_client;
-					extra.mem_limit = base_limit - gld_th->offset_in_client;
+					extra.mem_offset_in_gmr = gld_th->offset_in_client;
 					extra.mem_pitch = gld_th->pitch;
 					rc = m_provider->surfaceDMA3DEx(&hostImage,
 													SVGA3D_WRITE_HOST_VRAM,
@@ -994,7 +993,7 @@ IOReturn CLASS::tex_subimage_2d(VMsvga2TextureBuffer* tx,
 	bzero(&extra, sizeof extra);
 	extra.mem_offset_in_gmr = desc->source_addr;
 	extra.mem_pitch = desc->source_pitch;
-	extra.mem_limit = m_command_buffer.size - extra.mem_offset_in_gmr;
+	extra.mem_limit = 0xFFFFFFFFU;
 	extra.suffix_flags = 2U;
 	bzero(&copyBox, sizeof copyBox);
 	copyBox.w = desc->width / tx->bytespp;
@@ -1230,13 +1229,20 @@ void CLASS::process_token_BindDrawFBO(VendorGLStreamInfo* info)
 #endif
 		addTextureToStream(tx);
 		if (tx->surface_format == SVGA3D_FORMAT_INVALID) {
-			tx->surface_format = select_default_format(tx, count);
+			tx->surface_format = select_default_format(tx, i);
 #if LOGGING_LEVEL >= 2
 			GLLog(3, "%s: texture %u format %u\n", __FUNCTION__, tx->sys_obj->object_id, tx->surface_format);
 #endif
 		}
 		if (info->f3 && !m_stream_error)
 			get_texture(info, tx, 0);
+		/*
+		 * In case alloc_and_load_texture didn't find any data
+		 *   to load, make the sure the host texture exists
+		 *   so it can be used as a render target.
+		 */
+		if (!isIdValid(tx->surface_id))
+			create_host_surface_for_texture(tx);
 		face = sanitize_face(info->p[4U * i + 5U] >> 24);
 		mipmap = sanitize_mipmap(info->p[4U * i + 5U] >> 18);
 		dirtyTexture(tx, face, mipmap);
@@ -1316,7 +1322,7 @@ void CLASS::process_token_BindReadFBO(VendorGLStreamInfo* info)
 #endif
 		addTextureToStream(tx);
 		if (tx->surface_format == SVGA3D_FORMAT_INVALID) {
-			tx->surface_format = select_default_format(tx, count);
+			tx->surface_format = select_default_format(tx, i);
 #if LOGGING_LEVEL >= 2
 			GLLog(3, "%s: texture %u format %u\n", __FUNCTION__, tx->sys_obj->object_id, tx->surface_format);
 #endif
@@ -1630,8 +1636,8 @@ void CLASS::process_token_Texture(VendorGLStreamInfo* info)
 		addTextureToStream(tx);
 		if (tx->surface_format == SVGA3D_FORMAT_INVALID) {
 			tx->surface_format = decipher_format(bit_select(q[1], 7, 3), bit_select(q[1], 3, 4));
-#if 0
-			GLLog(3, "%s: texture %u format %u\n", __FUNCTION__, tx->sys_obj->object_id, tx->surface_format);
+#if LOGGING_LEVEL >= 4
+			GLLog(4, "%s: texture %u format %u\n", __FUNCTION__, tx->sys_obj->object_id, tx->surface_format);
 #endif
 		}
 		get_texture(info, tx, true);

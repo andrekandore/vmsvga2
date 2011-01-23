@@ -454,14 +454,16 @@ VMsvga2TextureBuffer* CLASS::new_agp_texture(mach_vm_address_t pixels,
 	}
 	for (p1 = m_texture_list; p1; p1 = p1->next) {	// p1 in ebx
 		if (p1->sys_obj_type != TEX_TYPE_AGP ||
-			p1->agp_flag ||
+			p1->mem_changed ||
+#if 0
 			p1->agp_offset_in_page != offset_in_page ||
+#endif
 			p1->agp_addr != down_pixels ||
 			p1->agp_size != up_size)
 			continue;
 		md = IOMemoryDescriptor::withPersistentMemoryDescriptor(p1->xfer.md);	// md in esi
 		if (md != p1->xfer.md) {
-			p1->agp_flag = 1U;
+			p1->mem_changed = 1U;
 			if (md)
 				goto common;
 			else
@@ -498,7 +500,7 @@ common:
 	p2->agp_offset_in_page = offset_in_page;
 	p2->agp_addr = down_pixels;
 	p2->agp_size = md->getLength();
-	p2->agp_flag = 0U;
+	p2->mem_changed = 0U;
 	link_texture_at_head(p2);
 	*sys_obj_client_addr = p2->sys_obj_client_addr;
 #if 0
@@ -729,7 +731,7 @@ VMsvga2TextureBuffer* CLASS::new_texture(uint32_t size0,
 			overhead = 0x80U;
 		}
 	}
-	total_size = (size0 + overhead + PAGE_SIZE + 3U) & -PAGE_SIZE;
+	total_size = (size0 + overhead + PAGE_MASK) & -PAGE_SIZE;
 #if 0
 	vm_size_t limit = 3U * (m_provider->0x93C << PAGE_SHIFT) >> 2;
 	if (total_size > limit)
@@ -835,8 +837,6 @@ IOReturn CLASS::pageoffDirtyTexture(VMsvga2TextureBuffer* tx)
 	VMsvga2Accel::ExtraInfoEx extra;
 	VMsvga2TextureBuffer* ltx;
 	GLDTextureHeader *headers, *gld_th;
-	vm_offset_t base_offset;
-	vm_size_t base_limit;
 
 	if (tx->sys_obj->vstate & 0x11U) {	// is the descriptor in volatile state?
 		tx->sys_obj->vstate |= 2U;
@@ -854,19 +854,15 @@ IOReturn CLASS::pageoffDirtyTexture(VMsvga2TextureBuffer* tx)
 	hostImage.sid = tx->surface_id;
 	bzero(&copyBox, sizeof copyBox);
 	bzero(&extra, sizeof extra);
+	extra.mem_limit = 0xFFFFFFFFU;
 	extra.suffix_flags = 2U;
 	ltx = tx;
 	headers = 0;
-	base_offset = 0U;
-	base_limit = 0xFFFFFFFFU;
 	if (sys_obj_type == TEX_TYPE_OOB) {
 		if (!tx->linked_agp)
 			return kIOReturnBadArgument;
 		ltx = tx->linked_agp;
-		base_offset = static_cast<vm_offset_t>(ltx->agp_offset_in_page);
-		base_limit = ltx->agp_size - base_offset;
-	} else if (tx->xfer.md)
-		base_limit = tx->xfer.md->getLength();
+	}
 	rc = mapGLDTextureHeader(tx, &mmap);
 	if (rc != kIOReturnSuccess) {
 		SHLog(1, "%s: mapGLDTextureHeader return %#x\n", __FUNCTION__, rc);
@@ -885,14 +881,13 @@ IOReturn CLASS::pageoffDirtyTexture(VMsvga2TextureBuffer* tx)
 		for (gld_th = headers, hostImage.mipmap = 0U;
 			 hostImage.mipmap != tx->num_mipmaps;
 			 ++hostImage.mipmap, ++gld_th) {
-			if (!gld_th->offset_in_client ||
+			if (!gld_th->pixels_in_client ||
 				!isPagedOn(tx->sys_obj, hostImage.face, hostImage.mipmap))
 				continue;
 			copyBox.w = gld_th->width_bytes / tx->bytespp;
 			copyBox.h = gld_th->height;
 			copyBox.d = gld_th->depth;
-			extra.mem_offset_in_gmr = base_offset + gld_th->offset_in_client;
-			extra.mem_limit = base_limit - gld_th->offset_in_client;
+			extra.mem_offset_in_gmr = gld_th->offset_in_client;
 			extra.mem_pitch = gld_th->pitch;
 			rc = m_provider->surfaceDMA3DEx(&hostImage,
 											SVGA3D_READ_HOST_VRAM,

@@ -287,41 +287,52 @@ IOReturn CLASS::get_status(uint32_t* status)
 }
 
 HIDDEN
-IOReturn CLASS::alloc_arrays(size_t num_bytes)
+IOReturn CLASS::alloc_arrays(size_t num_bytes, uint8_t** ptr)
 {
+	size_t alloc_bytes;
 	IOReturn rc;
 
 	if (!m_provider)
 		return kIOReturnNotReady;
-	if (m_arrays.fence) {
-		m_provider->SyncToFence(m_arrays.fence);	// TBD: set up circular buffer so as not to sync so often
-		m_arrays.fence = 0U;
-	}
-	num_bytes = (num_bytes + (PAGE_SIZE - 1U)) & -PAGE_SIZE;
+	num_bytes = (num_bytes + sizeof(uint32_t) - 1U) & -sizeof(uint32_t);
 	if (m_arrays.kernel_ptr) {
-		if (m_arrays.size_bytes >= num_bytes)
-			return kIOReturnSuccess;
+		if (m_arrays.next_avail + num_bytes <= m_arrays.size_bytes)
+			goto done;
+		if (num_bytes <= m_arrays.size_bytes) {
+			if (m_arrays.fence) {
+				m_provider->SyncToFence(m_arrays.fence);
+				m_arrays.fence = 0U;
+			}
+			m_arrays.next_avail = 0U;
+			goto done;
+		}
 		purge_arrays();
 	}
+	alloc_bytes = (num_bytes + PAGE_MASK) & -PAGE_SIZE;
 	m_arrays.sid = m_provider->AllocSurfaceID();
 	rc = m_provider->createSurface(m_arrays.sid,
-								   SVGA3D_SURFACE_HINT_VERTEXBUFFER,
+								   SVGA3dSurfaceFlags(SVGA3D_SURFACE_HINT_VERTEXBUFFER |
+													  SVGA3D_SURFACE_HINT_DYNAMIC |
+													  SVGA3D_SURFACE_HINT_WRITEONLY),
 								   SVGA3D_BUFFER,
-								   static_cast<uint32_t>(num_bytes),
+								   static_cast<uint32_t>(alloc_bytes),
 								   1U);
 	if (rc != kIOReturnSuccess) {
 		m_provider->FreeSurfaceID(m_arrays.sid);
 		m_arrays.sid = SVGA_ID_INVALID;
 		return rc;
 	}
-	m_arrays.kernel_ptr = static_cast<uint8_t*>(m_provider->VRAMMalloc(num_bytes));
+	m_arrays.kernel_ptr = static_cast<uint8_t*>(m_provider->VRAMMalloc(alloc_bytes));
 	if (!m_arrays.kernel_ptr) {
 		purge_arrays();
 		return kIOReturnNoMemory;
 	}
-	m_arrays.size_bytes = num_bytes;
+	m_arrays.size_bytes = alloc_bytes;
 	m_arrays.offset_in_gmr = m_provider->offsetInVRAM(m_arrays.kernel_ptr);
 	m_arrays.gmr_id = GMR_VRAM();
+done:
+	*ptr = m_arrays.kernel_ptr + m_arrays.next_avail;
+	m_arrays.next_avail += num_bytes;
 	return kIOReturnSuccess;
 }
 
@@ -340,6 +351,7 @@ void CLASS::purge_arrays()
 		m_arrays.kernel_ptr = 0;
 		m_arrays.size_bytes = 0U;
 		m_arrays.offset_in_gmr = 0U;
+		m_arrays.next_avail = 0U;
 	}
 	if (isIdValid(m_arrays.sid)) {
 		m_provider->destroySurface(m_arrays.sid);
@@ -349,18 +361,22 @@ void CLASS::purge_arrays()
 }
 
 HIDDEN
-IOReturn CLASS::upload_arrays(size_t num_bytes)
+IOReturn CLASS::upload_arrays(uint8_t const* ptr, size_t num_bytes, uint32_t* sid)
 {
 	SVGA3dSurfaceImageId hostImage;
 	SVGA3dCopyBox copyBox;
 	VMsvga2Accel::ExtraInfoEx extra;
+	size_t additional_offset;
 
 	if (!m_provider)
 		return kIOReturnNotReady;
-	if (num_bytes > m_arrays.size_bytes)
+	if (ptr < m_arrays.kernel_ptr)
+		return kIOReturnUnderrun;
+	additional_offset = ptr - m_arrays.kernel_ptr;
+	if (additional_offset + num_bytes > m_arrays.size_bytes)
 		return kIOReturnOverrun;
 	extra.mem_gmr_id = m_arrays.gmr_id;
-	extra.mem_offset_in_gmr = m_arrays.offset_in_gmr;
+	extra.mem_offset_in_gmr = m_arrays.offset_in_gmr + additional_offset;
 	extra.mem_pitch = 0U;
 	extra.mem_limit = num_bytes;
 	extra.suffix_flags = 3U;
@@ -369,6 +385,8 @@ IOReturn CLASS::upload_arrays(size_t num_bytes)
 	copyBox.h = 1U;
 	copyBox.d = 1U;
 	hostImage.sid = m_arrays.sid;
+	if (sid)
+		*sid = m_arrays.sid;
 	hostImage.face = 0U;
 	hostImage.mipmap = 0U;
 	return m_provider->surfaceDMA3DEx(&hostImage,
@@ -423,7 +441,9 @@ IOReturn CLASS::clientMemoryForType(UInt32 type, IOOptionBits* options, IOMemory
 	VendorCommandDescriptor result;
 	uint32_t pcbRet;
 
-	GLLog(2, "%s(%u, options_out, memory_out)\n", __FUNCTION__, static_cast<unsigned>(type));
+#if LOGGING_LEVEL >= 3
+	GLLog(3, "%s(%u, options_out, memory_out)\n", __FUNCTION__, static_cast<unsigned>(type));
+#endif
 	if (type > 4U || !options || !memory)
 		return kIOReturnBadArgument;
 	if (m_stream_error) {
@@ -465,6 +485,13 @@ IOReturn CLASS::clientMemoryForType(UInt32 type, IOOptionBits* options, IOMemory
 			if ((pcbRet & 2U) && m_surface_client)
 				m_surface_client->touchRenderTarget();
 			complete_transfer_io(m_provider, &m_command_buffer.xfer);
+#if 0
+			if (m_autoflush && (pcbRet & 2U) && m_surface_client) {
+				GLLog(3, "%s: autoflushing\n", __FUNCTION__);
+				m_surface_client->surface_flush(1U, 0U);
+				pcbRet &= ~2U;
+			}
+#endif
 			lockAccel(m_provider);
 			/*
 			 * AB58: reinitialize buffer
@@ -1086,7 +1113,7 @@ IOReturn CLASS::set_surface_get_config_status(struct sIOGLContextSetSurfaceData 
 		return kIOReturnBadArgument;
 	if (!m_provider)
 		return kIOReturnNotReady;
-#if LOGGING_LEVEL >= 1
+#if LOGGING_LEVEL >= 2
 	if (m_log_level >= 3) {
 		GLLog(3, "%s:   surface_id == %#x, cmb == %#x, smb == %#x, dr_hi == %u, dr_lo == %u, volatile == %u\n", __FUNCTION__,
 			  struct_in->surface_id, struct_in->context_mode_bits, struct_in->surface_mode,
@@ -1166,7 +1193,7 @@ IOReturn CLASS::set_surface_get_config_status(struct sIOGLContextSetSurfaceData 
 	if (rc != kIOReturnSuccess)
 		return rc;
 	struct_out->surface_mode_bits = static_cast<uint32_t>(m_surface_client->getOriginalModeBits());
-#if LOGGING_LEVEL >= 1
+#if LOGGING_LEVEL >= 2
 	if (m_log_level >= 3) {
 		GLLog(3, "%s:   config %#x, %u, %u, inner [%u, %u], outer [%u, %u], status %u, smb %#x\n", __FUNCTION__,
 			  struct_out->config[0], struct_out->config[1], struct_out->config[2],
@@ -1245,7 +1272,9 @@ IOReturn CLASS::submit_command_buffer(uintptr_t do_get_data,
 	struct sIOGLContextGetDataBuffer db;
 	size_t dbsize;
 
-	GLLog(2, "%s(%lu, struct_out, %lu)\n", __FUNCTION__, do_get_data, *struct_out_size);
+#if LOGGING_LEVEL >= 3
+	GLLog(3, "%s(%lu, struct_out, %lu)\n", __FUNCTION__, do_get_data, *struct_out_size);
+#endif
 	if (*struct_out_size < sizeof *struct_out)
 		return kIOReturnBadArgument;
 	options = 0;

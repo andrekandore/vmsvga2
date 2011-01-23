@@ -89,7 +89,7 @@ struct VMsvga2TextureBuffer
 		VMsvga2TextureBuffer* linked_agp;	// for TEX_TYPE_AGPREF, TEX_TYPE_OOB
 		struct {							// for TEX_TYPE_AGP
 			mach_vm_address_t agp_offset_in_page;
-			uint32_t agp_flag;				// offset 0x88
+			uint32_t mem_changed;			// offset 0x88
 			mach_vm_offset_t agp_addr;		// offset 0x8C
 			vm_size_t agp_size;				// offset 0x94
 		};
