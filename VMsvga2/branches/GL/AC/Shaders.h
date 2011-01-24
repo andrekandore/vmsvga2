@@ -19,7 +19,7 @@ extern "C" {
 struct FixedShaderDescriptor
 {
 	unsigned long long hash[2];
-	unsigned char const* bytecode;
+	unsigned const* bytecode;
 	unsigned length;
 	unsigned tc2s_map;
 	unsigned char tc2s_map_valids;

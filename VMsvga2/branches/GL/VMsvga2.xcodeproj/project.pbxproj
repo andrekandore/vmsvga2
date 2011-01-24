@@ -38,6 +38,7 @@
 		79B34F1B103324D500D1E214 /* BlitHelper.c in Sources */ = {isa = PBXBuildFile; fileRef = 79B34F1A103324D500D1E214 /* BlitHelper.c */; };
 		79CD27F20FFD0E97002D58FE /* SVGADevice.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 79CD27F00FFD0E97002D58FE /* SVGADevice.cpp */; };
 		79D6E26B1008D086005D1591 /* modes.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 79D6E26A1008D086005D1591 /* modes.cpp */; };
+		E50145D412EDDA1D009FEDD9 /* VertexArray.cpp in Sources */ = {isa = PBXBuildFile; fileRef = E50145D312EDDA1D009FEDD9 /* VertexArray.cpp */; };
 		E503A17B10838E1700D1649D /* VMsvga2GLContext.cpp in Sources */ = {isa = PBXBuildFile; fileRef = E503A17810838E1700D1649D /* VMsvga2GLContext.cpp */; };
 		E503A17C10838E1700D1649D /* VMsvga2Surface.cpp in Sources */ = {isa = PBXBuildFile; fileRef = E503A17910838E1700D1649D /* VMsvga2Surface.cpp */; };
 		E503A17D10838E1700D1649D /* VMsvga22DContext.cpp in Sources */ = {isa = PBXBuildFile; fileRef = E503A17A10838E1700D1649D /* VMsvga22DContext.cpp */; };
@@ -49,10 +50,11 @@
 		E58ACDA810CC439E0051F215 /* EntryPointNames.c in Sources */ = {isa = PBXBuildFile; fileRef = E58ACDA710CC439E0051F215 /* EntryPointNames.c */; };
 		E58AE5721268EC5900ABABF8 /* SendString.c in Sources */ = {isa = PBXBuildFile; fileRef = 7987F8851037020E003B52A2 /* SendString.c */; };
 		E58CFD8D12DC66CF00A8F812 /* Shaders.c in Sources */ = {isa = PBXBuildFile; fileRef = E598109712DA004800508FF6 /* Shaders.c */; };
+		E58D864612EDEDDE0090C401 /* VMsvga2IPP.cpp in Sources */ = {isa = PBXBuildFile; fileRef = E58D864512EDEDDE0090C401 /* VMsvga2IPP.cpp */; };
 		E590EA9510CD311F0019BC36 /* SendString.c in Sources */ = {isa = PBXBuildFile; fileRef = 7987F8851037020E003B52A2 /* SendString.c */; settings = {COMPILER_FLAGS = "-mdynamic-no-pic"; }; };
 		E5912BF712B921320028A17D /* VMsvga2Shared.cpp in Sources */ = {isa = PBXBuildFile; fileRef = E5912BF612B921320028A17D /* VMsvga2Shared.cpp */; };
 		E594320012A80FF700F55717 /* IOKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = E52B47CC10B5B4B5002470B4 /* IOKit.framework */; };
-		E596103012D7950A00EE8B57 /* VMsvga2GLContext3.cpp in Sources */ = {isa = PBXBuildFile; fileRef = E596102F12D7950A00EE8B57 /* VMsvga2GLContext3.cpp */; };
+		E596A49412EDCEDD00F70BF5 /* VendorTransferBuffer.cpp in Sources */ = {isa = PBXBuildFile; fileRef = E596A49312EDCEDD00F70BF5 /* VendorTransferBuffer.cpp */; };
 		E59B1DB212ABDD0800F3C4A9 /* GLDData.c in Sources */ = {isa = PBXBuildFile; fileRef = E59B1DB112ABDD0800F3C4A9 /* GLDData.c */; };
 		E59B1DB712ABDD2300F3C4A9 /* GLDCode.c in Sources */ = {isa = PBXBuildFile; fileRef = E59B1DB612ABDD2300F3C4A9 /* GLDCode.c */; };
 		E59CA8C810CD3586004727A0 /* VLog.c in Sources */ = {isa = PBXBuildFile; fileRef = 790CE24F1084E41B004D109E /* VLog.c */; };
@@ -136,6 +138,8 @@
 		79CD27F10FFD0E97002D58FE /* SVGADevice.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = SVGADevice.h; sourceTree = "<group>"; };
 		79D55C970FFFB1AA004151C8 /* common_fb.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = common_fb.h; sourceTree = "<group>"; };
 		79D6E26A1008D086005D1591 /* modes.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = modes.cpp; sourceTree = "<group>"; };
+		E50145D212EDDA1D009FEDD9 /* VertexArray.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = VertexArray.h; sourceTree = "<group>"; };
+		E50145D312EDDA1D009FEDD9 /* VertexArray.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = VertexArray.cpp; sourceTree = "<group>"; };
 		E503A17510838DBF00D1649D /* VMsvga2GLContext.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = VMsvga2GLContext.h; sourceTree = "<group>"; };
 		E503A17610838DBF00D1649D /* VMsvga2Surface.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = VMsvga2Surface.h; sourceTree = "<group>"; };
 		E503A17710838DBF00D1649D /* VMsvga22DContext.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = VMsvga22DContext.h; sourceTree = "<group>"; };
@@ -154,10 +158,13 @@
 		E58ACDA710CC439E0051F215 /* EntryPointNames.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = EntryPointNames.c; sourceTree = "<group>"; };
 		E58ACDA910CC44A60051F215 /* EntryPointNames.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = EntryPointNames.h; sourceTree = "<group>"; };
 		E58CFD8E12DC66EA00A8F812 /* Shaders.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = Shaders.h; sourceTree = "<group>"; };
+		E58D864212EDEAA90090C401 /* VMsvga2IPP.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = VMsvga2IPP.h; sourceTree = "<group>"; };
+		E58D864512EDEDDE0090C401 /* VMsvga2IPP.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = VMsvga2IPP.cpp; sourceTree = "<group>"; };
 		E5912BF512B921320028A17D /* VMsvga2Shared.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = VMsvga2Shared.h; sourceTree = "<group>"; };
 		E5912BF612B921320028A17D /* VMsvga2Shared.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = VMsvga2Shared.cpp; sourceTree = "<group>"; };
 		E592EC7912A83E7E001700AC /* GLDTypes.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = GLDTypes.h; sourceTree = "<group>"; };
-		E596102F12D7950A00EE8B57 /* VMsvga2GLContext3.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = VMsvga2GLContext3.cpp; sourceTree = "<group>"; };
+		E596A49212EDCEBF00F70BF5 /* VendorTransferBuffer.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = VendorTransferBuffer.h; sourceTree = "<group>"; };
+		E596A49312EDCEDD00F70BF5 /* VendorTransferBuffer.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = VendorTransferBuffer.cpp; sourceTree = "<group>"; };
 		E598109712DA004800508FF6 /* Shaders.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = Shaders.c; sourceTree = "<group>"; };
 		E5993C7F10A058070021B17F /* svga3d_caps.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = svga3d_caps.h; sourceTree = "<group>"; };
 		E59B1DB012ABDD0800F3C4A9 /* GLDData.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = GLDData.h; sourceTree = "<group>"; };
@@ -247,7 +254,6 @@
 				7909DAFD10827DF000CFBDBF /* VMsvga2DVDContext.cpp */,
 				E503A17810838E1700D1649D /* VMsvga2GLContext.cpp */,
 				E5C69E9F12D7502600959371 /* VMsvga2GLContext2.cpp */,
-				E596102F12D7950A00EE8B57 /* VMsvga2GLContext3.cpp */,
 				7909DAFE10827DF000CFBDBF /* VMsvga2OCDContext.cpp */,
 				E503A17910838E1700D1649D /* VMsvga2Surface.cpp */,
 			);
@@ -288,8 +294,11 @@
 				E577F63610A089750047C956 /* SVGAScreen.h */,
 				E5059B8512D7524000866E66 /* UCGLDCommonTypes.h */,
 				E5059B8612D7524000866E66 /* UCMethods.h */,
+				E596A49212EDCEBF00F70BF5 /* VendorTransferBuffer.h */,
+				E50145D212EDDA1D009FEDD9 /* VertexArray.h */,
 				7919BDDD102B200500E56229 /* VMsvga2Accel.h */,
 				799EFBCE10483D9C003195B5 /* VMsvga2Allocator.h */,
+				E58D864212EDEAA90090C401 /* VMsvga2IPP.h */,
 				E5912BF512B921320028A17D /* VMsvga2Shared.h */,
 				7986F8FF103B138900CD6D69 /* vmw_options_ac.h */,
 			);
@@ -302,8 +311,11 @@
 				E598109712DA004800508FF6 /* Shaders.c */,
 				799F594610319210000D2A71 /* SVGA3D.cpp */,
 				E577F63710A089750047C956 /* SVGAScreen.cpp */,
+				E596A49312EDCEDD00F70BF5 /* VendorTransferBuffer.cpp */,
+				E50145D312EDDA1D009FEDD9 /* VertexArray.cpp */,
 				7919BDE0102B203500E56229 /* VMsvga2Accel.cpp */,
 				799EFBCF10483D9C003195B5 /* VMsvga2Allocator.cpp */,
+				E58D864512EDEDDE0090C401 /* VMsvga2IPP.cpp */,
 				E5912BF612B921320028A17D /* VMsvga2Shared.cpp */,
 			);
 			name = Source;
@@ -569,8 +581,10 @@
 				E577F63810A089750047C956 /* SVGAScreen.cpp in Sources */,
 				E5912BF712B921320028A17D /* VMsvga2Shared.cpp in Sources */,
 				E5C69EA012D7502600959371 /* VMsvga2GLContext2.cpp in Sources */,
-				E596103012D7950A00EE8B57 /* VMsvga2GLContext3.cpp in Sources */,
 				E58CFD8D12DC66CF00A8F812 /* Shaders.c in Sources */,
+				E596A49412EDCEDD00F70BF5 /* VendorTransferBuffer.cpp in Sources */,
+				E50145D412EDDA1D009FEDD9 /* VertexArray.cpp in Sources */,
+				E58D864612EDEDDE0090C401 /* VMsvga2IPP.cpp in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -646,8 +660,8 @@
 			buildSettings = {
 				ARCHS = i386;
 				COPYRIGHT_NOTICE = "Copyright 2009-2010 Zenith432";
-				CURRENT_PROJECT_VERSION = 1.3.0d7;
-				DYLIB_COMPATIBILITY_VERSION = 1.3.0d7;
+				CURRENT_PROJECT_VERSION = 1.3.0d8;
+				DYLIB_COMPATIBILITY_VERSION = 1.3.0d8;
 				DYLIB_CURRENT_VERSION = "$(CURRENT_PROJECT_VERSION)";
 				INSTALL_PATH = "$(SYSTEM_LIBRARY_DIR)/Extensions";
 				MODULE_VERSION = "$(CURRENT_PROJECT_VERSION)";
@@ -693,8 +707,8 @@
 					i386,
 				);
 				COPYRIGHT_NOTICE = "Copyright 2009-2010 Zenith432";
-				CURRENT_PROJECT_VERSION = 1.3.0d7;
-				DYLIB_COMPATIBILITY_VERSION = 1.3.0d7;
+				CURRENT_PROJECT_VERSION = 1.3.0d8;
+				DYLIB_COMPATIBILITY_VERSION = 1.3.0d8;
 				DYLIB_CURRENT_VERSION = "$(CURRENT_PROJECT_VERSION)";
 				INSTALL_PATH = "$(SYSTEM_LIBRARY_DIR)/Extensions";
 				MODULE_VERSION = "$(CURRENT_PROJECT_VERSION)";

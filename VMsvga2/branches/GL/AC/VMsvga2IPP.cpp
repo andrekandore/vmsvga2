@@ -1,10 +1,9 @@
 /*
- *  VMsvga2GLContext3.cpp
+ *  VMsvga2IPP.cpp
  *  VMsvga2Accel
  *
- *  Created by Zenith432 on January 7th 2011.
+ *  Created by Zenith432 on January 24th 2011.
  *  Copyright 2011 Zenith432. All rights reserved.
- *  Portions Copyright (c) Apple Computer, Inc.
  *
  *  Permission is hereby granted, free of charge, to any person
  *  obtaining a copy of this software and associated documentation
@@ -28,23 +27,24 @@
  */
 
 #include <IOKit/IOLib.h>
+#include <IOKit/graphics/IOAccelSurfaceConnect.h>
 #include <libkern/crypto/md5.h>
-#define GL_INCL_PUBLIC
 #define GL_INCL_PRIVATE
 #include "GLCommon.h"
 #include "Shaders.h"
 #include "UCGLDCommonTypes.h"
 #include "VLog.h"
 #include "VMsvga2Accel.h"
-#include "VMsvga2GLContext.h"
-#include "VMsvga2Surface.h"
+#include "VMsvga2IPP.h"
 
-#define CLASS VMsvga2GLContext
+#define CLASS VMsvga2IPP
+#define super OSObject
+OSDefineMetaClassAndStructors(VMsvga2IPP, OSObject);
 
 #if LOGGING_LEVEL >= 1
-#define GLLog(log_level, ...) do { if (log_level <= m_log_level) VLog("IOGL: ", ##__VA_ARGS__); } while (false)
+#define PPLog(log_level, ...) do { if (log_level <= m_log_level) VLog("IOPP: ", ##__VA_ARGS__); } while (false)
 #else
-#define GLLog(log_level, ...)
+#define PPLog(log_level, ...)
 #endif
 
 #define HIDDEN __attribute__((visibility("hidden")))
@@ -65,19 +65,19 @@ typedef float __v4sf __attribute__((vector_size(16), may_alias));
 
 #ifdef PRINT_PS
 static
-char const* ps_regtype_names[] =
+char const* const ps_regtype_names[] =
 {
 	"R", "T", "C", "S", "OC", "OD", "U", "Invalid"
 };
 
 static
-char const* ps_texture_ops[] =
+char const* const ps_texture_ops[] =
 {
 	"texld", "texldp", "texldb", "texkill"
 };
 
 static
-char const* ps_arith_ops[] =
+char const* const ps_arith_ops[] =
 {
 	"nop", "add", "mov", "mul", "mad", "dp2add", "dp3", "dp4", "frc",
 	"rcp", "rsq", "exp", "log", "cmp", "min", "max", "flr", "mod", "trc",
@@ -85,13 +85,13 @@ char const* ps_arith_ops[] =
 };
 
 static
-int ps_arith_num_params[] =
+int const ps_arith_num_params[] =
 {
 	0, 2, 1, 2, 3, 3, 2, 2, 1, 1, 1, 1, 1, 3, 2, 2, 1, 1, 1, 2, 2
 };
 
 static
-char const* ps_sample_type[] =
+char const* const ps_sample_type[] =
 {
 	"_2d", "_cube", "_volume", ""
 };
@@ -130,6 +130,12 @@ void set_region(IOAccelDeviceRegion* rgn,
 				uint32_t y,
 				uint32_t w,
 				uint32_t h);
+
+static inline
+void memset32(void* dest, uint32_t value, size_t size)
+{
+	__asm__ volatile ("cld; rep stosl" : "+c" (size), "+D" (dest) : "a" (value) : "memory");
+}
 
 static
 uint8_t get4bits_64(uint64_t const* v, uint8_t index)
@@ -449,15 +455,32 @@ void flatshade_polygon(uint8_t* vertex_array,
 #pragma mark -
 
 HIDDEN
-void CLASS::CleanupIpp()
+void CLASS::Init()
 {
-	if (m_provider && isIdValid(m_context_id)) {
-		purge_shader_cache();
+	m_log_level = LOGGING_LEVEL;
+	m_context_id = SVGA_ID_INVALID;
+	m_active_shid = SVGA_ID_INVALID - 1;
+	m_arrays.init();
+	memset32(&surface_ids[0], SVGA_ID_INVALID, 16U);
+}
+
+HIDDEN
+void CLASS::Cleanup()
+{
+	purge_shader_cache();
+	if (!m_provider)
+		goto no_provider;
+	if (isIdValid(m_context_id)) {
+#if 0
+		unbind_samplers(0xFFFFU);	// Assume referenced surfaces be released anyhow
+		// unbind render targets too ??
+#endif
 		m_provider->destroyContext(m_context_id);
 		m_provider->FreeContextID(m_context_id);
 		m_context_id = SVGA_ID_INVALID;
 	}
-	purge_arrays();
+	m_arrays.purge(m_provider);
+no_provider:
 	if (m_float_cache) {
 		IOFreeAligned(m_float_cache, 64U * sizeof(float));
 		m_float_cache = 0;
@@ -514,14 +537,14 @@ ShaderEntry const* CLASS::cache_shader(uint32_t const* source, uint32_t num_dwor
 								 g_fixed_shaders[i].length);	// Note: ignores error
 			m_provider->unlock3D();
 #if LOGGING_LEVEL >= DETAIL_COORD
-			GLLog(3, "%s: Shader %u mapped to canned %u\n", __FUNCTION__, e->shader_id, i);
+			PPLog(3, "%s: Shader %u mapped to canned %u\n", __FUNCTION__, e->shader_id, i);
 #endif
 			e->tc2s_map = g_fixed_shaders[i].tc2s_map;
 			e->tc2s_map_valids = g_fixed_shaders[i].tc2s_map_valids;
 			return e;
 		}
 #ifdef PRINT_PS
-	GLLog(PRINT_PS, "%s: shader hash { %#llx, %#llx }\n", __FUNCTION__,
+	PPLog(PRINT_PS, "%s: shader hash { %#llx, %#llx }\n", __FUNCTION__,
 		  *reinterpret_cast<uint64_t const*>(&hash[0]),
 		  *reinterpret_cast<uint64_t const*>(&hash[8]));
 	ip_print_ps(source, num_dwords);
@@ -564,7 +587,7 @@ void CLASS::unbind_samplers(uint16_t mask)
 	int i, bit_count;
 	SVGA3D* svga3d;
 	SVGA3dTextureState* ts;
-	mask &= m_intel_state.bound_samplers;
+	mask &= bound_samplers;
 	if (!mask)
 		return;
 	bit_count = __builtin_popcount(mask);
@@ -577,7 +600,7 @@ void CLASS::unbind_samplers(uint16_t mask)
 		m_provider->unlock3D();
 		return;
 	}
-	m_intel_state.bound_samplers ^= mask;
+	bound_samplers ^= mask;
 	for (i = 0; mask; ++i, mask >>= 1) {
 		if (!(mask & 1U))
 			continue;
@@ -593,21 +616,21 @@ void CLASS::unbind_samplers(uint16_t mask)
 HIDDEN
 void CLASS::calc_adjustment_map(uint8_t* map) const
 {
-	if (!m_intel_state.unnormalized_tex_coordinates) {
+	if (!nonnormalized_tex_coordinates) {
 		map[8] = 0U;
 		return;
 	}
-	int s2 = m_intel_state.imm_s[2];
-	uint32_t tc2s_map = m_intel_state.tc2s_map;
-	uint8_t i, mask, tc2s_map_valids = m_intel_state.tc2s_map_valids;
+	int s2 = imm_s[2];
+	uint32_t _tc2s_map = tc2s_map;
+	uint8_t i, mask, _tc2s_map_valids = tc2s_map_valids;
 	for (i = 0U, mask = 0U;
-		 s2 != -1 && tc2s_map_valids;
-		 ++i, s2 >>= 4, tc2s_map >>= 4, tc2s_map_valids >>= 1) {
+		 s2 != -1 && _tc2s_map_valids;
+		 ++i, s2 >>= 4, _tc2s_map >>= 4, _tc2s_map_valids >>= 1) {
 		if ((s2 & 15) == 15 ||
-			!(tc2s_map_valids & 1U) ||
-			!bit_select(m_intel_state.unnormalized_tex_coordinates, tc2s_map & 15U, 1))
+			!(_tc2s_map_valids & 1U) ||
+			!bit_select(nonnormalized_tex_coordinates, _tc2s_map & 15U, 1))
 			continue;
-		map[i] = get4bits_64(&m_intel_state.s2t_map, tc2s_map & 15U);
+		map[i] = get4bits_64(&s2t_map, _tc2s_map & 15U);
 		mask |= (1U << i);
 	}
 	map[8] = mask;
@@ -632,8 +655,8 @@ void CLASS::adjust_texture_coords(uint8_t const* map,
 	uint8_t map_mask;
 
 #if LOGGING_LEVEL >= 4
-	GLLog(4, "%s:   s2 == %#x, s4 == %#x\n", __FUNCTION__,
-		  m_intel_state.imm_s[2], m_intel_state.imm_s[4] & 0x1FC4U);
+	PPLog(4, "%s:   s2 == %#x, s4 == %#x\n", __FUNCTION__,
+		  imm_s[2], imm_s[4] & 0x1FC4U);
 #endif
 #ifdef VECTORIZE
 	__asm__ volatile ("xorps %0, %0" "\n\t"
@@ -654,7 +677,7 @@ void CLASS::adjust_texture_coords(uint8_t const* map,
 		for (j = 0U; j != num_vertices; ++j) {
 			q = reinterpret_cast<typeof q>(vertex_array + j * _decls[i].array.stride + _decls[i].array.offset);
 #if LOGGING_LEVEL >= DETAIL_COORD
-			GLLog(3, "%s:   adjusting X == %d, Y == %d, Z == %d, W == %d\n", __FUNCTION__,a
+			PPLog(3, "%s:   adjusting X == %d, Y == %d, Z == %d, W == %d\n", __FUNCTION__,a
 				  static_cast<int>(q[0]),
 				  static_cast<int>(q[1]),
 				  static_cast<int>(q[2] * 32767.0F),
@@ -675,7 +698,7 @@ void CLASS::adjust_texture_coords(uint8_t const* map,
 	for (j = 0U; j != num_vertices; ++j) {
 		unsigned const* r = reinterpret_cast<unsigned const*>(vertex_array + j * _decls[1].array.stride + _decls[1].array.offset);
 		f = reinterpret_cast<float const*>(vertex_array + j * _decls[0].array.stride + _decls[0].array.offset);
-		GLLog(3, "%s:   vertex coord X == %d, Y == %d, Z == %d, W == %d, color == %#x\n", __FUNCTION__,
+		PPLog(3, "%s:   vertex coord X == %d, Y == %d, Z == %d, W == %d, color == %#x\n", __FUNCTION__,
 			  static_cast<int>(f[0]),
 			  static_cast<int>(f[1]),
 			  static_cast<int>(f[2] * 32767.0F),
@@ -693,11 +716,11 @@ HIDDEN
 uint8_t CLASS::calc_color_write_enable(void) const
 {
 	uint8_t mask[2];
-	if (!bit_select(m_intel_state.imm_s[6], 2, 1))
+	if (!bit_select(imm_s[6], 2, 1))
 		return 0U;
-	if (!(m_intel_state.param_cache_mask & (1U << 5)))
+	if (!(param_cache_mask & (1U << 5)))
 		return 0xFU;
-	mask[0] = (~bit_select(m_intel_state.imm_s[5], 28, 4)) & 0xFU;
+	mask[0] = (~bit_select(imm_s[5], 28, 4)) & 0xFU;
 	mask[1] = mask[0] & 10U;
 	mask[1] |= bit_select(mask[0], 2, 1);
 	mask[1] |= bit_select(mask[0], 0, 1) << 2;
@@ -711,21 +734,15 @@ bool CLASS::cache_misc_reg(uint8_t regnum, uint32_t value)
 	if (regnum >= 8U)
 		return true;
 	mask = (1U << (8U + regnum));
-	if (m_intel_state.param_cache_mask & mask) {
-		if (value == m_intel_state.imm_s[8U + regnum])
+	if (param_cache_mask & mask) {
+		if (value == imm_s[8U + regnum])
 			return false;
-		m_intel_state.imm_s[8U + regnum] = value;
+		imm_s[8U + regnum] = value;
 	} else {
-		m_intel_state.imm_s[8U + regnum] = value;
-		m_intel_state.param_cache_mask |= mask;
+		imm_s[8U + regnum] = value;
+		param_cache_mask |= mask;
 	}
 	return true;
-}
-
-HIDDEN
-void CLASS::ipp_discard_renderstate(void)
-{
-	m_intel_state.param_cache_mask = 0U;
 }
 
 HIDDEN
@@ -742,32 +759,32 @@ void CLASS::ip_prim3d_poly(uint32_t const* vertex_data, size_t num_vertex_dwords
 	if (!num_vertex_dwords || !vertex_data)
 		return; // nothing to do
 	num_decls = sizeof decls / sizeof decls[0];
-	rc = analyze_vertex_format(m_intel_state.imm_s[2],
-							   m_intel_state.imm_s[4],
+	rc = analyze_vertex_format(imm_s[2],
+							   imm_s[4],
 							   &decls[0],
 							   &num_decls);
 	if (rc != kIOReturnSuccess) {
-		GLLog(1, "%s: analyze_vertex_format return %#x\n", __FUNCTION__, rc);
+		PPLog(1, "%s: analyze_vertex_format return %#x\n", __FUNCTION__, rc);
 		return;
 	}
 	if (!num_decls || !decls[0].array.stride)
 		return;	// nothing to do
 #if LOGGING_LEVEL >= 4
-	GLLog(4, "%s:   num vertex decls == %lu\n", __FUNCTION__, num_decls);
+	PPLog(4, "%s:   num vertex decls == %lu\n", __FUNCTION__, num_decls);
 #endif
 	vsize = num_vertex_dwords * sizeof(uint32_t);
 	num_vertices = vsize / decls[0].array.stride;
 	if (num_vertices < 3U)
 		return; // nothing to do
 	isize = num_vertices * sizeof(uint16_t);
-	rc = alloc_arrays(vsize + isize, &vertex_ptr);
+	rc = m_arrays.alloc(m_provider, vsize + isize, &vertex_ptr);
 	if (rc != kIOReturnSuccess) {
-		GLLog(1, "%s: alloc_arrays return %#x\n", __FUNCTION__, rc);
+		PPLog(1, "%s: alloc_arrays return %#x\n", __FUNCTION__, rc);
 		return;
 	}
 	memcpy(vertex_ptr, vertex_data, vsize);
 #if LOGGING_LEVEL >= 4
-	GLLog(4, "%s:   vertex_size == %u, num_vertices == %lu, copied %lu bytes\n",__FUNCTION__,
+	PPLog(4, "%s:   vertex_size == %u, num_vertices == %lu, copied %lu bytes\n",__FUNCTION__,
 		  decls[0].array.stride, num_vertices, vsize);
 #endif
 	/*
@@ -783,14 +800,14 @@ void CLASS::ip_prim3d_poly(uint32_t const* vertex_data, size_t num_vertex_dwords
 							  num_vertices,
 							  &decls[0],
 							  num_decls);
-	if (m_intel_state.imm_s[4] & (1U << 15))
+	if (imm_s[4] & (1U << 15))
 		flatshade_polygon(vertex_ptr,
 						  num_vertices,
 						  &decls[0],
 						  num_decls);
-	rc = upload_arrays(vertex_ptr, vsize + isize, &vertex_sid);
+	rc = m_arrays.upload(m_provider, vertex_ptr, vsize + isize, &vertex_sid);
 	if (rc != kIOReturnSuccess) {
-		GLLog(1, "%s: upload_arrays return %#x\n", __FUNCTION__, rc);
+		PPLog(1, "%s: upload_arrays return %#x\n", __FUNCTION__, rc);
 		return;
 	}
 	range.primType = SVGA3D_PRIMITIVE_TRIANGLESTRIP;
@@ -810,7 +827,7 @@ void CLASS::ip_prim3d_poly(uint32_t const* vertex_data, size_t num_vertex_dwords
 									&decls[0],
 									&range);
 	if (rc != kIOReturnSuccess)
-		GLLog(1, "%s: drawPrimitives return %#x\n", __FUNCTION__, rc);
+		PPLog(1, "%s: drawPrimitives return %#x\n", __FUNCTION__, rc);
 }
 
 HIDDEN
@@ -827,18 +844,18 @@ void CLASS::ip_prim3d_direct(uint32_t prim_kind, uint32_t const* vertex_data, si
 	if (!num_vertex_dwords || !vertex_data)
 		return; // nothing to do
 	num_decls = sizeof decls / sizeof decls[0];
-	rc = analyze_vertex_format(m_intel_state.imm_s[2],
-							   m_intel_state.imm_s[4],
+	rc = analyze_vertex_format(imm_s[2],
+							   imm_s[4],
 							   &decls[0],
 							   &num_decls);
 	if (rc != kIOReturnSuccess) {
-		GLLog(1, "%s: analyze_vertex_format return %#x\n", __FUNCTION__, rc);
+		PPLog(1, "%s: analyze_vertex_format return %#x\n", __FUNCTION__, rc);
 		return;
 	}
 	if (!num_decls || !decls[0].array.stride)
 		return;	// nothing to do
 #if LOGGING_LEVEL >= 4
-	GLLog(4, "%s:   num vertex decls == %lu\n", __FUNCTION__, num_decls);
+	PPLog(4, "%s:   num vertex decls == %lu\n", __FUNCTION__, num_decls);
 #endif
 	vsize = num_vertex_dwords * sizeof(uint32_t);
 	num_vertices = vsize / decls[0].array.stride;
@@ -882,14 +899,14 @@ void CLASS::ip_prim3d_direct(uint32_t prim_kind, uint32_t const* vertex_data, si
 		default:
 			return;	// error, shouldn't get here
 	}
-	rc = alloc_arrays(vsize, &vertex_ptr);
+	rc = m_arrays.alloc(m_provider, vsize, &vertex_ptr);
 	if (rc != kIOReturnSuccess) {
-		GLLog(1, "%s: alloc_arrays return %#x\n", __FUNCTION__, rc);
+		PPLog(1, "%s: alloc_arrays return %#x\n", __FUNCTION__, rc);
 		return;
 	}
 	memcpy(vertex_ptr, vertex_data, vsize);
 #if LOGGING_LEVEL >= 4
-	GLLog(4, "%s:   vertex_size == %u, num_vertices == %lu, copied %lu bytes\n",__FUNCTION__,
+	PPLog(4, "%s:   vertex_size == %u, num_vertices == %lu, copied %lu bytes\n",__FUNCTION__,
 		  decls[0].array.stride, num_vertices, vsize);
 #endif
 	calc_adjustment_map(&adjustment_map[0]);
@@ -899,9 +916,9 @@ void CLASS::ip_prim3d_direct(uint32_t prim_kind, uint32_t const* vertex_data, si
 							  num_vertices,
 							  &decls[0],
 							  num_decls);
-	rc = upload_arrays(vertex_ptr, vsize, &vertex_sid);
+	rc = m_arrays.upload(m_provider, vertex_ptr, vsize, &vertex_sid);
 	if (rc != kIOReturnSuccess) {
-		GLLog(1, "%s: upload_arrays return %#x\n", __FUNCTION__, rc);
+		PPLog(1, "%s: upload_arrays return %#x\n", __FUNCTION__, rc);
 		return;
 	}
 	range.indexArray.surfaceId = SVGA_ID_INVALID;
@@ -919,7 +936,7 @@ void CLASS::ip_prim3d_direct(uint32_t prim_kind, uint32_t const* vertex_data, si
 									&decls[0],
 									&range);
 	if (rc != kIOReturnSuccess)
-		GLLog(1, "%s: drawPrimitives return %#x\n", __FUNCTION__, rc);
+		PPLog(1, "%s: drawPrimitives return %#x\n", __FUNCTION__, rc);
 }
 
 HIDDEN
@@ -930,7 +947,7 @@ uint32_t CLASS::ip_prim3d(uint32_t* p, uint32_t cmd)
 	float const* pf;
 
 	if (cmd & (1U << 23)) {
-		GLLog(1, "%s: indirect primitive\n", __FUNCTION__);
+		PPLog(1, "%s: indirect primitive\n", __FUNCTION__);
 		if (cmd & (1U << 17)) {
 			skip = cmd & 0xFFFFU;
 			if (!skip) {	// variable length, look for 0xFFFFU terminator
@@ -947,16 +964,16 @@ uint32_t CLASS::ip_prim3d(uint32_t* p, uint32_t cmd)
 	 * Direct Primitive
 	 */
 #if LOGGING_LEVEL >= 4
-	GLLog(4, "%s:   primkind == %u, s2 == %#x, s4 == %#x\n", __FUNCTION__,
-		  primkind, m_intel_state.imm_s[2], m_intel_state.imm_s[4]);
+	PPLog(4, "%s:   primkind == %u, s2 == %#x, s4 == %#x\n", __FUNCTION__,
+		  primkind, imm_s[2], imm_s[4]);
 #endif
 	/*
 	 * Note: Vertex Fog isn't supported either, but
 	 *   be silent about it
 	 */
-	if (m_intel_state.imm_s[4] & 0x200U)
-		GLLog(1, "%s:   Unsupported vertex fields %#x\n", __FUNCTION__,
-			  m_intel_state.imm_s[4] & 0x200U);
+	if (imm_s[4] & 0x200U)
+		PPLog(1, "%s:   Unsupported vertex fields %#x\n", __FUNCTION__,
+			  imm_s[4] & 0x200U);
 	switch (primkind) {
 		case 0: /* PRIM3D_TRILIST */
 		case 1: /* PRIM3D_TRISTRIP */
@@ -970,7 +987,7 @@ uint32_t CLASS::ip_prim3d(uint32_t* p, uint32_t cmd)
 			ip_prim3d_poly(&p[1], skip - 1U);
 			break;
 		case 10: /* PRIM3D_CLEAR_RECT */
-			if (!(m_intel_state.clear.mask & 7U))
+			if (!(clear_params.mask & 7U))
 				break;	// nothing to do
 			pf = reinterpret_cast<float const*>(p + 1);
 			set_region(&tmpRegion.r,
@@ -979,26 +996,26 @@ uint32_t CLASS::ip_prim3d(uint32_t* p, uint32_t cmd)
 					   static_cast<uint32_t>(pf[0] - pf[4]),
 					   static_cast<uint32_t>(pf[1] - pf[5]));
 #if LOGGING_LEVEL >= 4
-			GLLog(4, "%s:     issuing clear cmd, cid == %u, X == %d, Y == %d, W == %d, H == %d, mask == %u\n", __FUNCTION__,
+			PPLog(4, "%s:     issuing clear cmd, cid == %u, X == %d, Y == %d, W == %d, H == %d, mask == %u\n", __FUNCTION__,
 				  m_context_id,
 				  static_cast<int>(tmpRegion.r.bounds.x),
 				  static_cast<int>(tmpRegion.r.bounds.y),
 				  static_cast<int>(tmpRegion.r.bounds.w),
 				  static_cast<int>(tmpRegion.r.bounds.h),
-				  translate_clear_mask(m_intel_state.clear.mask));
+				  translate_clear_mask(clear.mask));
 #endif
 			m_provider->clear(m_context_id,
-							  SVGA3dClearFlag(translate_clear_mask(m_intel_state.clear.mask)),
+							  SVGA3dClearFlag(translate_clear_mask(clear_params.mask)),
 							  &tmpRegion.r,
-							  m_intel_state.clear.color,
-							  m_intel_state.clear.depth,
-							  m_intel_state.clear.stencil);
+							  clear_params.color,
+							  clear_params.depth,
+							  clear_params.stencil);
 			break;
 		case 2: /* PRIM3D_TRISTRIP_RVRSE */
 		case 7: /* PRIM3D_RECTLIST */
 		case 9: /* PRIM3D_DIB */
 		case 13: /* PRIM3D_ZONE_INIT */
-			GLLog(1, "%s:   primkind == %u Unsupported\n", __FUNCTION__, primkind);
+			PPLog(1, "%s:   primkind == %u Unsupported\n", __FUNCTION__, primkind);
 			break;
 	}
 	return skip;
@@ -1018,16 +1035,16 @@ uint32_t CLASS::ip_load_immediate(uint32_t* p, uint32_t cmd)
 				case 5U:
 				case 6U:
 				case 7U:
-					if ((m_intel_state.param_cache_mask & (1U << i)) &&
-						m_intel_state.imm_s[i] == *p) {
+					if ((param_cache_mask & (1U << i)) &&
+						imm_s[i] == *p) {
 						++p;
 						continue;
 					}
-					m_intel_state.imm_s[i] = *p++;
-					m_intel_state.param_cache_mask |= (1U << i);
+					imm_s[i] = *p++;
+					param_cache_mask |= (1U << i);
 					break;
 				default:
-					m_intel_state.imm_s[i] = *p++;
+					imm_s[i] = *p++;
 					break;
 			}
 			switch (i) {
@@ -1036,110 +1053,110 @@ uint32_t CLASS::ip_load_immediate(uint32_t* p, uint32_t cmd)
 					break;
 				case 4U:
 #if LOGGING_LEVEL >= 4
-					GLLog(4, "%s: imm4 - PW %u, LW %u, FS %#x, CM %u, "
+					PPLog(4, "%s: imm4 - PW %u, LW %u, FS %#x, CM %u, "
 						  "FDD %u, FDS %u, LDO %u, SP %u, LA %u\n", __FUNCTION__,
-						  bit_select(m_intel_state.imm_s[i], 23, 9),
-						  bit_select(m_intel_state.imm_s[i], 19, 4),
-						  bit_select(m_intel_state.imm_s[i], 15, 4),
-						  bit_select(m_intel_state.imm_s[i], 13, 2),
-						  bit_select(m_intel_state.imm_s[i],  5, 1),
-						  bit_select(m_intel_state.imm_s[i],  4, 1),
-						  bit_select(m_intel_state.imm_s[i],  3, 1),
-						  bit_select(m_intel_state.imm_s[i],  1, 1),
-						  bit_select(m_intel_state.imm_s[i],  0, 1));
+						  bit_select(imm_s[i], 23, 9),
+						  bit_select(imm_s[i], 19, 4),
+						  bit_select(imm_s[i], 15, 4),
+						  bit_select(imm_s[i], 13, 2),
+						  bit_select(imm_s[i],  5, 1),
+						  bit_select(imm_s[i],  4, 1),
+						  bit_select(imm_s[i],  3, 1),
+						  bit_select(imm_s[i],  1, 1),
+						  bit_select(imm_s[i],  0, 1));
 #endif
 					rs[0].state = SVGA3D_RS_POINTSIZE;
-					rs[0].floatValue = static_cast<float>(bit_select(m_intel_state.imm_s[i], 23, 9));
+					rs[0].floatValue = static_cast<float>(bit_select(imm_s[i], 23, 9));
 					rs[1].state = SVGA3D_RS_SHADEMODE;
-					rs[1].uintValue = (m_intel_state.imm_s[i] & (1U << 15)) ? SVGA3D_SHADEMODE_FLAT : SVGA3D_SHADEMODE_SMOOTH;
+					rs[1].uintValue = (imm_s[i] & (1U << 15)) ? SVGA3D_SHADEMODE_FLAT : SVGA3D_SHADEMODE_SMOOTH;
 					rs[2].state = SVGA3D_RS_CULLMODE;
-					rs[2].uintValue = bit_select(m_intel_state.imm_s[i], 13, 2);
+					rs[2].uintValue = bit_select(imm_s[i], 13, 2);
 					rs[3].state = SVGA3D_RS_POINTSPRITEENABLE;
-					rs[3].uintValue = bit_select(m_intel_state.imm_s[i], 1, 1);
+					rs[3].uintValue = bit_select(imm_s[i], 1, 1);
 					rs[4].state = SVGA3D_RS_ANTIALIASEDLINEENABLE;
-					rs[4].uintValue = bit_select(m_intel_state.imm_s[i], 0, 1);
+					rs[4].uintValue = bit_select(imm_s[i], 0, 1);
 					m_provider->setRenderState(m_context_id, 5U, &rs[0]);
 					break;
 				case 5U:
 #if LOGGING_LEVEL >= 4
-					GLLog(4, "%s: imm5 - WD %#x, FDPS %u, LP %u, GDO %u, FEn %u, "
+					PPLog(4, "%s: imm5 - WD %#x, FDPS %u, LP %u, GDO %u, FEn %u, "
 						  "SR %#x, STF %u, SF %u, PZF %u, PZP %u, "
 						  "SW %u, ST %u, CD %u, LO %u\n", __FUNCTION__,
-						  bit_select(m_intel_state.imm_s[i], 28, 4),
-						  bit_select(m_intel_state.imm_s[i], 27, 1),
-						  bit_select(m_intel_state.imm_s[i], 26, 1),
-						  bit_select(m_intel_state.imm_s[i], 25, 1),
-						  bit_select(m_intel_state.imm_s[i], 24, 1),
-						  bit_select(m_intel_state.imm_s[i], 16, 8),
-						  bit_select(m_intel_state.imm_s[i], 13, 3),
-						  bit_select(m_intel_state.imm_s[i], 10, 3),
-						  bit_select(m_intel_state.imm_s[i],  7, 3),
-						  bit_select(m_intel_state.imm_s[i],  4, 3),
-						  bit_select(m_intel_state.imm_s[i],  3, 1),
-						  bit_select(m_intel_state.imm_s[i],  2, 1),
-						  bit_select(m_intel_state.imm_s[i],  1, 1),
-						  bit_select(m_intel_state.imm_s[i],  0, 1));
+						  bit_select(imm_s[i], 28, 4),
+						  bit_select(imm_s[i], 27, 1),
+						  bit_select(imm_s[i], 26, 1),
+						  bit_select(imm_s[i], 25, 1),
+						  bit_select(imm_s[i], 24, 1),
+						  bit_select(imm_s[i], 16, 8),
+						  bit_select(imm_s[i], 13, 3),
+						  bit_select(imm_s[i], 10, 3),
+						  bit_select(imm_s[i],  7, 3),
+						  bit_select(imm_s[i],  4, 3),
+						  bit_select(imm_s[i],  3, 1),
+						  bit_select(imm_s[i],  2, 1),
+						  bit_select(imm_s[i],  1, 1),
+						  bit_select(imm_s[i],  0, 1));
 #endif
 					rs[0].state = SVGA3D_RS_DITHERENABLE;
-					rs[0].uintValue = bit_select(m_intel_state.imm_s[i],  1, 1);
+					rs[0].uintValue = bit_select(imm_s[i],  1, 1);
 					rs[1].state = SVGA3D_RS_LASTPIXEL;
-					rs[1].uintValue = bit_select(m_intel_state.imm_s[i], 26, 1);
+					rs[1].uintValue = bit_select(imm_s[i], 26, 1);
 					rs[2].state = SVGA3D_RS_FOGENABLE;
-					rs[2].uintValue = bit_select(m_intel_state.imm_s[i], 24, 1);
+					rs[2].uintValue = bit_select(imm_s[i], 24, 1);
 					rs[3].state = SVGA3D_RS_STENCILREF;
-					rs[3].uintValue = bit_select(m_intel_state.imm_s[i], 16, 8);
+					rs[3].uintValue = bit_select(imm_s[i], 16, 8);
 					rs[4].state = SVGA3D_RS_STENCILFUNC;
-					rs[4].uintValue = bit_select(m_intel_state.imm_s[i], 2, 1) ?
-					xlate_comparefunc(bit_select(m_intel_state.imm_s[i], 13, 3)) : SVGA3D_CMP_ALWAYS;
+					rs[4].uintValue = bit_select(imm_s[i], 2, 1) ?
+					xlate_comparefunc(bit_select(imm_s[i], 13, 3)) : SVGA3D_CMP_ALWAYS;
 					rs[5].state = SVGA3D_RS_STENCILFAIL;
-					rs[5].uintValue = xlate_stencilop(bit_select(m_intel_state.imm_s[i], 10, 3));
+					rs[5].uintValue = xlate_stencilop(bit_select(imm_s[i], 10, 3));
 					rs[6].state = SVGA3D_RS_STENCILZFAIL;
-					rs[6].uintValue = xlate_stencilop(bit_select(m_intel_state.imm_s[i], 7, 3));
+					rs[6].uintValue = xlate_stencilop(bit_select(imm_s[i], 7, 3));
 					rs[7].state = SVGA3D_RS_STENCILPASS;
-					rs[7].uintValue = xlate_stencilop(bit_select(m_intel_state.imm_s[i], 4, 3));
+					rs[7].uintValue = xlate_stencilop(bit_select(imm_s[i], 4, 3));
 					rs[8].state = SVGA3D_RS_STENCILENABLE;
-					rs[8].uintValue = bit_select(m_intel_state.imm_s[i],  3, 1);
+					rs[8].uintValue = bit_select(imm_s[i],  3, 1);
 					m_provider->setRenderState(m_context_id, 9U, &rs[0]);
 					break;
 				case 6U:
 #if LOGGING_LEVEL >= 4
-					GLLog(4, "%s: imm6 - ATE %u, ATF %u, AR %u, DTE %u, DTF %u, "
+					PPLog(4, "%s: imm6 - ATE %u, ATF %u, AR %u, DTE %u, DTF %u, "
 						  "BE %u, BF %u, SBF %u , DBF %u, DWE %u, CWE %u, TPV %u\n", __FUNCTION__,
-						  bit_select(m_intel_state.imm_s[i], 31, 1),
-						  bit_select(m_intel_state.imm_s[i], 28, 3),
-						  bit_select(m_intel_state.imm_s[i], 20, 8),
-						  bit_select(m_intel_state.imm_s[i], 19, 1),
-						  bit_select(m_intel_state.imm_s[i], 16, 3),
-						  bit_select(m_intel_state.imm_s[i], 15, 1),
-						  bit_select(m_intel_state.imm_s[i], 12, 3),
-						  bit_select(m_intel_state.imm_s[i],  8, 4),
-						  bit_select(m_intel_state.imm_s[i],  4, 4),
-						  bit_select(m_intel_state.imm_s[i],  3, 1),
-						  bit_select(m_intel_state.imm_s[i],  2, 1),
-						  bit_select(m_intel_state.imm_s[i],  0, 2));
+						  bit_select(imm_s[i], 31, 1),
+						  bit_select(imm_s[i], 28, 3),
+						  bit_select(imm_s[i], 20, 8),
+						  bit_select(imm_s[i], 19, 1),
+						  bit_select(imm_s[i], 16, 3),
+						  bit_select(imm_s[i], 15, 1),
+						  bit_select(imm_s[i], 12, 3),
+						  bit_select(imm_s[i],  8, 4),
+						  bit_select(imm_s[i],  4, 4),
+						  bit_select(imm_s[i],  3, 1),
+						  bit_select(imm_s[i],  2, 1),
+						  bit_select(imm_s[i],  0, 2));
 #endif
 					rs[0].state = SVGA3D_RS_COLORWRITEENABLE;
 					rs[0].uintValue = calc_color_write_enable();
 					rs[1].state = SVGA3D_RS_BLENDENABLE;
-					rs[1].uintValue = bit_select(m_intel_state.imm_s[i], 15, 1);
+					rs[1].uintValue = bit_select(imm_s[i], 15, 1);
 					rs[2].state = SVGA3D_RS_BLENDEQUATION;
-					rs[2].uintValue = bit_select(m_intel_state.imm_s[i], 12, 3) + 1U;
+					rs[2].uintValue = bit_select(imm_s[i], 12, 3) + 1U;
 					rs[3].state = SVGA3D_RS_SRCBLEND;
-					rs[3].uintValue = bit_select(m_intel_state.imm_s[i],  8, 4);
+					rs[3].uintValue = bit_select(imm_s[i],  8, 4);
 					rs[4].state = SVGA3D_RS_DSTBLEND;
-					rs[4].uintValue = bit_select(m_intel_state.imm_s[i],  4, 4);
+					rs[4].uintValue = bit_select(imm_s[i],  4, 4);
 					rs[5].state = SVGA3D_RS_ALPHATESTENABLE;
-					rs[5].uintValue = bit_select(m_intel_state.imm_s[i], 31, 1);
+					rs[5].uintValue = bit_select(imm_s[i], 31, 1);
 					rs[6].state = SVGA3D_RS_ALPHAFUNC;
-					rs[6].uintValue = xlate_comparefunc(bit_select(m_intel_state.imm_s[i], 28, 3));
+					rs[6].uintValue = xlate_comparefunc(bit_select(imm_s[i], 28, 3));
 					rs[7].state = SVGA3D_RS_ALPHAREF;
-					rs[7].uintValue = bit_select(m_intel_state.imm_s[i], 20, 8);
+					rs[7].uintValue = bit_select(imm_s[i], 20, 8);
 					rs[8].state = SVGA3D_RS_ZENABLE;
-					rs[8].uintValue = bit_select(m_intel_state.imm_s[i], 19, 1);
+					rs[8].uintValue = bit_select(imm_s[i], 19, 1);
 					rs[9].state = SVGA3D_RS_ZFUNC;
-					rs[9].uintValue = xlate_comparefunc(bit_select(m_intel_state.imm_s[i], 16, 3));
+					rs[9].uintValue = xlate_comparefunc(bit_select(imm_s[i], 16, 3));
 					rs[10].state = SVGA3D_RS_ZWRITEENABLE;
-					rs[10].uintValue = bit_select(m_intel_state.imm_s[i], 3, 1);
+					rs[10].uintValue = bit_select(imm_s[i], 3, 1);
 					/*
 					 * Note: Direct3D doesn't seem to have Tristrip Provoking Vertex control
 					 */
@@ -1147,20 +1164,20 @@ uint32_t CLASS::ip_load_immediate(uint32_t* p, uint32_t cmd)
 					break;
 				case 7U:
 #if LOGGING_LEVEL >= 4
-					GLLog(4, "%s: depth bias %u\n", __FUNCTION__,
-						  static_cast<uint32_t>(*reinterpret_cast<float*>(&m_intel_state.imm_s[i]) * 32767.0F));
+					PPLog(4, "%s: depth bias %u\n", __FUNCTION__,
+						  static_cast<uint32_t>(*reinterpret_cast<float*>(&imm_s[i]) * 32767.0F));
 #endif
 					rs[0].state = SVGA3D_RS_DEPTHBIAS;
-					if (bit_select(m_intel_state.param_cache_mask, 5, 1) &&
-						bit_select(m_intel_state.imm_s[5], 25, 1))	/* S5_GLOBAL_DEPTH_OFFSET_ENABLE */
-						rs[0].uintValue = m_intel_state.imm_s[i];	// Note: this is in fact a float
+					if (bit_select(param_cache_mask, 5, 1) &&
+						bit_select(imm_s[5], 25, 1))	/* S5_GLOBAL_DEPTH_OFFSET_ENABLE */
+						rs[0].uintValue = imm_s[i];	// Note: this is in fact a float
 					else
 						rs[0].floatValue = 0.0F;
 					m_provider->setRenderState(m_context_id, 1U, &rs[0]);
 					break;
 				default:
 #if LOGGING_LEVEL >= 3
-					GLLog(3, "%s: imm%u - %#x\n", __FUNCTION__, i, m_intel_state.imm_s[i]);
+					PPLog(3, "%s: imm%u - %#x\n", __FUNCTION__, i, imm_s[i]);
 #endif
 					break;
 			}
@@ -1174,16 +1191,16 @@ uint32_t CLASS::ip_clear_params(uint32_t* p, uint32_t cmd)
 	uint32_t skip = (cmd & 0xFFFFU) + 2U;
 	if (skip < 7U)
 		return skip;
-	m_intel_state.clear.mask = p[1];
+	clear_params.mask = p[1];
 	/*
 	 * Note: this is for CLEAR_RECT (guess).  ZONE_INIT... who knows.
 	 */
 #if LOGGING_LEVEL >= 4
-	GLLog(4, "%s: clear color == %#x\n", __FUNCTION__, p[4]);
+	PPLog(4, "%s: clear color == %#x\n", __FUNCTION__, p[4]);
 #endif
-	m_intel_state.clear.color = p[4];
-	m_intel_state.clear.depth = *reinterpret_cast<float const*>(p + 5);
-	m_intel_state.clear.stencil = p[6];
+	clear_params.color = p[4];
+	clear_params.depth = *reinterpret_cast<float const*>(p + 5);
+	clear_params.stencil = p[6];
 	return skip;
 }
 
@@ -1212,24 +1229,24 @@ void CLASS::ip_3d_map_state(uint32_t* p)
 			/*
 			 * cache surface ids, width & height
 			 */
-			m_intel_state.surface_ids[i] = q[0];
+			surface_ids[i] = q[0];
 			size.width  = bit_select(q[1], 10, 11) + 1;
 			size.height = bit_select(q[1], 21, 11) + 1;
 #if LOGGING_LEVEL >= DETAIL_COORD
-			GLLog(3, "%s: texture stage %u, sid == %u, w == %d, h == %d, mapsurf == %u, mt == %u\n", __FUNCTION__,
+			PPLog(3, "%s: texture stage %u, sid == %u, w == %d, h == %d, mapsurf == %u, mt == %u\n", __FUNCTION__,
 				  i, q[0], size.width, size.height,
 				  bit_select(q[1], 7, 3),
 				  bit_select(q[1], 3, 4));
 #endif
 #if LOGGING_LEVEL >= 5
-			GLLog(5, "%s:   tex %u data1 width %d, height %d, MAPSURF %u, MT %u, UF %u, TS %u, TW %u\n", __FUNCTION__,
+			PPLog(5, "%s:   tex %u data1 width %d, height %d, MAPSURF %u, MT %u, UF %u, TS %u, TW %u\n", __FUNCTION__,
 				  q[0], size.width, size.height,
 				  bit_select(q[1], 7, 3),
 				  bit_select(q[1], 3, 4),
 				  bit_select(q[1], 2, 1),
 				  bit_select(q[1], 1, 1),
 				  q[1] & 1U);
-			GLLog(5, "%s:   tex %u data2 pitch %u, cube-face-ena %#x, max-lod %#x, mip-layout %u, depth %u\n", __FUNCTION__,
+			PPLog(5, "%s:   tex %u data2 pitch %u, cube-face-ena %#x, max-lod %#x, mip-layout %u, depth %u\n", __FUNCTION__,
 				  q[0],
 				  bit_select(q[2], 21, 11),
 				  bit_select(q[2], 15, 6),
@@ -1262,14 +1279,14 @@ void CLASS::ip_3d_sampler_state(uint32_t* p)
 
 	max_aniso = m_provider->getDevCap(SVGA3D_DEVCAP_MAX_TEXTURE_ANISOTROPY);
 	unbind_samplers(~mask);
-	m_intel_state.unnormalized_tex_coordinates &= mask;
+	nonnormalized_tex_coordinates &= mask;
 	for (i = 0U; mask; ++i, mask >>= 1)
 		if (mask & 1U) {
 			tmi = bit_select(q[1], 1, 4);
-			set4bits_64(&m_intel_state.s2t_map, i, tmi);
+			set4bits_64(&s2t_map, i, tmi);
 #if LOGGING_LEVEL >= 4
-			GLLog(4, "%s:   sampler stage %u\n", __FUNCTION__, i);
-			GLLog(4, "%s:     RGE %u, PPE %u, CSC %u, CKS %u, BML %u, "
+			PPLog(4, "%s:   sampler stage %u\n", __FUNCTION__, i);
+			PPLog(4, "%s:     RGE %u, PPE %u, CSC %u, CKS %u, BML %u, "
 				  "MipF %u, MagF %u, MinF %u, LB %#x, SE %u, MA %u, SF %u\n", __FUNCTION__,
 				  bit_select(q[0], 31, 1),
 				  bit_select(q[0], 30, 1),
@@ -1283,7 +1300,7 @@ void CLASS::ip_3d_sampler_state(uint32_t* p)
 				  bit_select(q[0],  4, 1),
 				  bit_select(q[0],  3, 1),
 				  bit_select(q[0],  0, 3));
-			GLLog(4, "%s:     ML %u, KPE %u, TCX %u, TCY %u, TCZ %u, NC %u, TMI %u, DE %u\n", __FUNCTION__,
+			PPLog(4, "%s:     ML %u, KPE %u, TCX %u, TCY %u, TCZ %u, NC %u, TMI %u, DE %u\n", __FUNCTION__,
 				  bit_select(q[1], 24, 8),
 				  bit_select(q[1], 17, 1),
 				  bit_select(q[1], 12, 3),
@@ -1292,24 +1309,24 @@ void CLASS::ip_3d_sampler_state(uint32_t* p)
 				  bit_select(q[1],  5, 1),
 				  tmi,
 				  bit_select(q[1],  0, 1));
-			GLLog(4, "%s:     Border Color %#x\n", __FUNCTION__, q[2]);
+			PPLog(4, "%s:     Border Color %#x\n", __FUNCTION__, q[2]);
 #endif
 #if LOGGING_LEVEL >= DETAIL_COORD
-			GLLog(3, "%s:   binding S%u to T%u%s\n", __FUNCTION__,
+			PPLog(3, "%s:   binding S%u to T%u%s\n", __FUNCTION__,
 				  i, tmi, bit_select(q[1], 5, 1) ? "" : " unnormalized-coords");
 #endif
 			if (bit_select(q[1], 5, 1))
-				m_intel_state.unnormalized_tex_coordinates &= ~(1U << i);
+				nonnormalized_tex_coordinates &= ~(1U << i);
 			else
-				m_intel_state.unnormalized_tex_coordinates |= (1U << i);
+				nonnormalized_tex_coordinates |= (1U << i);
 			for (j = 0U; j != num_states; ++j)
 				ts[j].stage = i;
 			ts[0].name = SVGA3D_TS_BIND_TEXTURE;
-			ts[0].value = m_intel_state.surface_ids[tmi];
+			ts[0].value = surface_ids[tmi];
 			if (isIdValid(ts[0].value))
-				m_intel_state.bound_samplers |= (1U << i);
+				bound_samplers |= (1U << i);
 			else
-				m_intel_state.bound_samplers &= ~(1U << i);
+				bound_samplers &= ~(1U << i);
 			ts[1].name = SVGA3D_TS_BORDERCOLOR;
 			ts[1].value = q[2];
 			ts[2].name = SVGA3D_TS_ADDRESSU;
@@ -1347,7 +1364,7 @@ void CLASS::ip_misc_render_state(uint32_t selector, uint32_t* p)
 	switch (selector) {
 		case 0U:
 #if LOGGING_LEVEL >= 4
-			GLLog(4, "%s: 3DSTATE_DEPTH_OFFSET_SCALE %u\n", __FUNCTION__,
+			PPLog(4, "%s: 3DSTATE_DEPTH_OFFSET_SCALE %u\n", __FUNCTION__,
 				  static_cast<uint32_t>(*reinterpret_cast<float*>(&p[1]) * 32767.0F));
 #endif
 			rs[0].state = SVGA3D_RS_SLOPESCALEDEPTHBIAS;
@@ -1356,7 +1373,7 @@ void CLASS::ip_misc_render_state(uint32_t selector, uint32_t* p)
 			break;
 		case 1U:
 #if LOGGING_LEVEL >= 4
-			GLLog(4, "%s: 3DSTATE_SCISSOR_ENABLE %#x\n", __FUNCTION__, p[0] & 0xFFFFFFU);
+			PPLog(4, "%s: 3DSTATE_SCISSOR_ENABLE %#x\n", __FUNCTION__, p[0] & 0xFFFFFFU);
 #endif
 			rs[0].state = SVGA3D_RS_SCISSORTESTENABLE;
 			rs[0].uintValue = bit_select(p[0], 0, 1);
@@ -1364,7 +1381,7 @@ void CLASS::ip_misc_render_state(uint32_t selector, uint32_t* p)
 			break;
 		case 2U:
 #if LOGGING_LEVEL >= 4
-			GLLog(4, "%s: 3DSTATE_SCISSOR_RECT_0_CMD %u %u %u %u\n", __FUNCTION__,
+			PPLog(4, "%s: 3DSTATE_SCISSOR_RECT_0_CMD %u %u %u %u\n", __FUNCTION__,
 				  bit_select(p[1], 16, 16),
 				  bit_select(p[1],  0, 16),
 				  bit_select(p[2], 16, 16),
@@ -1378,7 +1395,7 @@ void CLASS::ip_misc_render_state(uint32_t selector, uint32_t* p)
 			break;
 		case 3U:
 #if LOGGING_LEVEL >= 4
-			GLLog(4, "%s: 3DSTATE_CONST_BLEND_COLOR_CMD %#x\n", __FUNCTION__, p[1]);
+			PPLog(4, "%s: 3DSTATE_CONST_BLEND_COLOR_CMD %#x\n", __FUNCTION__, p[1]);
 #endif
 			rs[0].state = SVGA3D_RS_BLENDCOLOR;
 			rs[0].uintValue = p[1];
@@ -1386,7 +1403,7 @@ void CLASS::ip_misc_render_state(uint32_t selector, uint32_t* p)
 			break;
 		case 4U: /* 3DSTATE_MODES_4_CMD */
 #if LOGGING_LEVEL >= 4
-			GLLog(4, "%s:   modes4 ELO %u, LO %u, EST %u, ST %u, ESW %u, SW %u\n", __FUNCTION__,
+			PPLog(4, "%s:   modes4 ELO %u, LO %u, EST %u, ST %u, ESW %u, SW %u\n", __FUNCTION__,
 				  bit_select(p[0], 23, 1),
 				  bit_select(p[0], 18, 4),
 				  bit_select(p[0], 17, 1),
@@ -1409,7 +1426,7 @@ void CLASS::ip_independent_alpha_blend(uint32_t cmd)
 	SVGA3dRenderState rs[4];
 	uint32_t i = 0U;
 #if LOGGING_LEVEL >= 4
-	GLLog(4, "%s: 3DSTATE_INDEPENDENT_ALPHA_BLEND_CMD MEn %u, En %u, MF %u, Func %u, "
+	PPLog(4, "%s: 3DSTATE_INDEPENDENT_ALPHA_BLEND_CMD MEn %u, En %u, MF %u, Func %u, "
 		  "MSF %u, SF %u, MDF %u, DF %u\n", __FUNCTION__,
 		  bit_select(cmd, 23, 1),
 		  bit_select(cmd, 22, 1),
@@ -1446,7 +1463,7 @@ void CLASS::ip_backface_stencil_ops(uint32_t cmd)
 	SVGA3dRenderState rs[5];
 	uint32_t i = 0U;
 #if LOGGING_LEVEL >= 4
-	GLLog(4, "%s: 3DSTATE_BACKFACE_STENCIL_OPS SREn %u, SR %u, ST %u, SF %u, "
+	PPLog(4, "%s: 3DSTATE_BACKFACE_STENCIL_OPS SREn %u, SR %u, ST %u, SF %u, "
 		  "SPZF %u, SPZP %u, STS %u\n", __FUNCTION__,
 		  bit_select(cmd, 23, 1),
 		  bit_select(cmd, 15, 8),
@@ -1485,14 +1502,14 @@ void CLASS::ip_print_ps(uint32_t const* p, uint32_t num_dwords)
 	char ps_src_reg_buf[3][32];
 	if (!num_inst)
 		return;
-	GLLog(PRINT_PS, "%s: Pixel Shader Program\n", __FUNCTION__);
+	PPLog(PRINT_PS, "%s: Pixel Shader Program\n", __FUNCTION__);
 	for (i = 0U; i != num_inst; ++i, p += 3) {
 		uint8_t opcode = p[0] >> 24;
 		if (opcode <= 20U) {
 			// Arithmetic
 			np = ps_arith_num_params[opcode];
 			if (np <= 0) {
-				GLLog(PRINT_PS, "%s:   %s\n", __FUNCTION__, ps_arith_ops[opcode]);
+				PPLog(PRINT_PS, "%s:   %s\n", __FUNCTION__, ps_arith_ops[opcode]);
 				continue;
 			}
 			xlate_ps_arith_src_reg(&ps_src_reg_buf[0][0],
@@ -1513,7 +1530,7 @@ void CLASS::ip_print_ps(uint32_t const* p, uint32_t num_dwords)
 									   bit_select(p[2],  0, 16));
 			} else
 				ps_src_reg_buf[2][0] = 0;
-			GLLog(PRINT_PS, "%s:   %s%s %s%u%s%s%s%s\n", __FUNCTION__,
+			PPLog(PRINT_PS, "%s:   %s%s %s%u%s%s%s%s\n", __FUNCTION__,
 				  ps_arith_ops[opcode],
 				  bit_select(p[0], 22, 1) ? "_sat" : "",
 				  xlate_ps_reg_type(bit_select(p[0], 19, 3)),
@@ -1524,7 +1541,7 @@ void CLASS::ip_print_ps(uint32_t const* p, uint32_t num_dwords)
 				  &ps_src_reg_buf[2][0]);
 		} else if (opcode <= 24U) {
 			// Texture
-			GLLog(PRINT_PS, "%s:   %s %s%u, %s%u, S%u\n", __FUNCTION__,
+			PPLog(PRINT_PS, "%s:   %s %s%u, %s%u, S%u\n", __FUNCTION__,
 				  ps_texture_ops[opcode - 21U],
 				  xlate_ps_reg_type(bit_select(p[0], 19, 3)),
 				  bit_select(p[0], 14, 4),
@@ -1533,7 +1550,7 @@ void CLASS::ip_print_ps(uint32_t const* p, uint32_t num_dwords)
 				  bit_select(p[0], 0, 4));
 		} else if (opcode == 25U) {
 			// DCL
-			GLLog(PRINT_PS, "%s:   dcl%s %s%u%s\n", __FUNCTION__,
+			PPLog(PRINT_PS, "%s:   dcl%s %s%u%s\n", __FUNCTION__,
 				  ps_sample_type[bit_select(p[0], 22, 2)],
 				  xlate_ps_reg_type(bit_select(p[0], 19, 3)),
 				  bit_select(p[0], 14, 4),
@@ -1550,20 +1567,20 @@ void CLASS::ip_select_and_load_ps(uint32_t* p, uint32_t cmd)
 	 * Simplified shader support
 	 */
 #if 0
-	uint32_t s4 = m_intel_state.imm_s[4];
-	m_intel_state.tc2s_map = TC2S_MAP_ID;
-	m_intel_state.tc2s_map_valids = TC2S_MAP_ID_VALIDS;
+	uint32_t s4 = imm_s[4];
+	tc2s_map = TC2S_MAP_ID;
+	tc2s_map_valids = TC2S_MAP_ID_VALIDS;
 #else
 	ShaderEntry const* e = cache_shader(p + 1, (cmd & 0xFFFFU) + 1U);
 	uint32_t shader_id = (e ? e->shader_id : SVGA_ID_INVALID);
 	if (shader_id == m_active_shid)
 		return;
 	if (e) {
-		m_intel_state.tc2s_map = e->tc2s_map;
-		m_intel_state.tc2s_map_valids = e->tc2s_map_valids;
+		tc2s_map = e->tc2s_map;
+		tc2s_map_valids = e->tc2s_map_valids;
 	} else {
-		m_intel_state.tc2s_map = TC2S_MAP_ID;
-		m_intel_state.tc2s_map_valids = TC2S_MAP_ID_VALIDS;
+		tc2s_map = TC2S_MAP_ID;
+		tc2s_map_valids = TC2S_MAP_ID_VALIDS;
 	}
 #endif
 	SVGA3D* svga3d = m_provider->lock3D();
@@ -1572,7 +1589,7 @@ void CLASS::ip_select_and_load_ps(uint32_t* p, uint32_t cmd)
 #if 0
 	if (s4 & (1U << 11))	/* S4_VFMT_SPEC_FOG */
 		svga3d->SetShader(m_context_id, SVGA3D_SHADERTYPE_PS, 3U);
-	else if ((m_intel_state.imm_s[2] & 15U) != 15U) /* Tex1 + Diffuse */
+	else if ((imm_s[2] & 15U) != 15U) /* Tex1 + Diffuse */
 		svga3d->SetShader(m_context_id, SVGA3D_SHADERTYPE_PS, 2U);
 	else if (s4 & (1U << 10)) /* S4_VFMT_COLOR */
 		svga3d->SetShader(m_context_id, SVGA3D_SHADERTYPE_PS, 1U);
@@ -1608,7 +1625,7 @@ void CLASS::ip_select_and_load_ps(uint32_t* p, uint32_t cmd)
 #endif
 	m_provider->unlock3D();
 #if LOGGING_LEVEL >= DETAIL_COORD
-	GLLog(3, "%s: Loaded Shader %u\n", __FUNCTION__, shader_id);
+	PPLog(3, "%s: Loaded Shader %u\n", __FUNCTION__, shader_id);
 #endif
 }
 
@@ -1627,7 +1644,7 @@ void CLASS::ip_load_ps_const(uint32_t* p)
 	for (i = 0U; mask; ++i, mask >>= 1)
 		if (mask & 1U) {
 #if LOGGING_LEVEL >= 3
-			GLLog(3, "%s:   const %u == [%#x, %#x, %#x, %#x]\n", __FUNCTION__,
+			PPLog(3, "%s:   const %u == [%#x, %#x, %#x, %#x]\n", __FUNCTION__,
 				  i, p[0], p[1], p[2], p[3]);
 #endif
 			svga3d->SetShaderConst(m_context_id, i, SVGA3D_SHADERTYPE_PS, SVGA3D_CONST_TYPE_FLOAT, p);
@@ -1649,7 +1666,7 @@ void CLASS::ip_buf_info(uint32_t* p)
 	hostImage.face = bit_select(p[1], 8, 8);
 	hostImage.mipmap = bit_select(p[1], 0, 8);
 #if LOGGING_LEVEL >= 2
-	GLLog(3, "%s: kind == %u, face == %u, mipmap == %u, sid == %u\n", __FUNCTION__,
+	PPLog(3, "%s: kind == %u, face == %u, mipmap == %u, sid == %u\n", __FUNCTION__,
 		  kind, hostImage.face, hostImage.mipmap, hostImage.sid);
 #endif
 	svga3d = m_provider->lock3D();
@@ -1672,7 +1689,7 @@ void CLASS::ip_draw_rect(uint32_t* p)
 	rect.w = p[3];
 	rect.h = p[4];
 #if LOGGING_LEVEL >= 2
-	GLLog(3, "%s: [%u, %u, %u, %u]\n", __FUNCTION__, rect.x, rect.y, rect.w, rect.h);
+	PPLog(3, "%s: [%u, %u, %u, %u]\n", __FUNCTION__, rect.x, rect.y, rect.w, rect.h);
 #endif
 	svga3d = m_provider->lock3D();
 	if (!svga3d)
@@ -1718,7 +1735,8 @@ uint32_t CLASS::decode_mi(uint32_t* p, uint32_t cmd)
 			if (p[1] != 64U)
 				break;
 			fence_num = p[2];
-			if (fence_num * sizeof(GLDFence) >= m_fences_len)
+			if (!m_fences_ptr ||
+				fence_num * sizeof(GLDFence) >= m_fences_len)
 				break;
 			svga3d = m_provider->lock3D();
 			if (!svga3d)
@@ -1727,7 +1745,7 @@ uint32_t CLASS::decode_mi(uint32_t* p, uint32_t cmd)
 			m_fences_ptr[fence_num].v = 0U;
 			m_provider->unlock3D();
 #if LOGGING_LEVEL >= 4
-			GLLog(4, "%s: setting fence %u to %u\n", __FUNCTION__,
+			PPLog(4, "%s: setting fence %u to %u\n", __FUNCTION__,
 				  fence_num, m_fences_ptr[fence_num].u);
 #endif
 			break;
@@ -1767,7 +1785,7 @@ uint32_t CLASS::decode_2d(uint32_t* p, uint32_t cmd)
 			break;
 		case 0x43U: /* SRC_COPY_BLT */
 #if LOGGING_LEVEL >= 2
-			GLLog(3, "%s:   SRC_COPY_BLT\n", __FUNCTION__);
+			PPLog(3, "%s:   SRC_COPY_BLT\n", __FUNCTION__);
 #endif
 			skip = (cmd & 0xFFU) + 2U;
 			break;
@@ -1803,7 +1821,7 @@ uint32_t CLASS::decode_3d_1d(uint32_t* p, uint32_t cmd)
 			break;
 		case 0x83U: /* 3DSTATE_STIPPLE */
 #if LOGGING_LEVEL >= 4
-			GLLog(4, "%s: 3DSTATE_STIPPLE En %u, %#x\n", __FUNCTION__,
+			PPLog(4, "%s: 3DSTATE_STIPPLE En %u, %#x\n", __FUNCTION__,
 				  bit_select(p[1], 16,  1),
 				  bit_select(p[1],  0, 16));
 #endif
@@ -1811,7 +1829,7 @@ uint32_t CLASS::decode_3d_1d(uint32_t* p, uint32_t cmd)
 		case 0x85U: /* 3DSTATE_DST_BUF_VARS_CMD */
 #if LOGGING_LEVEL >= 4
 			if (cache_misc_reg(5U, p[1])) {
-				GLLog(4, "%s: 3DSTATE_DST_BUF_VARS_CMD Upper %#x, DHB %u, DVB %u, "
+				PPLog(4, "%s: 3DSTATE_DST_BUF_VARS_CMD Upper %#x, DHB %u, DVB %u, "
 					  "YUV %u, COLOR %u, DEPTH %u, VLS %u\n", __FUNCTION__,
 					  bit_select(p[1], 24, 8),
 					  bit_select(p[1], 20, 4),
@@ -1828,7 +1846,7 @@ uint32_t CLASS::decode_3d_1d(uint32_t* p, uint32_t cmd)
 			break;
 		case 0x89U: /* 3DSTATE_FOG_MODE_CMD */
 #if LOGGING_LEVEL >= 3
-			GLLog(3, "%s: 3DSTATE_FOG_MODE_CMD FFMEn %u, FF %u, FIMEn %u, FI %u, "
+			PPLog(3, "%s: 3DSTATE_FOG_MODE_CMD FFMEn %u, FF %u, FIMEn %u, FI %u, "
 				  "C1C2MEn %u, DMEn %u, C1 %u, C2 %u, D1 %u\n", __FUNCTION__,
 				  bit_select(p[1], 31, 1),
 				  bit_select(p[1], 28, 2),
@@ -1851,7 +1869,7 @@ uint32_t CLASS::decode_3d_1d(uint32_t* p, uint32_t cmd)
 			skip = ip_clear_params(p, cmd);
 			break;
 		default:
-			GLLog(1, "%s:   Unknown cmd %#x\n", __FUNCTION__, cmd);
+			PPLog(1, "%s:   Unknown cmd %#x\n", __FUNCTION__, cmd);
 			break;
 	}
 	return skip;
@@ -1865,7 +1883,7 @@ uint32_t CLASS::decode_3d(uint32_t* p, uint32_t cmd)
 		case 0x06U: /* 3DSTATE_AA_CMD */
 #if LOGGING_LEVEL >= 2
 			if (cache_misc_reg(0U, cmd & 0xFFFFFFU)) {
-				GLLog(3, "%s: 3DSTATE_AA_CMD EWEn %u, EW %u, RWEn %u, RW %u\n", __FUNCTION__,
+				PPLog(3, "%s: 3DSTATE_AA_CMD EWEn %u, EW %u, RWEn %u, RW %u\n", __FUNCTION__,
 					  bit_select(cmd, 16, 1),
 					  bit_select(cmd, 14, 2),
 					  bit_select(cmd,  8, 1),
@@ -1876,7 +1894,7 @@ uint32_t CLASS::decode_3d(uint32_t* p, uint32_t cmd)
 			break;
 		case 0x07U: /* 3DSTATE_RASTER_RULES_CMD */
 #if LOGGING_LEVEL >= 2
-			GLLog(3, "%s: 3DSTATE_RASTER_RULES_CMD %#x\n", __FUNCTION__, cmd & 0xFFFFFFU);
+			PPLog(3, "%s: 3DSTATE_RASTER_RULES_CMD %#x\n", __FUNCTION__, cmd & 0xFFFFFFU);
 #endif
 			skip = 1U;
 			break;
@@ -1888,7 +1906,7 @@ uint32_t CLASS::decode_3d(uint32_t* p, uint32_t cmd)
 		case 0x09U: /* 3DSTATE_BACKFACE_STENCIL_MASKS */
 #if LOGGING_LEVEL >= 4
 			if (cache_misc_reg(2U, cmd & 0xFFFFFFU)) {
-				GLLog(4, "%s: 3DSTATE_BACKFACE_STENCIL_MASKS STEn %u, SWEn %u, STM %u, SWM %u\n", __FUNCTION__,
+				PPLog(4, "%s: 3DSTATE_BACKFACE_STENCIL_MASKS STEn %u, SWEn %u, STM %u, SWM %u\n", __FUNCTION__,
 					  bit_select(cmd, 17, 1),
 					  bit_select(cmd, 16, 1),
 					  bit_select(cmd,  8, 8),
@@ -1904,7 +1922,7 @@ uint32_t CLASS::decode_3d(uint32_t* p, uint32_t cmd)
 			break;
 		case 0x0CU: /* 3DSTATE_MODES_5_CMD */
 #if LOGGING_LEVEL >= 4
-			GLLog(4, "%s:   modes5 FRC %u, FTC %u\n", __FUNCTION__,
+			PPLog(4, "%s:   modes5 FRC %u, FTC %u\n", __FUNCTION__,
 				  bit_select(cmd, 18, 1),
 				  bit_select(cmd, 16, 1));
 #endif
@@ -1917,7 +1935,7 @@ uint32_t CLASS::decode_3d(uint32_t* p, uint32_t cmd)
 			break;
 		case 0x15U: /* 3DSTATE_FOG_COLOR_CMD */
 #if LOGGING_LEVEL >= 3
-			GLLog(3, "%s: 3DSTATE_FOG_COLOR_CMD %#x\n", __FUNCTION__, cmd & 0xFFFFFFU);
+			PPLog(3, "%s: 3DSTATE_FOG_COLOR_CMD %#x\n", __FUNCTION__, cmd & 0xFFFFFFU);
 #endif
 			skip = 1U;
 			break;
@@ -1929,7 +1947,7 @@ uint32_t CLASS::decode_3d(uint32_t* p, uint32_t cmd)
 					break;
 				case 0x88U: /* 3DSTATE_DEPTH_SUBRECT_DISABLE */
 #if LOGGING_LEVEL >= 2
-					GLLog(3, "%s: 3DSTATE_DEPTH_SUBRECT_DISABLE %#x\n", __FUNCTION__, cmd & 0xFFFFFFU);
+					PPLog(3, "%s: 3DSTATE_DEPTH_SUBRECT_DISABLE %#x\n", __FUNCTION__, cmd & 0xFFFFFFU);
 #endif
 					skip = 1U;
 					break;
@@ -1945,12 +1963,83 @@ uint32_t CLASS::decode_3d(uint32_t* p, uint32_t cmd)
 	return skip;
 }
 
+#pragma mark -
+#pragma mark Global Methods
+#pragma mark -
+
+HIDDEN
+bool CLASS::init()
+{
+	if (!super::init())
+		return false;
+	Init();
+	return true;
+}
+
+HIDDEN
+CLASS* CLASS::factory(void)
+{
+	CLASS* inst;
+
+	inst = new CLASS;
+
+	if (inst && !inst->init())
+	{
+		inst->release();
+		inst = 0;
+	}
+
+	return (inst);
+}
+
+HIDDEN
+bool CLASS::start(class VMsvga2Accel* provider, int logLevel)
+{
+	if (!provider)
+		return false;
+	m_provider = provider;
+	m_log_level = logLevel;
+	m_float_cache = static_cast<float*>(IOMallocAligned(64U * sizeof(float), 16U));	// SSE-ready
+	if (!m_float_cache) {
+		PPLog(1, "%s: IOMallocAligned failed\n", __FUNCTION__);
+		return false;
+	}
+	m_context_id = m_provider->AllocContextID();	// Note: doesn't fail
+	if (m_provider->createContext(m_context_id) != kIOReturnSuccess) {
+		PPLog(1, "%s: Unable to create SVGA3D context\n", __FUNCTION__);
+		m_provider->FreeContextID(m_context_id);
+		m_context_id = SVGA_ID_INVALID;
+		Cleanup();
+		return false;
+	}
+	return true;
+}
+
+HIDDEN
+void CLASS::setFences(struct GLDFence* fences_ptr, size_t fences_len)
+{
+	m_fences_ptr = fences_ptr;
+	m_fences_len = fences_len;
+}
+
+HIDDEN
+void CLASS::stop(void)
+{
+	Cleanup();
+}
+
+HIDDEN
+void CLASS::discard_renderstate(void)
+{
+	param_cache_mask = 0U;
+}
+
 HIDDEN
 uint32_t CLASS::submit_buffer(uint32_t* kernel_buffer_ptr, uint32_t size_dwords)
 {
 	uint32_t *p, *limit, cmd, skip;
 #if LOGGING_LEVEL >= 4
-	GLLog(4, "%s:   offset %d, size %u [in dwords]\n", __FUNCTION__,
+	PPLog(4, "%s:   offset %d, size %u [in dwords]\n", __FUNCTION__,
 		  static_cast<int>(kernel_buffer_ptr - &m_command_buffer.kernel_ptr->downstream[0]),
 		  size_dwords);
 #endif
@@ -1971,7 +2060,7 @@ uint32_t CLASS::submit_buffer(uint32_t* kernel_buffer_ptr, uint32_t size_dwords)
 				break;
 		}
 		if (!skip) {
-			GLLog(1, "%s:   Unknown cmd %#x\n", __FUNCTION__, cmd);
+			PPLog(1, "%s:   Unknown cmd %#x\n", __FUNCTION__, cmd);
 			skip = 1U;
 		}
 	}

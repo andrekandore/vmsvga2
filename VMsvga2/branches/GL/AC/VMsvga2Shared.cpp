@@ -83,73 +83,6 @@ bool isPagedOn(GLDSysObject* sys_obj, uint8_t face, uint8_t mipmap)
 }
 
 HIDDEN
-IOReturn prepare_transfer_for_io(VMsvga2Accel* provider, VendorTransferBuffer* xfer)
-{
-	IOReturn rc;
-
-	if (!provider)
-		return kIOReturnNotReady;
-	if (!xfer)
-		return kIOReturnBadArgument;
-	if (isIdValid(xfer->gmr_id))
-		return kIOReturnSuccess;
-	if (!xfer->md)
-		return kIOReturnNotReady;
-	xfer->gmr_id = provider->AllocGMRID();
-	if (!isIdValid(xfer->gmr_id)) {
-#if 0
-		SHLog(1, "%s: Out of GMR IDs\n", __FUNCTION__);
-#endif
-		return kIOReturnNoResources;
-	}
-	rc = xfer->md->prepare();
-	if (rc != kIOReturnSuccess)
-		goto clean1;
-	rc = provider->createGMR(xfer->gmr_id, xfer->md);
-	if (rc != kIOReturnSuccess)
-		goto clean2;
-	return kIOReturnSuccess;
-
-clean2:
-	xfer->md->complete();
-clean1:
-	provider->FreeGMRID(xfer->gmr_id);
-	xfer->gmr_id = SVGA_ID_INVALID;
-	return rc;
-}
-
-HIDDEN
-void sync_transfer_io(VMsvga2Accel* provider, VendorTransferBuffer* xfer)
-{
-	if (!provider || !xfer || !xfer->fence)
-		return;
-	provider->SyncToFence(xfer->fence);
-	xfer->fence = 0U;
-}
-
-HIDDEN
-void complete_transfer_io(VMsvga2Accel* provider, VendorTransferBuffer* xfer)
-{
-	if (!provider || !xfer || !isIdValid(xfer->gmr_id))
-		return;
-	sync_transfer_io(provider, xfer);
-	provider->destroyGMR(xfer->gmr_id);
-	if (xfer->md)
-		xfer->md->complete();
-	provider->FreeGMRID(xfer->gmr_id);
-	xfer->gmr_id = SVGA_ID_INVALID;
-}
-
-HIDDEN
-void discard_transfer(VendorTransferBuffer* xfer)
-{
-	if (!xfer || !xfer->md)
-		return;
-	xfer->md->release();
-	xfer->md = 0;
-}
-
-HIDDEN
 IOReturn mapGLDTextureHeader(VMsvga2TextureBuffer* tx, IOMemoryMap** map)
 {
 	IOMemoryMap* mmap;
@@ -368,7 +301,7 @@ void CLASS::finalize_texture(class VMsvga2Accel* provider, VMsvga2TextureBuffer*
 		texture->client_map->release();
 		texture->client_map = 0;
 	}
-	discard_transfer(&texture->xfer);
+	texture->xfer.discard();
 	if (!provider)
 		return;
 	if (isIdValid(texture->yuv_shadow)) {
@@ -591,7 +524,7 @@ VMsvga2TextureBuffer* CLASS::common_texture_init(uint8_t object_type)
 	sys_obj->type = object_type;
 	sys_obj->in_use = 1U;
 	p->sys_obj_type = object_type;
-	p->xfer.gmr_id = SVGA_ID_INVALID;
+	p->xfer.init();
 	p->surface_id = SVGA_ID_INVALID;
 	p->yuv_shadow = SVGA_ID_INVALID;
 	p->surface_format = SVGA3D_FORMAT_INVALID;
@@ -869,7 +802,7 @@ IOReturn CLASS::pageoffDirtyTexture(VMsvga2TextureBuffer* tx)
 		return rc;
 	}
 	headers = reinterpret_cast<typeof headers>(mmap->getVirtualAddress()) + tx->min_mipmap;
-	rc = prepare_transfer_for_io(m_provider, &ltx->xfer);
+	rc = ltx->xfer.prepare(m_provider);
 	if (rc != kIOReturnSuccess) {
 		SHLog(1, "%s: prepare_transfer_for_io return %#x\n", __FUNCTION__, rc);
 		goto clean1;
@@ -904,11 +837,11 @@ IOReturn CLASS::pageoffDirtyTexture(VMsvga2TextureBuffer* tx)
 	tx->sys_obj->vstate &= ~0x20U;
 	if (sys_obj_type == TEX_TYPE_OOB)
 		ltx->sys_obj->vstate &= ~0x20U;
-	complete_transfer_io(m_provider, &ltx->xfer);
+	ltx->xfer.complete(m_provider);
 	return kIOReturnSuccess;
 
 clean2:
-	complete_transfer_io(m_provider, &ltx->xfer);
+	ltx->xfer.complete(m_provider);
 clean1:
 	if (mmap)
 		mmap->release();

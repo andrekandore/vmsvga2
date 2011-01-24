@@ -29,19 +29,7 @@
 #ifndef __GLCOMMON_H__
 #define __GLCOMMON_H__
 
-#if defined(GL_INCL_SHARED) || defined(GL_INCL_PUBLIC)
-struct VendorTransferBuffer {
-	uint32_t pad1;			//   0
-	uint32_t gart_ptr;		//   4
-	class IOMemoryDescriptor* md;
-							//   8
-	uint16_t offset12;		// offset 0xC - initialized to 4 in VMsvga2TextureBuffer
-	uint16_t counter14;		// offset 0xE
-							// 0x10 end
-	uint32_t gmr_id;
-	uint32_t fence;
-};
-#endif
+#include "VendorTransferBuffer.h"
 
 #if 0
 struct GLKMemoryElement {

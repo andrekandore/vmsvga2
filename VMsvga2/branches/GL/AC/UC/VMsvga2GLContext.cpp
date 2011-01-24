@@ -32,13 +32,13 @@
 #define GL_INCL_PUBLIC
 #define GL_INCL_PRIVATE
 #include "GLCommon.h"
-#include "Shaders.h"
 #include "UCGLDCommonTypes.h"
 #include "UCMethods.h"
 #include "VLog.h"
 #include "VMsvga2Accel.h"
 #include "VMsvga2Device.h"
 #include "VMsvga2GLContext.h"
+#include "VMsvga2IPP.h"
 #include "VMsvga2Shared.h"
 #include "VMsvga2Surface.h"
 
@@ -125,23 +125,13 @@ void unlockAccel(VMsvga2Accel* accel)
 {
 }
 
-static inline
-uint32_t GMR_VRAM(void)
-{
-	return static_cast<uint32_t>(-2) /* SVGA_GMR_FRAMEBUFFER */;
-}
-
+#if 0
 static inline
 void memset32(void* dest, uint32_t value, size_t size)
 {
 	__asm__ volatile ("cld; rep stosl" : "+c" (size), "+D" (dest) : "a" (value) : "memory");
 }
 
-void complete_transfer_io(VMsvga2Accel* provider, VendorTransferBuffer* xfer);
-void discard_transfer(VendorTransferBuffer* xfer);
-#if 0
-IOReturn prepare_transfer_for_io(VMsvga2Accel* provider, VendorTransferBuffer* xfer);
-void sync_transfer_io(VMsvga2Accel* provider, VendorTransferBuffer* xfer);
 void readHostVramSimple(VMsvga2Accel* m_provider, uint32_t sid, size_t offset_in_vram, uint32_t w, uint32_t h, uint32_t pitch, uint32_t* fence);
 void blitGarbageToScreen(VMsvga2Accel* m_provider, size_t offset_in_vram, uint32_t w, uint32_t h, uint32_t pitch);
 #endif
@@ -153,14 +143,9 @@ void blitGarbageToScreen(VMsvga2Accel* m_provider, size_t offset_in_vram, uint32
 HIDDEN
 void CLASS::Init()
 {
-	m_context_id = SVGA_ID_INVALID;
-	m_arrays.sid = SVGA_ID_INVALID;
-	m_arrays.gmr_id = SVGA_ID_INVALID;
-	m_active_shid = SVGA_ID_INVALID - 1;
-	m_command_buffer.xfer.gmr_id = SVGA_ID_INVALID;
-	m_context_buffer0.xfer.gmr_id = SVGA_ID_INVALID;
-	m_context_buffer1.xfer.gmr_id = SVGA_ID_INVALID;
-	memset32(&m_intel_state.surface_ids[0], SVGA_ID_INVALID, 16U);
+	m_command_buffer.xfer.init();
+	m_context_buffer0.xfer.init();
+	m_context_buffer1.xfer.init();
 }
 
 HIDDEN
@@ -180,17 +165,23 @@ void CLASS::Cleanup()
 		m_gc->release();
 		m_gc = 0;
 	}
-	complete_transfer_io(m_provider, &m_command_buffer.xfer);
-	discard_transfer(&m_command_buffer.xfer);
-	discard_transfer(&m_context_buffer0.xfer);
-	discard_transfer(&m_context_buffer1.xfer);
+	m_command_buffer.xfer.complete(m_provider);
+	m_command_buffer.xfer.discard();
+	m_context_buffer0.xfer.discard();
+	m_context_buffer1.xfer.discard();
 	if (m_fences) {
+		if (m_ipp)
+			m_ipp->setFences(0, 0U);
 		m_fences->release();
 		m_fences = 0;
 		m_fences_len = 0U;
 		m_fences_ptr = 0;
 	}
-	CleanupIpp();
+	if (m_ipp) {
+		m_ipp->stop();
+		m_ipp->release();
+		m_ipp = 0;
+	}
 	CleanupApp();
 }
 
@@ -213,8 +204,6 @@ bool CLASS::allocCommandBuffer(VMsvga2CommandBuffer* buffer, size_t size)
 		return false;
 	buffer->size = size;
 	buffer->kernel_ptr = static_cast<VendorCommandBufferHeader*>(bmd->getBytesNoCopy());
-	buffer->xfer.gmr_id = SVGA_ID_INVALID;
-	buffer->xfer.fence = 0U;
 	initCommandBufferHeader(buffer->kernel_ptr, size);
 	return true;
 }
@@ -243,8 +232,6 @@ bool CLASS::allocAllContextBuffers()
 	if (!bmd)
 		return false;
 	m_context_buffer0.kernel_ptr = static_cast<VendorCommandBufferHeader*>(bmd->getBytesNoCopy());
-	m_context_buffer0.xfer.gmr_id = SVGA_ID_INVALID;
-	m_context_buffer0.xfer.fence = 0U;
 	p = m_context_buffer0.kernel_ptr;
 	bzero(p, sizeof *p);
 	p->flags = 1;
@@ -265,8 +252,6 @@ bool CLASS::allocAllContextBuffers()
 		return false; // TBD frees previous ones
 	m_context_buffer1.xfer.md = bmd;
 	m_context_buffer1.kernel_ptr = static_cast<VendorCommandBufferHeader*>(bmd->getBytesNoCopy());
-	m_context_buffer1.xfer.gmr_id = SVGA_ID_INVALID;
-	m_context_buffer1.xfer.fence = 0U;
 	p = m_context_buffer1.kernel_ptr;
 	bzero(p, sizeof *p);
 	p->flags = 1;
@@ -284,116 +269,6 @@ IOReturn CLASS::get_status(uint32_t* status)
 	 */
 	*status = 1;
 	return kIOReturnSuccess;
-}
-
-HIDDEN
-IOReturn CLASS::alloc_arrays(size_t num_bytes, uint8_t** ptr)
-{
-	size_t alloc_bytes;
-	IOReturn rc;
-
-	if (!m_provider)
-		return kIOReturnNotReady;
-	num_bytes = (num_bytes + sizeof(uint32_t) - 1U) & -sizeof(uint32_t);
-	if (m_arrays.kernel_ptr) {
-		if (m_arrays.next_avail + num_bytes <= m_arrays.size_bytes)
-			goto done;
-		if (num_bytes <= m_arrays.size_bytes) {
-			if (m_arrays.fence) {
-				m_provider->SyncToFence(m_arrays.fence);
-				m_arrays.fence = 0U;
-			}
-			m_arrays.next_avail = 0U;
-			goto done;
-		}
-		purge_arrays();
-	}
-	alloc_bytes = (num_bytes + PAGE_MASK) & -PAGE_SIZE;
-	m_arrays.sid = m_provider->AllocSurfaceID();
-	rc = m_provider->createSurface(m_arrays.sid,
-								   SVGA3dSurfaceFlags(SVGA3D_SURFACE_HINT_VERTEXBUFFER |
-													  SVGA3D_SURFACE_HINT_DYNAMIC |
-													  SVGA3D_SURFACE_HINT_WRITEONLY),
-								   SVGA3D_BUFFER,
-								   static_cast<uint32_t>(alloc_bytes),
-								   1U);
-	if (rc != kIOReturnSuccess) {
-		m_provider->FreeSurfaceID(m_arrays.sid);
-		m_arrays.sid = SVGA_ID_INVALID;
-		return rc;
-	}
-	m_arrays.kernel_ptr = static_cast<uint8_t*>(m_provider->VRAMMalloc(alloc_bytes));
-	if (!m_arrays.kernel_ptr) {
-		purge_arrays();
-		return kIOReturnNoMemory;
-	}
-	m_arrays.size_bytes = alloc_bytes;
-	m_arrays.offset_in_gmr = m_provider->offsetInVRAM(m_arrays.kernel_ptr);
-	m_arrays.gmr_id = GMR_VRAM();
-done:
-	*ptr = m_arrays.kernel_ptr + m_arrays.next_avail;
-	m_arrays.next_avail += num_bytes;
-	return kIOReturnSuccess;
-}
-
-HIDDEN
-void CLASS::purge_arrays()
-{
-	if (!m_provider)
-		return;
-	if (m_arrays.fence) {
-		m_provider->SyncToFence(m_arrays.fence);
-		m_arrays.fence = 0U;
-	}
-	m_arrays.gmr_id = SVGA_ID_INVALID;
-	if (m_arrays.kernel_ptr) {
-		m_provider->VRAMFree(m_arrays.kernel_ptr);
-		m_arrays.kernel_ptr = 0;
-		m_arrays.size_bytes = 0U;
-		m_arrays.offset_in_gmr = 0U;
-		m_arrays.next_avail = 0U;
-	}
-	if (isIdValid(m_arrays.sid)) {
-		m_provider->destroySurface(m_arrays.sid);
-		m_provider->FreeSurfaceID(m_arrays.sid);
-		m_arrays.sid = SVGA_ID_INVALID;
-	}
-}
-
-HIDDEN
-IOReturn CLASS::upload_arrays(uint8_t const* ptr, size_t num_bytes, uint32_t* sid)
-{
-	SVGA3dSurfaceImageId hostImage;
-	SVGA3dCopyBox copyBox;
-	VMsvga2Accel::ExtraInfoEx extra;
-	size_t additional_offset;
-
-	if (!m_provider)
-		return kIOReturnNotReady;
-	if (ptr < m_arrays.kernel_ptr)
-		return kIOReturnUnderrun;
-	additional_offset = ptr - m_arrays.kernel_ptr;
-	if (additional_offset + num_bytes > m_arrays.size_bytes)
-		return kIOReturnOverrun;
-	extra.mem_gmr_id = m_arrays.gmr_id;
-	extra.mem_offset_in_gmr = m_arrays.offset_in_gmr + additional_offset;
-	extra.mem_pitch = 0U;
-	extra.mem_limit = num_bytes;
-	extra.suffix_flags = 3U;
-	bzero(&copyBox, sizeof copyBox);
-	copyBox.w = static_cast<uint32_t>(num_bytes);
-	copyBox.h = 1U;
-	copyBox.d = 1U;
-	hostImage.sid = m_arrays.sid;
-	if (sid)
-		*sid = m_arrays.sid;
-	hostImage.face = 0U;
-	hostImage.mipmap = 0U;
-	return m_provider->surfaceDMA3DEx(&hostImage,
-									  SVGA3D_WRITE_HOST_VRAM,
-									  &copyBox,
-									  &extra,
-									  &m_arrays.fence);
 }
 
 #pragma mark -
@@ -463,7 +338,7 @@ IOReturn CLASS::clientMemoryForType(UInt32 type, IOOptionBits* options, IOMemory
 			 * TBD: Huge amount of code to process previous command buffer
 			 *   A0B7-AB58
 			 */
-			if (!m_shared)
+			if (!m_shared || !m_ipp)
 				return kIOReturnNotReady;
 			m_shared->lockShared();
 			pcbRet = processCommandBuffer(&result);
@@ -473,7 +348,7 @@ IOReturn CLASS::clientMemoryForType(UInt32 type, IOOptionBits* options, IOMemory
 				*memory = 0;
 				return kIOReturnBadArgument;
 			}
-			submit_buffer(result.next, result.ds_count_dwords);
+			m_ipp->submit_buffer(result.next, result.ds_count_dwords);
 			for (d = 0U; d != 16U; ++d)
 				if (m_txs[d]) {
 					removeTextureFromStream(m_txs[d]);
@@ -484,7 +359,7 @@ IOReturn CLASS::clientMemoryForType(UInt32 type, IOOptionBits* options, IOMemory
 			m_shared->unlockShared();
 			if ((pcbRet & 2U) && m_surface_client)
 				m_surface_client->touchRenderTarget();
-			complete_transfer_io(m_provider, &m_command_buffer.xfer);
+			m_command_buffer.xfer.complete(m_provider);
 #if 0
 			if (m_autoflush && (pcbRet & 2U) && m_surface_client) {
 				GLLog(3, "%s: autoflushing\n", __FUNCTION__);
@@ -557,6 +432,8 @@ IOReturn CLASS::clientMemoryForType(UInt32 type, IOOptionBits* options, IOMemory
 				m_fences_len = d;
 				m_fences_ptr = static_cast<typeof m_fences_ptr>(fptr);
 			}
+			if (m_ipp)
+				m_ipp->setFences(m_fences_ptr, m_fences_len);
 			m_fences->retain();
 			*options = 0;
 			*memory = m_fences;
@@ -645,16 +522,10 @@ bool CLASS::start(IOService* provider)
 		super::stop(provider);
 		return false;
 	}
-	m_float_cache = static_cast<float*>(IOMallocAligned(64U * sizeof(float), 16U));	// SSE-ready
-	if (!m_float_cache) {
-		GLLog(1, "%s: IOMallocAligned failed\n", __FUNCTION__);
-		goto bad;
-	}
-	m_context_id = m_provider->AllocContextID();	// Note: doesn't fail
-	if (m_provider->createContext(m_context_id) != kIOReturnSuccess) {
-		GLLog(1, "%s: Unable to create SVGA3D context\n", __FUNCTION__);
-		m_provider->FreeContextID(m_context_id);
-		m_context_id = SVGA_ID_INVALID;
+	m_ipp = VMsvga2IPP::factory();
+	if (!m_ipp ||
+		!m_ipp->start(m_provider, m_log_level)) {
+		GLLog(1, "%s: Failed to create Pipeline Processor\n", __FUNCTION__);
 		goto bad;
 	}
 	// TBD getVRAMDescriptors
@@ -712,7 +583,9 @@ IOReturn CLASS::set_surface(uintptr_t surface_id, uintptr_t /* eIOGLContextModeB
 	VMsvga2Surface* surface_client;
 	IOReturn rc;
 	GLLog(2, "%s(%#lx, %#lx, %lu, %lu)\n", __FUNCTION__, surface_id, context_mode_bits, c3, c4);
-	ipp_discard_renderstate();
+	if (!m_ipp)
+		return kIOReturnNotReady;
+	m_ipp->discard_renderstate();
 	if (!surface_id) {
 		if (m_surface_client) {
 			m_surface_client->detachGL();
@@ -734,7 +607,7 @@ IOReturn CLASS::set_surface(uintptr_t surface_id, uintptr_t /* eIOGLContextModeB
 		m_surface_client->release();
 		m_surface_client = 0;
 	}
-	rc = surface_client->attachGL(m_context_id, static_cast<uint32_t>(context_mode_bits));
+	rc = surface_client->attachGL(m_ipp->getContextId(), static_cast<uint32_t>(context_mode_bits));
 	if (rc != kIOReturnSuccess) {
 		surface_client->release();
 		return rc;
@@ -945,7 +818,7 @@ IOReturn CLASS::read_buffer(struct sIOGLContextReadBufferData const* struct_in, 
 	GLLog(3, "%s: depth surface id %u, w == %u, h == %u\n", __FUNCTION__, hostImage.sid, sw, sh);
 #endif
 	bzero(&xfer, sizeof xfer);
-	xfer.gmr_id = SVGA_ID_INVALID;
+	xfer.init();
 	bzero(&copyBox, sizeof copyBox);
 	copyBox.x = struct_in->x;
 	copyBox.y = struct_in->y;
@@ -970,9 +843,9 @@ IOReturn CLASS::read_buffer(struct sIOGLContextReadBufferData const* struct_in, 
 												   m_owning_task);
 	if (!xfer.md)
 		return kIOReturnNoResources;
-	rc = prepare_transfer_for_io(m_provider, &xfer);
+	rc = xfer.prepare(m_provider);
 	if (rc != kIOReturnSuccess) {
-		discard_transfer(&xfer);
+		xfer.discard();
 		return rc;
 	}
 	extra.mem_gmr_id = xfer.gmr_id;
@@ -1010,8 +883,8 @@ IOReturn CLASS::read_buffer(struct sIOGLContextReadBufferData const* struct_in, 
 		GLLog(3, "%s:   pixel value after == %#x, %s\n", __FUNCTION__, small_buf,
 			  small_buf == 'vmwr' ? "failed" : "succeeded");
 #endif
-	complete_transfer_io(m_provider, &xfer);
-	discard_transfer(&xfer);
+	xfer.complete(m_provider);
+	xfer.discard();
 	m_provider->VRAMFree(data_ptr);
 	return rc;
 #endif

@@ -36,6 +36,7 @@
 #include "VLog.h"
 #include "VMsvga2Accel.h"
 #include "VMsvga2GLContext.h"
+#include "VMsvga2IPP.h"
 #include "VMsvga2Shared.h"
 #include "VMsvga2Surface.h"
 
@@ -294,8 +295,6 @@ bool need_yuv_shadow(VMsvga2Accel* provider, int surface_format)
 }
 
 IOReturn mapGLDTextureHeader(VMsvga2TextureBuffer* tx, IOMemoryMap** map);
-IOReturn prepare_transfer_for_io(VMsvga2Accel* provider, VendorTransferBuffer* xfer);
-void complete_transfer_io(VMsvga2Accel* provider, VendorTransferBuffer* xfer);
 
 #pragma mark -
 #pragma mark Private Dispatch Tables [Apple]
@@ -574,8 +573,8 @@ void CLASS::submit_midbuffer(VendorGLStreamInfo* info)
 								  __LINE__);
 #else
 		m_command_buffer.submit_stamp =
-		submit_buffer(&m_command_buffer.kernel_ptr->downstream[0] + info->dso_bytes / sizeof(uint32_t),
-					  wc - 2U);
+		m_ipp->submit_buffer(&m_command_buffer.kernel_ptr->downstream[0] + info->dso_bytes / sizeof(uint32_t),
+							 wc - 2U);
 #endif
 	} 
 	info->dso_bytes += wc * static_cast<uint32_t>(sizeof(uint32_t));
@@ -900,7 +899,7 @@ IOReturn CLASS::alloc_and_load_texture(VMsvga2TextureBuffer* tx)
 		goto clean1;
 	}
 	hostImage.sid = tx->surface_id;
-	rc = prepare_transfer_for_io(m_provider, &ltx->xfer);
+	rc = ltx->xfer.prepare(m_provider);
 	if (rc != kIOReturnSuccess) {
 		GLLog(1, "%s: prepare_transfer_for_io return %#x\n", __FUNCTION__, rc);
 		goto clean1;
@@ -962,11 +961,11 @@ IOReturn CLASS::alloc_and_load_texture(VMsvga2TextureBuffer* tx)
 				tx->sys_obj->pageon[hostImage.face] |= tx->sys_obj->pageoff[hostImage.face];
 			break;
 	}
-	complete_transfer_io(m_provider, &ltx->xfer); // ugh... to get rid of this need set up a garbage-collection mechanism
+	ltx->xfer.complete(m_provider); // ugh... to get rid of this need set up a garbage-collection mechanism
 	return kIOReturnSuccess;
 
 clean2:
-	complete_transfer_io(m_provider, &ltx->xfer);
+	ltx->xfer.complete(m_provider);
 clean1:
 	if (mmap)
 		mmap->release();
@@ -1010,7 +1009,7 @@ IOReturn CLASS::tex_subimage_2d(VMsvga2TextureBuffer* tx,
 		return rc;
 	}
 	hostImage.sid = tx->surface_id;
-	rc = prepare_transfer_for_io(m_provider, &m_command_buffer.xfer);
+	rc = m_command_buffer.xfer.prepare(m_provider);
 	if (rc != kIOReturnSuccess) {
 		GLLog(1, "%s: prepare_transfer_for_io return %#x\n", __FUNCTION__, rc);
 		return rc;
