@@ -151,6 +151,12 @@ void CLASS::Init()
 HIDDEN
 void CLASS::Cleanup()
 {
+	if (m_ipp) {
+		m_ipp->stop();
+		m_ipp->release();
+		m_ipp = 0;
+	}
+	CleanupApp();
 	if (m_shared) {
 		m_shared->release();
 		m_shared = 0;
@@ -170,19 +176,11 @@ void CLASS::Cleanup()
 	m_context_buffer0.xfer.discard();
 	m_context_buffer1.xfer.discard();
 	if (m_fences) {
-		if (m_ipp)
-			m_ipp->setFences(0, 0U);
 		m_fences->release();
 		m_fences = 0;
 		m_fences_len = 0U;
 		m_fences_ptr = 0;
 	}
-	if (m_ipp) {
-		m_ipp->stop();
-		m_ipp->release();
-		m_ipp = 0;
-	}
-	CleanupApp();
 }
 
 HIDDEN
@@ -585,9 +583,11 @@ IOReturn CLASS::set_surface(uintptr_t surface_id, uintptr_t /* eIOGLContextModeB
 	GLLog(2, "%s(%#lx, %#lx, %lu, %lu)\n", __FUNCTION__, surface_id, context_mode_bits, c3, c4);
 	if (!m_ipp)
 		return kIOReturnNotReady;
-	m_ipp->discard_renderstate();
+	m_ipp->discard_cached_state();
 	if (!surface_id) {
 		if (m_surface_client) {
+			if (!m_fbo[0])
+				m_ipp->detach_render_targets();
 			m_surface_client->detachGL();
 			m_surface_client->release();
 			m_surface_client = 0;
@@ -600,14 +600,24 @@ IOReturn CLASS::set_surface(uintptr_t surface_id, uintptr_t /* eIOGLContextModeB
 	if (!surface_client)
 		return kIOReturnNotFound;
 	if (surface_client == m_surface_client)
+		/*
+		 * Note: When the surface is resized (any size change), the
+		 *   GLD issues a new DrawBuffer command, which causes
+		 *   the new surfaces to get attached, in case they were
+		 *   recreated by resizeGL().
+		 *   If the size doesn't change, the GLD does not issue
+		 *   a new DrawBuffer command.
+		 */
 		return m_surface_client->resizeGL();
 	surface_client->retain();
 	if (m_surface_client) {
+		if (!m_fbo[0])
+			m_ipp->detach_render_targets();
 		m_surface_client->detachGL();
 		m_surface_client->release();
 		m_surface_client = 0;
 	}
-	rc = surface_client->attachGL(m_ipp->getContextId(), static_cast<uint32_t>(context_mode_bits));
+	rc = surface_client->attachGL(static_cast<uint32_t>(context_mode_bits));
 	if (rc != kIOReturnSuccess) {
 		surface_client->release();
 		return rc;
@@ -746,25 +756,20 @@ bad_exit:
 HIDDEN
 IOReturn CLASS::read_buffer(struct sIOGLContextReadBufferData const* struct_in, size_t struct_in_size)
 {
-#if 0
 	IOReturn rc;
 	VendorTransferBuffer xfer;
 	SVGA3dSurfaceImageId hostImage;
 	SVGA3dCopyBox copyBox;
 	VMsvga2Accel::ExtraInfoEx extra;
-#if LOGGING_LEVEL >= 2
-	uint8_t* data_ptr;
-	size_t dpo;
-	uint32_t small_buf, sw, sh, spitch, ssize;
-#endif
-#endif
 
 	GLLog(2, "%s(struct_in, %lu)\n", __FUNCTION__, struct_in_size);
 	if (struct_in_size < sizeof *struct_in)
 		return kIOReturnBadArgument;
+#if LOGGING_LEVEL >= 3
 	GLLog(3, "%s:  x == %u, y == %u, w == %u, h == %u, data_type == %u, pitch == %u, addr == %#llx\n", __FUNCTION__,
 		  struct_in->x, struct_in->y, struct_in->width, struct_in->height,
 		  struct_in->data_type, struct_in->pitch, struct_in->addr);
+#endif
 #if 0
 	// var_20 = 0xa0a;
 	// var_34 = 3;
@@ -799,7 +804,6 @@ IOReturn CLASS::read_buffer(struct sIOGLContextReadBufferData const* struct_in, 
 			return kIOReturnBadArgument;
 	}
 #endif
-#if 0
 	/*
 	 * Known data types
 	 *   4U - depth buffer
@@ -807,16 +811,12 @@ IOReturn CLASS::read_buffer(struct sIOGLContextReadBufferData const* struct_in, 
 	if (!m_surface_client)	// Note: Apple's code doesn't implement read_buffer on a ReadFBO (!)
 		return kIOReturnCannotLock;
 	if (struct_in->data_type != 4U)
-		return kIOReturnUnsupported;
+		return kIOReturnSuccess /* kIOReturnUnsupported */;
 	bzero(&hostImage, sizeof hostImage);
 	if (!m_surface_client->getSurfacesForGL(0, &hostImage.sid))
 		return kIOReturnCannotLock;
 	if (!isIdValid(hostImage.sid))
 		return kIOReturnNotAttached;
-#if LOGGING_LEVEL >= 2
-	m_surface_client->getBoundsForGL(&sw, &sh, 0, 0);
-	GLLog(3, "%s: depth surface id %u, w == %u, h == %u\n", __FUNCTION__, hostImage.sid, sw, sh);
-#endif
 	bzero(&xfer, sizeof xfer);
 	xfer.init();
 	bzero(&copyBox, sizeof copyBox);
@@ -825,11 +825,7 @@ IOReturn CLASS::read_buffer(struct sIOGLContextReadBufferData const* struct_in, 
 	copyBox.w = struct_in->width;
 	copyBox.h = struct_in->height;
 	copyBox.d = 1U;
-	bzero(&extra, sizeof extra);
 	extra.mem_offset_in_gmr = static_cast<vm_offset_t>(struct_in->addr & page_mask);
-#if LOGGING_LEVEL >= 2
-	GLLog(3, "%s: offset_in_gmr == %#x\n", __FUNCTION__, static_cast<unsigned>(extra.mem_offset_in_gmr));
-#endif
 	extra.mem_pitch = struct_in->pitch;
 	extra.mem_limit = 0xFFFFFFFFU;
 	extra.suffix_flags = 2U;
@@ -849,46 +845,14 @@ IOReturn CLASS::read_buffer(struct sIOGLContextReadBufferData const* struct_in, 
 		return rc;
 	}
 	extra.mem_gmr_id = xfer.gmr_id;
-#if LOGGING_LEVEL >= 2
-	small_buf = 'vmwr';
-	xfer.md->writeBytes(extra.mem_offset_in_gmr, &small_buf, sizeof small_buf);
-#endif
-#if 0
 	rc = m_provider->surfaceDMA3DEx(&hostImage,
 									SVGA3D_READ_HOST_VRAM,
 									&copyBox,
 									&extra,
 									&xfer.fence);
-#else
-	spitch = sw * 4U;
-	ssize = sh * spitch;
-	data_ptr = static_cast<typeof data_ptr>(m_provider->VRAMMalloc(ssize));
-	dpo = m_provider->offsetInVRAM(data_ptr);
-	memset32(data_ptr, 0xFF0000U, ssize / 4U);
-	readHostVramSimple(m_provider,
-					   hostImage.sid,
-					   dpo,
-					   sw,
-					   sh,
-					   spitch,
-					   &xfer.fence);
-	rc = kIOReturnSuccess;
-#endif
-#if LOGGING_LEVEL >= 2
-	m_provider->SyncToFence(xfer.fence);
-	blitGarbageToScreen(m_provider, dpo, sw, sh, spitch);
-	small_buf = *reinterpret_cast<uint32_t*>(data_ptr + struct_in->y * spitch + struct_in->x * 4);
-	xfer.md->writeBytes(extra.mem_offset_in_gmr, &small_buf, sizeof small_buf);
-//	if (xfer.md->readBytes(extra.mem_offset_in_gmr, &small_buf, sizeof small_buf) >= sizeof small_buf)
-		GLLog(3, "%s:   pixel value after == %#x, %s\n", __FUNCTION__, small_buf,
-			  small_buf == 'vmwr' ? "failed" : "succeeded");
-#endif
 	xfer.complete(m_provider);
 	xfer.discard();
-	m_provider->VRAMFree(data_ptr);
 	return rc;
-#endif
-	return kIOReturnSuccess;
 }
 
 HIDDEN

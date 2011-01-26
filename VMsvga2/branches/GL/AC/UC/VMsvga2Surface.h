@@ -74,12 +74,6 @@ private:
 	uint32_t m_pixel_format;
 
 	/*
-	 * 3D stuff
-	 */
-	uint32_t m_aux_surface_id[2];
-	uint32_t m_aux_context_id;
-
-	/*
 	 * Backing stuff
 	 */
 	struct {
@@ -139,8 +133,8 @@ private:
 	struct {
 		int original_mode_bits;
 		IOAccelSize rt_size;	// render target size
-		uint32_t cid;
-		uint32_t color_sid;		// TBD: support two of these for double-buffering
+		int volatile attach_count;
+		uint32_t color_sid;
 		uint32_t depth_sid;
 		int ds_format;
 		uint8_t volatile rt_dirty;
@@ -284,7 +278,7 @@ public:
 	uint8_t getBytesPerPixel() const { return m_bytes_per_pixel; }
 	void getBoundsForGL(uint32_t* inner_width, uint32_t* inner_height, uint32_t* outer_width, uint32_t* outer_height) const;
 	bool getSurfacesForGL(uint32_t* color_sid, uint32_t* depth_sid) const;
-	IOReturn attachGL(uint32_t context_id, int cmb);
+	IOReturn attachGL(int cmb);
 	IOReturn resizeGL();
 	IOReturn detachGL();
 	void touchRenderTarget();

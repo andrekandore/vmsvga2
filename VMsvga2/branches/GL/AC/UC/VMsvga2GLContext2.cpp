@@ -411,20 +411,36 @@ HIDDEN
 
 void CLASS::CleanupApp()
 {
-	int i;
-	/*
-	 * TBD: There may be left over refcounted textures on m_txs.
-	 *   should we expect m_shared to destroy them?
-	 *   We shouldn't because there may be other GL contexts
-	 *   connected to the same m_shared, so we should lock
-	 *   m_shared and deref them. [Make sure to do this
-	 *   before releasing m_shared.]
-	 */
+	int i, count;
+	VMsvga2TextureBuffer* del_txs[21];
+	if (m_fbo[0]) {
+		for (i = 0; i != 2; ++i)
+			if (m_txs[17 + i]) {
+				dirtyTexture(m_txs[17 + i],
+							 m_fbo[0]->txs[i].face,
+							 m_fbo[0]->txs[i].mipmap);
+			}
+	}
 	for (i = 0; i != 2; ++i)
 		if (m_fbo[i]) {
 			IOFree(m_fbo[i], sizeof(FBODescriptor));
 			m_fbo[i] = 0;
 		}
+	if (!m_shared)
+		return;
+	for (i = 0, count = 0; i != 21; ++i)
+		if (m_txs[i]) {
+			if (__sync_fetch_and_add(&m_txs[i]->sys_obj->refcount, -1) == 1) {
+				del_txs[count++] = m_txs[i];
+			}
+			m_txs[i] = 0;
+		}
+	if (count <= 0)
+		return;
+	m_shared->lockShared();
+	for (i = 0; i != count; ++i)
+		m_shared->delete_texture(del_txs[i]);
+	m_shared->unlockShared();
 }
 
 HIDDEN
@@ -1040,7 +1056,7 @@ void CLASS::setup_drawbuffer_registers(uint32_t* p)
 	p[3] = 0x7D8E0001U; /* 3DSTATE_BUF_INFO_CMD */
 	p[4] = 0x07800000U;	/* BUF_3D_ID_DEPTH | BUF_3D_USE_FENCE */
 	/*
-	 * DRAW_RECT is Intel's version of setViewPort()
+	 * DRAW_RECT is Intel's version of SetViewPort()
 	 */
 	p[6]  = 0x7D800003U; /* 3DSTATE_DRAW_RECT_CMD */
 	if (m_fbo[0]) {
@@ -1061,7 +1077,7 @@ void CLASS::setup_drawbuffer_registers(uint32_t* p)
 	} else if (m_surface_client) {
 		m_surface_client->getSurfacesForGL(&p[2], &p[5]);
 		/*
-		 * This viewPort setting is probably not right,
+		 * This ViewPort setting is probably not right,
 		 *   but it'll do for now.
 		 */
 		m_drawrect[0] = 0U;

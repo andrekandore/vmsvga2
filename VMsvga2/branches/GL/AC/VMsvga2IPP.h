@@ -120,8 +120,8 @@ public:
 	bool start(class VMsvga2Accel* provider, int logLevel);
 	void setFences(struct GLDFence* fences_ptr, size_t fences_len);
 	void stop(void);
-	uint32_t getContextId(void) const { return m_context_id; }
-	void discard_renderstate(void);
+	void discard_cached_state(void);
+	void detach_render_targets(void);
 	uint32_t submit_buffer(uint32_t* kernel_buffer_ptr, uint32_t size_dwords);
 };
 

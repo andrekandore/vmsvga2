@@ -399,27 +399,29 @@ void CLASS::timeSyncs()
 HIDDEN
 bool CLASS::createMasterSurface(uint32_t width, uint32_t height)
 {
-	bool rc;
-	uint32_t cid;
+	IOReturn rc;
 
 	m_master_surface_id = AllocSurfaceID();
-	cid = AllocContextID();
-	rc = createClearSurface(m_master_surface_id,
-							cid,
-							SVGA3D_X8R8G8B8,
-							width,
-							height);
-	FreeContextID(cid);
-	if (!rc)
+	rc = createSurface(m_master_surface_id,
+					   SVGA3dSurfaceFlags(0),
+					   SVGA3D_X8R8G8B8,
+					   width,
+					   height);
+	if (rc != kIOReturnSuccess) {
 		FreeSurfaceID(m_master_surface_id);
-	return rc;
+		m_master_surface_id = SVGA_ID_INVALID;
+	}
+	return rc == kIOReturnSuccess;
 }
 
 HIDDEN
 void CLASS::destroyMasterSurface()
 {
+	if (static_cast<int>(m_master_surface_id) < 0)
+		return;
 	destroySurface(m_master_surface_id);
 	FreeSurfaceID(m_master_surface_id);
+	m_master_surface_id = SVGA_ID_INVALID;
 }
 
 HIDDEN
@@ -659,6 +661,7 @@ bool CLASS::init(OSDictionary* dictionary)
 	m_log_level_ac = LOGGING_LEVEL;
 	m_log_level_ga = -1;
 	m_log_level_gld = -1;
+	m_master_surface_id = SVGA_ID_INVALID;
 	m_blitbug_result = kIOReturnNotFound;
 	m_present_tracker.init();
 	return true;
@@ -1049,13 +1052,17 @@ IOReturn CLASS::RectFill3D(uint32_t color,
 		IOFree(rgn, s);
 		return kIOReturnError;
 	}
-	setupRenderContext(cid, sid);
-	clearContext(cid,
-				 static_cast<SVGA3dClearFlag>(SVGA3D_CLEAR_COLOR),
-				 rgn,
-				 color,
-				 1.0F,
-				 0);
+	/*
+	 * Note: I think MasterSurface needs to have flags
+	 *   SVGA3D_SURFACE_HINT_RENDERTARGET for this to work.
+	 */
+	setRenderTarget(cid, SVGA3D_RT_COLOR0, sid);
+	clear(cid,
+		  static_cast<SVGA3dClearFlag>(SVGA3D_CLEAR_COLOR),
+		  rgn,
+		  color,
+		  1.0F,
+		  0);
 	destroyContext(cid);
 	FreeContextID(cid);
 	bzero(&extra, sizeof extra);
@@ -1475,45 +1482,6 @@ IOReturn CLASS::destroyContext(uint32_t cid)
 }
 
 HIDDEN
-bool CLASS::createClearSurface(uint32_t sid,
-							   uint32_t cid,
-							   SVGA3dSurfaceFormat format,
-							   uint32_t width,
-							   uint32_t height,
-							   uint32_t color)
-{
-	DefineRegion<1U> tmpRegion;
-
-	if (!width || !height)
-		return false;
-	/*
-	 * Note: according to VMware documentation, if a surface with the same
-	 *   sid already exists, the old surface is deleted and a new one
-	 *   is created in its place.
-	 */
-	if (createSurface(sid,
-					  SVGA3dSurfaceFlags(0),
-					  format,
-					  width,
-					  height) != kIOReturnSuccess)
-		return false;
-	if (createContext(cid) != kIOReturnSuccess) {
-		destroySurface(sid);
-		return false;
-	}
-	setRenderTarget(cid, SVGA3D_RT_COLOR0, sid);
-	set_region(&tmpRegion.r, 0, 0, width, height);
-	clear(cid,
-		  static_cast<SVGA3dClearFlag>(SVGA3D_CLEAR_COLOR),
-		  &tmpRegion.r,
-		  color,
-		  1.0F,
-		  0);
-	destroyContext(cid);
-	return true;
-}
-
-HIDDEN
 IOReturn CLASS::drawPrimitives(uint32_t cid,
 							   uint32_t numVertexDecls,
 							   uint32_t numRanges,
@@ -1575,81 +1543,6 @@ IOReturn CLASS::setRenderState(uint32_t cid,
 	memcpy(st, states, numStates * sizeof *states);
 	m_svga->FIFOCommitAll();
 exit:
-	m_framebuffer->unlockDevice();
-	return kIOReturnSuccess;
-}
-
-HIDDEN
-IOReturn CLASS::setViewPort(uint32_t cid, void /* IOAccelBounds */ const* rect)
-{
-	IOAccelBounds const* _rect;
-	SVGA3dRect __rect;
-	if (!rect)
-		return kIOReturnBadArgument;
-	if (!bHaveSVGA3D)
-		return kIOReturnNoDevice;
-	_rect = static_cast<IOAccelBounds const*>(rect);
-	__rect.x = _rect->x;
-	__rect.y = _rect->y;
-	__rect.w = _rect->w;
-	__rect.h = _rect->h;
-	m_framebuffer->lockDevice();
-	svga3d.SetViewport(cid, &__rect);
-	m_framebuffer->unlockDevice();
-	return kIOReturnSuccess;
-}
-
-HIDDEN
-IOReturn CLASS::setScissorRect(uint32_t cid, void /* IOAccelBounds */ const* rect)
-{
-	IOAccelBounds const* _rect;
-	SVGA3dRect __rect;
-	if (!rect)
-		return kIOReturnBadArgument;
-	if (!bHaveSVGA3D)
-		return kIOReturnNoDevice;
-	_rect = static_cast<IOAccelBounds const*>(rect);
-	__rect.x = _rect->x;
-	__rect.y = _rect->y;
-	__rect.w = _rect->w;
-	__rect.h = _rect->h;
-	m_framebuffer->lockDevice();
-	svga3d.SetScissorRect(cid, &__rect);
-	m_framebuffer->unlockDevice();
-	return kIOReturnSuccess;
-}
-
-HIDDEN
-IOReturn CLASS::setZRange(uint32_t cid, float zMin, float zMax)
-{
-	if (!bHaveSVGA3D)
-		return kIOReturnNoDevice;
-	m_framebuffer->lockDevice();
-	svga3d.SetZRange(cid, zMin, zMax);
-	m_framebuffer->unlockDevice();
-	return kIOReturnSuccess;
-}
-
-HIDDEN
-IOReturn CLASS::setClipPlane(uint32_t cid, uint32_t index, float const* plane)
-{
-	if (!plane)
-		return kIOReturnBadArgument;
-	if (!bHaveSVGA3D)
-		return kIOReturnNoDevice;
-	m_framebuffer->lockDevice();
-	svga3d.SetClipPlane(cid, index, plane);
-	m_framebuffer->unlockDevice();
-	return kIOReturnSuccess;
-}
-
-HIDDEN
-IOReturn CLASS::setTransform(uint32_t cid, SVGA3dTransformType type, float const* matrix)
-{
-	if (!bHaveSVGA3D)
-		return kIOReturnNoDevice;
-	m_framebuffer->lockDevice();
-	svga3d.SetTransform(cid, type, matrix);
 	m_framebuffer->unlockDevice();
 	return kIOReturnSuccess;
 }
@@ -2021,7 +1914,7 @@ uint32_t CLASS::getVRAMSize() const
 }
 
 HIDDEN
-vm_offset_t CLASS::offsetInVRAM(void* vram_ptr)
+vm_offset_t CLASS::offsetInVRAM(void* vram_ptr) const
 {
 	/*
 	 * Note: skip locking the framebuffer device here, seems fairly safe.
@@ -2116,12 +2009,19 @@ IOReturn CLASS::VideoSetReg(uint32_t streamId,
 HIDDEN
 uint32_t CLASS::AllocSurfaceID()
 {
-	uint32_t r;
+	uint32_t r, t;
+	uint32_t const num_entries = 4U;
 
 	lockAccel();
-	r = find_bit_in_array64(&m_surface_id_mask, 1U);
-	if (static_cast<int>(r) < 0)
-		r = 8U * static_cast<uint32_t>(sizeof(uint64_t)) + m_surface_ids_unmanaged++;
+	r = find_bit_in_array64(&m_surface_id_mask[m_surface_id_idx], num_entries - m_surface_id_idx);
+	if (static_cast<int>(r) < 0) {
+		r = (num_entries << 6) + (m_surface_ids_unmanaged++);
+		m_surface_id_idx = num_entries;
+	} else {
+		t = r >> 6;
+		r += (m_surface_id_idx << 6);
+		m_surface_id_idx += t;
+	}
 	unlockAccel();
 	return r;
 }
@@ -2129,10 +2029,15 @@ uint32_t CLASS::AllocSurfaceID()
 HIDDEN
 void CLASS::FreeSurfaceID(uint32_t sid)
 {
-	if (sid >= 8U * static_cast<uint32_t>(sizeof(uint64_t)))
+	uint32_t r;
+	uint32_t const num_entries = 4U;
+	r = sid >> 6;
+	if (r >= num_entries)
 		return;
 	lockAccel();
-	m_surface_id_mask &= ~(1ULL << sid);
+	m_surface_id_mask[r] &= ~(1ULL << (sid & 63U));
+	if (r < m_surface_id_idx)
+		m_surface_id_idx = r;
 	unlockAccel();
 }
 
@@ -2183,10 +2088,18 @@ void CLASS::FreeStreamID(uint32_t streamId)
 HIDDEN
 uint32_t CLASS::AllocGMRID()
 {
-	uint r;
+	uint32_t r, t;
+	uint32_t const num_entries = 2U;
 
 	lockAccel();
-	r = find_bit_in_array64(&m_gmr_id_mask[0], 2U);
+	r = find_bit_in_array64(&m_gmr_id_mask[m_gmr_id_idx], num_entries - m_gmr_id_idx);
+	if (static_cast<int>(r) < 0)
+		m_gmr_id_idx = num_entries;
+	else {
+		t = r >> 6;
+		r += (m_gmr_id_idx << 6);
+		m_gmr_id_idx += t;
+	}
 	unlockAccel();
 	return r;
 }
@@ -2194,10 +2107,15 @@ uint32_t CLASS::AllocGMRID()
 HIDDEN
 void CLASS::FreeGMRID(uint32_t gmrId)
 {
-	if (gmrId >= 2U * 8U * static_cast<uint32_t>(sizeof(uint64_t)))
+	uint32_t r;
+	uint32_t const num_entries = 2U;
+	r = gmrId >> 6;
+	if (r >= num_entries)
 		return;
 	lockAccel();
-	m_gmr_id_mask[gmrId >> 6] &= ~(1ULL << (gmrId & 63U));
+	m_gmr_id_mask[r] &= ~(1ULL << (gmrId & 63U));
+	if (r < m_gmr_id_idx)
+		m_gmr_id_idx = r;
 	unlockAccel();
 }
 

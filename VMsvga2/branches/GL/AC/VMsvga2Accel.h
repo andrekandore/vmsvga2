@@ -72,11 +72,13 @@ private:
 	 */
 	unsigned bHaveSVGA3D:1;
 	unsigned bHaveScreenObject:1;
-	uint64_t m_surface_id_mask;
+	uint64_t m_surface_id_mask[4];
 	uint64_t m_context_id_mask;
 	uint64_t m_gmr_id_mask[2];
 	uint32_t m_surface_ids_unmanaged;
 	uint32_t m_context_ids_unmanaged;
+	uint32_t m_surface_id_idx;
+	uint32_t m_gmr_id_idx;
 	int volatile m_master_surface_retain_count;
 	uint32_t m_master_surface_id;
 	IOReturn m_blitbug_result;
@@ -229,12 +231,6 @@ public:
 				   uint32_t stencil);
 	IOReturn createContext(uint32_t cid);
 	IOReturn destroyContext(uint32_t cid);
-	bool createClearSurface(uint32_t sid,
-							uint32_t cid,
-							SVGA3dSurfaceFormat format,
-							uint32_t width,
-							uint32_t height,
-							uint32_t color = 0U);
 	IOReturn drawPrimitives(uint32_t cid,
 							uint32_t numVertexDecls,
 							uint32_t numRanges,
@@ -246,13 +242,6 @@ public:
 	IOReturn setRenderState(uint32_t cid,
 							uint32_t numStates,
 							SVGA3dRenderState const* states);
-	IOReturn setViewPort(uint32_t cid,
-						 void /* IOAccelBounds */ const* rect);
-	IOReturn setScissorRect(uint32_t cid,
-							void /* IOAccelBounds */ const* rect);
-	IOReturn setZRange(uint32_t cid, float zMin, float zMax);
-	IOReturn setClipPlane(uint32_t cid, uint32_t index, float const* plane);	// plane points to 4 floats (eq. Ax+By+Cz+D = 0)
-	IOReturn setTransform(uint32_t cid, SVGA3dTransformType type, float const* matrix);
 	IOReturn surfaceDMA3DEx(SVGA3dSurfaceImageId const* hostImage,
 							SVGA3dTransferType transfer,
 							SVGA3dCopyBox const* copyBox,
@@ -312,7 +301,7 @@ public:
 #endif
 	IOMemoryDescriptor* getChannelMemory() const;
 	uint32_t getVRAMSize() const;
-	vm_offset_t offsetInVRAM(void* vram_ptr);
+	vm_offset_t offsetInVRAM(void* vram_ptr) const;
 	class VMsvga2Surface* findSurfaceForID(uint32_t surface_id);
 	SVGA3D* lock3D();
 	void unlock3D();

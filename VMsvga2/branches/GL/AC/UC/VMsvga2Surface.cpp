@@ -205,34 +205,6 @@ int select_ds_format(int context_mode_bits)
 	return SVGA3D_FORMAT_INVALID;
 }
 
-#if 0
-HIDDEN
-void readHostVramSimple(VMsvga2Accel* m_provider, uint32_t sid, size_t offset_in_vram, uint32_t w, uint32_t h, uint32_t pitch, uint32_t* fence)
-{
-	DefineRegion<1U> tmpRegion;
-	VMsvga2Accel::ExtraInfo extra;
-	set_region(&tmpRegion.r, 0, 0, w, h);
-	bzero(&extra, sizeof extra);
-	extra.mem_gmr_id = GMR_VRAM();
-	extra.mem_pitch = pitch;
-	extra.mem_offset_in_gmr = offset_in_vram;
-	m_provider->surfaceDMA2D(sid, SVGA3D_READ_HOST_VRAM, &tmpRegion.r, &extra, fence);
-}
-
-HIDDEN
-void blitGarbageToScreen(VMsvga2Accel* m_provider, size_t offset_in_vram, uint32_t w, uint32_t h, uint32_t pitch)
-{
-	DefineRegion<1U> tmpRegion;
-	VMsvga2Accel::ExtraInfo extra;
-	set_region(&tmpRegion.r, 0, 0, w, h);
-	bzero(&extra, sizeof extra);
-	extra.mem_gmr_id = GMR_VRAM();
-	extra.mem_pitch = pitch;
-	extra.mem_offset_in_gmr = offset_in_vram;
-	m_provider->blitToScreen(0U, &tmpRegion.r, &extra, 0);
-}
-#endif
-
 #pragma mark -
 #pragma mark IOUserClient Methods
 #pragma mark -
@@ -702,9 +674,6 @@ void CLASS::Start3D()
 		if (!bHaveMasterSurface)
 			return;
 	}
-	m_aux_surface_id[0] = m_provider->AllocSurfaceID();
-	m_aux_surface_id[1] = m_provider->AllocSurfaceID();
-	m_aux_context_id = m_provider->AllocContextID();
 	if (bHaveScreenObject)
 		return;
 	if (checkOptionAC(VMW_OPTION_AC_DIRECT_BLIT))
@@ -728,9 +697,6 @@ void CLASS::Cleanup3D()
 		return;
 	if (bHaveMasterSurface)
 		m_provider->releaseMasterSurface();
-	m_provider->FreeSurfaceID(m_aux_surface_id[0]);
-	m_provider->FreeSurfaceID(m_aux_surface_id[1]);
-	m_provider->FreeContextID(m_aux_context_id);
 	bHaveMasterSurface = false;
 	bHaveScreenObject = false;
 }
@@ -741,7 +707,6 @@ IOReturn CLASS::detectBlitBug()
 	IOReturn rc;
 	uint32_t* ptr = 0;
 	uint32_t const sid = 666;
-	uint32_t const cid = 667;
 	uint32_t const pixval_check = 0xFF000000U;
 	uint32_t const pixval_green = 0xFF00U;
 	uint32_t const w = 10;
@@ -754,11 +719,12 @@ IOReturn CLASS::detectBlitBug()
 	if (!m_provider)
 		return kIOReturnNotReady;
 	pixels = w * h / 4;
-	if (!m_provider->createClearSurface(sid,
-										cid,
-										SVGA3D_X8R8G8B8,
-										w,
-										h))
+	rc = m_provider->createSurface(sid,
+								   SVGA3dSurfaceFlags(0),
+								   SVGA3D_X8R8G8B8,
+								   w,
+								   h);
+	if (rc != kIOReturnSuccess)
 		return kIOReturnError;
 	ptr = static_cast<uint32_t*>(m_provider->VRAMMalloc(PAGE_SIZE));
 	if (!ptr) {
@@ -831,6 +797,7 @@ IOReturn CLASS::DMAOutWithCopy(bool withFence)
 {
 	IOReturn rc;
 	int deltaX, deltaY;
+	uint32_t aux_sid;
 	VMsvga2Accel::ExtraInfo extra;
 
 	if (!m_last_region || !isBackingValid())
@@ -840,13 +807,16 @@ IOReturn CLASS::DMAOutWithCopy(bool withFence)
 	 */
 	deltaX = -static_cast<int>(m_last_region->bounds.x);
 	deltaY = -static_cast<int>(m_last_region->bounds.y);
-	if (!m_provider->createClearSurface(m_aux_surface_id[0],
-										m_aux_context_id,
-										m_surfaceFormat,
-										m_scale.buffer.w,
-										m_scale.buffer.h))
+	aux_sid = m_provider->AllocSurfaceID();
+	rc = m_provider->createSurface(aux_sid,
+								   SVGA3dSurfaceFlags(0),
+								   m_surfaceFormat,
+								   m_scale.buffer.w,
+								   m_scale.buffer.h);
+	if (rc != kIOReturnSuccess) {
+		m_provider->FreeSurfaceID(aux_sid);
 		return kIOReturnNoResources;
-	bzero(&extra, sizeof extra);
+	}
 	extra.mem_gmr_id = GMR_VRAM();
 	extra.mem_offset_in_gmr = m_backing.offset + m_scale.reserved[2];
 	extra.mem_pitch = m_scale.reserved[1];
@@ -854,23 +824,25 @@ IOReturn CLASS::DMAOutWithCopy(bool withFence)
 	extra.srcDeltaY = deltaY;
 	extra.dstDeltaX = deltaX;
 	extra.dstDeltaY = deltaY;
-	rc = m_provider->surfaceDMA2D(m_aux_surface_id[0],
+	rc = m_provider->surfaceDMA2D(aux_sid,
 								  SVGA3D_WRITE_HOST_VRAM,
 								  m_last_region,
 								  &extra,
 								  withFence ? &m_backing.last_DMA_fence : 0);
 	if (rc != kIOReturnSuccess) {
-		m_provider->destroySurface(m_aux_surface_id[0]);
+		m_provider->destroySurface(aux_sid);
+		m_provider->FreeSurfaceID(aux_sid);
 		return kIOReturnDMAError;
 	}
 	bzero(&extra, sizeof extra);
 	extra.srcDeltaX = deltaX;
 	extra.srcDeltaY = deltaY;
-	rc = m_provider->surfaceCopy(m_aux_surface_id[0],
+	rc = m_provider->surfaceCopy(aux_sid,
 								 m_provider->getMasterSurfaceID(),
 								 m_last_region,
 								 &extra);
-	m_provider->destroySurface(m_aux_surface_id[0]);
+	m_provider->destroySurface(aux_sid);
+	m_provider->FreeSurfaceID(aux_sid);
 	if (rc != kIOReturnSuccess)
 		return kIOReturnNotWritable;
 	return kIOReturnSuccess;
@@ -880,7 +852,7 @@ HIDDEN
 IOReturn CLASS::DMAOutStretchWithCopy(bool withFence)
 {
 	IOReturn rc;
-	uint32_t width, height;
+	uint32_t width, height, aux_sid[2];
 	VMsvga2Accel::ExtraInfo extra;
 	IOAccelBounds bounds;
 	DefineRegion<1U> tmpRegion;
@@ -889,55 +861,67 @@ IOReturn CLASS::DMAOutStretchWithCopy(bool withFence)
 		return kIOReturnNotReady;
 	width  = m_scale.buffer.w;
 	height = m_scale.buffer.h;
-	if (!m_provider->createClearSurface(m_aux_surface_id[1],
-										m_aux_context_id,
-										m_surfaceFormat,
-										width,
-										height))
+	aux_sid[1] = m_provider->AllocSurfaceID();
+	rc = m_provider->createSurface(aux_sid[1],
+								   SVGA3dSurfaceFlags(0),
+								   m_surfaceFormat,
+								   width,
+								   height);
+	if (rc != kIOReturnSuccess) {
+		m_provider->FreeSurfaceID(aux_sid[1]);
 		return kIOReturnNoResources;
+	}
 	set_region(&tmpRegion.r, 0, 0, width, height);
 	bzero(&extra, sizeof extra);
 	extra.mem_gmr_id = GMR_VRAM();
 	extra.mem_offset_in_gmr = m_backing.offset + m_scale.reserved[2];
 	extra.mem_pitch = m_scale.reserved[1];
-	rc = m_provider->surfaceDMA2D(m_aux_surface_id[1],
+	rc = m_provider->surfaceDMA2D(aux_sid[1],
 								  SVGA3D_WRITE_HOST_VRAM,
 								  &tmpRegion.r,
 								  &extra,
 								  withFence ? &m_backing.last_DMA_fence : 0);
 	if (rc != kIOReturnSuccess) {
-		m_provider->destroySurface(m_aux_surface_id[1]);
+		m_provider->destroySurface(aux_sid[1]);
+		m_provider->FreeSurfaceID(aux_sid[1]);
 		return kIOReturnDMAError;
 	}
 	memcpy(&bounds, &m_last_region->bounds, sizeof bounds);
 	bounds.x = 0;
 	bounds.y = 0;
-	if (!m_provider->createClearSurface(m_aux_surface_id[0],
-										m_aux_context_id,
-										m_surfaceFormat,
-										bounds.w,
-										bounds.h)) {
-		m_provider->destroySurface(m_aux_surface_id[1]);
+	aux_sid[0] = m_provider->AllocSurfaceID();
+	rc = m_provider->createSurface(aux_sid[0],
+								   SVGA3dSurfaceFlags(0),
+								   m_surfaceFormat,
+								   bounds.w,
+								   bounds.h);
+	if (rc != kIOReturnSuccess) {
+		m_provider->FreeSurfaceID(aux_sid[0]);
+		m_provider->destroySurface(aux_sid[1]);
+		m_provider->FreeSurfaceID(aux_sid[1]);
 		return kIOReturnNoResources;
 	}
-	rc = m_provider->surfaceStretch(m_aux_surface_id[1],
-									m_aux_surface_id[0],
+	rc = m_provider->surfaceStretch(aux_sid[1],
+									aux_sid[0],
 									SVGA3D_STRETCH_BLT_LINEAR,
 									&tmpRegion.r.bounds,
 									&bounds);
-	m_provider->destroySurface(m_aux_surface_id[1]);
+	m_provider->destroySurface(aux_sid[1]);
+	m_provider->FreeSurfaceID(aux_sid[1]);
 	if (rc != kIOReturnSuccess) {
-		m_provider->destroySurface(m_aux_surface_id[0]);
+		m_provider->destroySurface(aux_sid[0]);
+		m_provider->FreeSurfaceID(aux_sid[0]);
 		return kIOReturnNotWritable;
 	}
 	bzero(&extra, sizeof extra);
 	extra.srcDeltaX = -static_cast<int>(m_last_region->bounds.x);
 	extra.srcDeltaY = -static_cast<int>(m_last_region->bounds.y);
-	rc = m_provider->surfaceCopy(m_aux_surface_id[0],
+	rc = m_provider->surfaceCopy(aux_sid[0],
 								 m_provider->getMasterSurfaceID(),
 								 m_last_region,
 								 &extra);
-	m_provider->destroySurface(m_aux_surface_id[0]);
+	m_provider->destroySurface(aux_sid[0]);
+	m_provider->FreeSurfaceID(aux_sid[0]);
 	if (rc != kIOReturnSuccess)
 		return kIOReturnNotWritable;
 	return kIOReturnSuccess;
@@ -1015,7 +999,7 @@ HIDDEN
 IOReturn CLASS::ScreenObjectOutVia3D(bool withFence)
 {
 	IOReturn rc;
-	uint32_t width, height;
+	uint32_t width, height, aux_sid;
 	VMsvga2Accel::ExtraInfo extra;
 	DefineRegion<1U> tmpRegion;
 
@@ -1023,31 +1007,37 @@ IOReturn CLASS::ScreenObjectOutVia3D(bool withFence)
 		return kIOReturnNotReady;
 	width  = m_scale.buffer.w;
 	height = m_scale.buffer.h;
-	if (!m_provider->createClearSurface(m_aux_surface_id[0],
-										m_aux_context_id,
-										m_surfaceFormat,
-										width,
-										height))
+	aux_sid = m_provider->AllocSurfaceID();
+	rc = m_provider->createSurface(aux_sid,
+								   SVGA3dSurfaceFlags(0),
+								   m_surfaceFormat,
+								   width,
+								   height);
+	if (rc != kIOReturnSuccess) {
+		m_provider->FreeSurfaceID(aux_sid);
 		return kIOReturnNoResources;
+	}
 	set_region(&tmpRegion.r, 0, 0, width, height);
 	bzero(&extra, sizeof extra);
 	extra.mem_gmr_id = GMR_VRAM();
 	extra.mem_offset_in_gmr = m_backing.offset + m_scale.reserved[2];
 	extra.mem_pitch = m_scale.reserved[1];
-	rc = m_provider->surfaceDMA2D(m_aux_surface_id[0],
+	rc = m_provider->surfaceDMA2D(aux_sid,
 								  SVGA3D_WRITE_HOST_VRAM,
 								  &tmpRegion.r,
 								  &extra,
 								  withFence ? &m_backing.last_DMA_fence : 0);
 	if (rc != kIOReturnSuccess) {
-		m_provider->destroySurface(m_aux_surface_id[0]);
+		m_provider->destroySurface(aux_sid);
+		m_provider->FreeSurfaceID(aux_sid);
 		return kIOReturnDMAError;
 	}
-	rc = m_provider->blitSurfaceToScreen(m_aux_surface_id[0],
+	rc = m_provider->blitSurfaceToScreen(aux_sid,
 										 m_framebufferIndex,
 										 &tmpRegion.r.bounds,
 										 m_last_region);
-	m_provider->destroySurface(m_aux_surface_id[0]);
+	m_provider->destroySurface(aux_sid);
+	m_provider->FreeSurfaceID(aux_sid);
 	if (rc != kIOReturnSuccess)
 		return kIOReturnNotWritable;
 	return kIOReturnSuccess;
@@ -1247,7 +1237,6 @@ void CLASS::videoReshape()
 HIDDEN
 void CLASS::InitGL()
 {
-	m_gl.cid = SVGA_ID_INVALID;
 	m_gl.color_sid = SVGA_ID_INVALID;
 	m_gl.depth_sid = SVGA_ID_INVALID;
 }
@@ -1297,9 +1286,8 @@ IOReturn CLASS::copyGLSurfaceToBacking()
 	uint32_t fence;
 	IOReturn rc;
 
-	if (OSTestAndClear(0U, &m_gl.rt_dirty) && isIdValid(m_gl.cid))
+	if (OSTestAndClear(0U, &m_gl.rt_dirty) && m_gl.attach_count > 0)
 		return kIOReturnSuccess;
-	bzero(&extra, sizeof extra);
 	bzero(&copyBox, sizeof copyBox);
 	copyBox.x = m_scale.buffer.x;
 	copyBox.y = m_scale.buffer.y;
@@ -1321,7 +1309,7 @@ IOReturn CLASS::copyGLSurfaceToBacking()
 									&fence);
 	if (rc == kIOReturnSuccess)
 		m_provider->SyncToFence(fence);
-	if (!isIdValid(m_gl.cid))
+	if (m_gl.attach_count <= 0)
 		CleanupGL();
 	return rc;
 }
@@ -2228,13 +2216,15 @@ bool CLASS::getSurfacesForGL(uint32_t* color_sid, uint32_t* depth_sid) const
 }
 
 HIDDEN
-IOReturn CLASS::attachGL(uint32_t context_id, int cmb)
+IOReturn CLASS::attachGL(int cmb)
 {
 	IOReturn rc;
 
-	SFLog(3, "%s(%u, %d)\n", __FUNCTION__, context_id, cmb);
-	if (bGLMode)
-		return kIOReturnBusy;
+	SFLog(3, "%s(%d)\n", __FUNCTION__, cmb);
+	if (bGLMode) {
+		__sync_fetch_and_add(&m_gl.attach_count, 1);
+		return kIOReturnSuccess;
+	}
 	if (!m_provider || !isSourceValid())
 		return kIOReturnNotReady;
 	m_gl.ds_format = select_ds_format(cmb);
@@ -2265,7 +2255,7 @@ IOReturn CLASS::attachGL(uint32_t context_id, int cmb)
 			return rc;
 		}
 	}
-	m_gl.cid = context_id;
+	m_gl.attach_count = 1;
 	memcpy(&m_gl.rt_size, &m_scale.source, sizeof m_scale.source);
 	touchRenderTarget();
 	bGLMode = true;
@@ -2278,17 +2268,12 @@ IOReturn CLASS::resizeGL()
 	IOReturn rc;
 
 	SFLog(3, "%s()\n", __FUNCTION__);
-	if (!bGLMode)
+	if (!bGLMode || m_gl.attach_count <= 0 ||
+		(m_gl.rt_size.w >= m_scale.source.w &&
+		 m_gl.rt_size.h >= m_scale.source.h))
 		return kIOReturnSuccess;
 	if (!m_provider || !isSourceValid())
 		return kIOReturnNotReady;
-	if (m_gl.rt_size.w >= m_scale.source.w &&
-		m_gl.rt_size.h >= m_scale.source.h)
-		goto set_view;
-	if (isIdValid(m_gl.cid)) {
-		m_provider->setRenderTarget(m_gl.cid, SVGA3D_RT_COLOR0, SVGA_ID_INVALID);
-		m_provider->setRenderTarget(m_gl.cid, SVGA3D_RT_DEPTH, SVGA_ID_INVALID);
-	}
 	m_provider->destroySurface(m_gl.color_sid);
 	rc = m_provider->createSurface(m_gl.color_sid,
 								   SVGA3D_SURFACE_HINT_RENDERTARGET,
@@ -2298,7 +2283,6 @@ IOReturn CLASS::resizeGL()
 	if (rc != kIOReturnSuccess) {
 		m_provider->FreeSurfaceID(m_gl.color_sid);
 		m_gl.color_sid = SVGA_ID_INVALID;
-		m_gl.cid = SVGA_ID_INVALID;
 		CleanupGL();
 		return rc;
 	}
@@ -2312,19 +2296,12 @@ IOReturn CLASS::resizeGL()
 		if (rc != kIOReturnSuccess) {
 			m_provider->FreeSurfaceID(m_gl.depth_sid);
 			m_gl.depth_sid = SVGA_ID_INVALID;
-			m_gl.cid = SVGA_ID_INVALID;
 			CleanupGL();
 			return rc;
 		}
 	}
-	if (!isIdValid(m_gl.cid)) {
-		touchRenderTarget();
-		return kIOReturnSuccess;
-	}
 	memcpy(&m_gl.rt_size, &m_scale.source, sizeof m_scale.source);
 	touchRenderTarget();
-
-set_view:
 	return kIOReturnSuccess;
 }
 
@@ -2332,13 +2309,10 @@ HIDDEN
 IOReturn CLASS::detachGL()
 {
 	SFLog(3, "%s()\n", __FUNCTION__);
-	if (!isIdValid(m_gl.cid))
-		return kIOReturnSuccess;
-	if (!m_provider)
-		return kIOReturnNotReady;
-	m_provider->setRenderTarget(m_gl.cid, SVGA3D_RT_COLOR0, SVGA_ID_INVALID);
-	m_provider->setRenderTarget(m_gl.cid, SVGA3D_RT_DEPTH, SVGA_ID_INVALID);
-	m_gl.cid = SVGA_ID_INVALID;
+	if (bGLMode) {
+		if (__sync_fetch_and_add(&m_gl.attach_count, -1) <= 0)
+			m_gl.attach_count = 0;
+	}
 	return kIOReturnSuccess;
 }
 

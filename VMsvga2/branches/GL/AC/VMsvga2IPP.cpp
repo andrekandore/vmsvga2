@@ -473,7 +473,7 @@ void CLASS::Cleanup()
 	if (isIdValid(m_context_id)) {
 #if 0
 		unbind_samplers(0xFFFFU);	// Assume referenced surfaces be released anyhow
-		// unbind render targets too ??
+		detach_render_targets();	// same assumption
 #endif
 		m_provider->destroyContext(m_context_id);
 		m_provider->FreeContextID(m_context_id);
@@ -1356,8 +1356,9 @@ void CLASS::ip_3d_sampler_state(uint32_t* p)
 HIDDEN
 void CLASS::ip_misc_render_state(uint32_t selector, uint32_t* p)
 {
+	SVGA3D* svga3d;
 	SVGA3dRenderState rs[2];
-	IOAccelBounds scissorRect;
+	SVGA3dRect scissorRect;
 	/*
 	 * TBD: optimize by caching existing values
 	 */
@@ -1387,11 +1388,15 @@ void CLASS::ip_misc_render_state(uint32_t selector, uint32_t* p)
 				  bit_select(p[2], 16, 16),
 				  bit_select(p[2],  0, 16));
 #endif
+			svga3d = m_provider->lock3D();
+			if (!svga3d)
+				break;
 			scissorRect.x = bit_select(p[1],  0, 16);
 			scissorRect.y = bit_select(p[1], 16, 16);
 			scissorRect.w = bit_select(p[2],  0, 16) - scissorRect.x + 1;
 			scissorRect.h = bit_select(p[2], 16, 16) - scissorRect.y + 1;
-			m_provider->setScissorRect(m_context_id, &scissorRect);
+			svga3d->SetScissorRect(m_context_id, &scissorRect);
+			m_provider->unlock3D();
 			break;
 		case 3U:
 #if LOGGING_LEVEL >= 4
@@ -2029,9 +2034,27 @@ void CLASS::stop(void)
 }
 
 HIDDEN
-void CLASS::discard_renderstate(void)
+void CLASS::discard_cached_state(void)
 {
 	param_cache_mask = 0U;
+}
+
+HIDDEN
+void CLASS::detach_render_targets(void)
+{
+	SVGA3D* svga3d;
+	SVGA3dSurfaceImageId hostImage;
+	if (!m_provider || !isIdValid(m_context_id))
+		return;
+	hostImage.sid = SVGA_ID_INVALID;
+	hostImage.face = 0U;
+	hostImage.mipmap = 0U;
+	svga3d = m_provider->lock3D();
+	if (!svga3d)
+		return;
+	svga3d->SetRenderTarget(m_context_id, SVGA3D_RT_COLOR0, &hostImage);
+	svga3d->SetRenderTarget(m_context_id, SVGA3D_RT_DEPTH, &hostImage);
+	m_provider->unlock3D();
 }
 
 HIDDEN
