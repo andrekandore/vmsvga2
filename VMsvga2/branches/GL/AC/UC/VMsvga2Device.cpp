@@ -332,7 +332,7 @@ IOReturn CLASS::new_texture(struct VendorNewTextureDataStruc const* struct_in,
 			  struct_in->width, struct_in->height, struct_in->depth, struct_in->vram_pitch, struct_in->pitch, struct_in->read_only);
 		DVLog(3, "%s:   f1... %#x, %#x, %#x\n", __FUNCTION__,
 			  struct_in->f1[0], struct_in->f1[1], struct_in->f1[2]);
-		DVLog(3, "%s:   size... %u, %u\n", __FUNCTION__,
+		DVLog(3, "%s:   size... %#x, %#x\n", __FUNCTION__,
 			  struct_in->size[0], struct_in->size[1]);
 		DVLog(3, "%s:   pixels... %#llx, %#llx, %#llx\n", __FUNCTION__,
 			  struct_in->pixels[0], struct_in->pixels[1], struct_in->pixels[2]);

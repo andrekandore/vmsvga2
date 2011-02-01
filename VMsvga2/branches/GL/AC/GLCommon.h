@@ -133,7 +133,7 @@ struct VendorCommandDescriptor {
 	uint32_t* next;		// residual downstream pointer, kernel
 	uint32_t ds_ptr;	// residual downstream pointer, gart
 	uint32_t ds_count_dwords;	// residual downstream count
-	uint32_t f2;
+	uint32_t* end_point;	// end point in CB of APP processor
 };
 
 static inline

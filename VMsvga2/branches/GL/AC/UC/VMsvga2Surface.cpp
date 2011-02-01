@@ -219,7 +219,7 @@ IOExternalMethod* CLASS::getTargetAndMethodForIndex(IOService** targetP, UInt32 
 
 IOReturn CLASS::clientClose()
 {
-	SFLog(2, "%s\n", __FUNCTION__);
+	SFLog(2, "%s[%#x]\n", __FUNCTION__, m_wID);
 	Cleanup();
 	if (!terminate(0))
 		IOLog("%s: terminate failed\n", __FUNCTION__);
@@ -1261,17 +1261,23 @@ HIDDEN
 IOReturn CLASS::flushGLSurface()
 {
 	VMsvga2Accel::ExtraInfo extra;
-	if (bHaveScreenObject)
+	IOAccelBounds rect;
+	if (bHaveScreenObject) {
+		rect.x = 0;
+		rect.y = 0;
+		rect.w = m_scale.buffer.w;
+		rect.h = m_scale.buffer.h;
 		return m_provider->blitSurfaceToScreen(m_gl.color_sid,
 											   m_framebufferIndex,
-											   &m_scale.buffer,
+											   &rect,
 											   m_last_region);
+	}
 	/*
 	 * TBD: Should we copy to the master surface instead?
 	 */
 	bzero(&extra, sizeof extra);
-	extra.srcDeltaX = m_scale.buffer.x - m_last_region->bounds.x;
-	extra.srcDeltaX = m_scale.buffer.y - m_last_region->bounds.y;
+	extra.srcDeltaX = -m_last_region->bounds.x;
+	extra.srcDeltaX = -m_last_region->bounds.y;
 	return m_provider->surfacePresentAutoSync(m_gl.color_sid,
 											  m_last_region,
 											  &extra);
@@ -1289,8 +1295,6 @@ IOReturn CLASS::copyGLSurfaceToBacking()
 	if (OSTestAndClear(0U, &m_gl.rt_dirty) && m_gl.attach_count > 0)
 		return kIOReturnSuccess;
 	bzero(&copyBox, sizeof copyBox);
-	copyBox.x = m_scale.buffer.x;
-	copyBox.y = m_scale.buffer.y;
 	copyBox.w = m_scale.buffer.w;
 	copyBox.h = m_scale.buffer.h;
 	copyBox.d = 1U;
@@ -1626,7 +1630,7 @@ IOReturn CLASS::surface_write_unlock()
 HIDDEN
 IOReturn CLASS::surface_control(uintptr_t selector, uintptr_t arg, uint32_t* result)
 {
-	SFLog(2, "%s(%lu, %lu, out)\n", __FUNCTION__, selector, arg);
+	SFLog(2, "%s[%#x](%lu, %lu, out)\n", __FUNCTION__, m_wID, selector, arg);
 
 	/*
 	 * Note: cases 4 & 5 have something to do with surface volatility.
@@ -1690,8 +1694,8 @@ IOReturn CLASS::set_shape_backing_length_ext(eIOAccelSurfaceShapeBits options,
 	int const expectedOptions = kIOAccelSurfaceShapeIdentityScaleBit | kIOAccelSurfaceShapeFrameSyncBit;
 #endif
 
-	SFLog(3, "%s(%#x, %lu, %#llx, %ld, %lu, %p, %lu)\n",
-		  __FUNCTION__,
+	SFLog(3, "%s[%#x](%#x, %lu, %#llx, %ld, %lu, %p, %lu)\n",
+		  __FUNCTION__, m_wID,
 		  options,
 		  framebufferIndex,
 		  backing,
@@ -2194,13 +2198,13 @@ HIDDEN
 void CLASS::getBoundsForGL(uint32_t* inner_width, uint32_t* inner_height, uint32_t* outer_width, uint32_t* outer_height) const
 {
 	if (inner_width)
-		*inner_width  = m_scale.source.w;
+		*inner_width  = m_scale.buffer.w;
 	if (inner_height)
-		*inner_height = m_scale.source.h;
+		*inner_height = m_scale.buffer.h;
 	if (outer_width)
-		*outer_width  = m_scale.source.w;
+		*outer_width  = m_scale.buffer.w;
 	if (outer_height)
-		*outer_height = m_scale.source.h;
+		*outer_height = m_scale.buffer.h;
 }
 
 HIDDEN
@@ -2220,12 +2224,12 @@ IOReturn CLASS::attachGL(int cmb)
 {
 	IOReturn rc;
 
-	SFLog(3, "%s(%d)\n", __FUNCTION__, cmb);
+	SFLog(3, "%s[%#x](%#x)\n", __FUNCTION__, m_wID, cmb);
 	if (bGLMode) {
 		__sync_fetch_and_add(&m_gl.attach_count, 1);
 		return kIOReturnSuccess;
 	}
-	if (!m_provider || !isSourceValid())
+	if (!m_provider || m_scale.buffer.w <= 0 || m_scale.buffer.h <= 0)
 		return kIOReturnNotReady;
 	m_gl.ds_format = select_ds_format(cmb);
 	if (!isIdValid(m_gl.color_sid))
@@ -2233,8 +2237,8 @@ IOReturn CLASS::attachGL(int cmb)
 	rc = m_provider->createSurface(m_gl.color_sid,
 								   SVGA3D_SURFACE_HINT_RENDERTARGET,
 								   m_surfaceFormat,
-								   m_scale.source.w,
-								   m_scale.source.h);
+								   m_scale.buffer.w,
+								   m_scale.buffer.h);
 	if (rc != kIOReturnSuccess) {
 		m_provider->FreeSurfaceID(m_gl.color_sid);
 		m_gl.color_sid = SVGA_ID_INVALID;
@@ -2246,8 +2250,8 @@ IOReturn CLASS::attachGL(int cmb)
 		rc = m_provider->createSurface(m_gl.depth_sid,
 									   SVGA3D_SURFACE_HINT_DEPTHSTENCIL,
 									   SVGA3dSurfaceFormat(m_gl.ds_format),
-									   m_scale.source.w,
-									   m_scale.source.h);
+									   m_scale.buffer.w,
+									   m_scale.buffer.h);
 		if (rc != kIOReturnSuccess) {
 			m_provider->FreeSurfaceID(m_gl.depth_sid);
 			m_gl.depth_sid = SVGA_ID_INVALID;
@@ -2256,7 +2260,8 @@ IOReturn CLASS::attachGL(int cmb)
 		}
 	}
 	m_gl.attach_count = 1;
-	memcpy(&m_gl.rt_size, &m_scale.source, sizeof m_scale.source);
+	m_gl.rt_size.w = m_scale.buffer.w;
+	m_gl.rt_size.h = m_scale.buffer.h;
 	touchRenderTarget();
 	bGLMode = true;
 	return kIOReturnSuccess;
@@ -2267,19 +2272,19 @@ IOReturn CLASS::resizeGL()
 {
 	IOReturn rc;
 
-	SFLog(3, "%s()\n", __FUNCTION__);
+	SFLog(3, "%s[%#x]()\n", __FUNCTION__, m_wID);
 	if (!bGLMode || m_gl.attach_count <= 0 ||
-		(m_gl.rt_size.w >= m_scale.source.w &&
-		 m_gl.rt_size.h >= m_scale.source.h))
+		(m_gl.rt_size.w >= m_scale.buffer.w &&
+		 m_gl.rt_size.h >= m_scale.buffer.h))
 		return kIOReturnSuccess;
-	if (!m_provider || !isSourceValid())
+	if (!m_provider || m_scale.buffer.w <= 0 || m_scale.buffer.h <= 0)
 		return kIOReturnNotReady;
 	m_provider->destroySurface(m_gl.color_sid);
 	rc = m_provider->createSurface(m_gl.color_sid,
 								   SVGA3D_SURFACE_HINT_RENDERTARGET,
 								   m_surfaceFormat,
-								   m_scale.source.w,
-								   m_scale.source.h);
+								   m_scale.buffer.w,
+								   m_scale.buffer.h);
 	if (rc != kIOReturnSuccess) {
 		m_provider->FreeSurfaceID(m_gl.color_sid);
 		m_gl.color_sid = SVGA_ID_INVALID;
@@ -2291,8 +2296,8 @@ IOReturn CLASS::resizeGL()
 		rc = m_provider->createSurface(m_gl.depth_sid,
 									   SVGA3D_SURFACE_HINT_DEPTHSTENCIL,
 									   SVGA3dSurfaceFormat(m_gl.ds_format),
-									   m_scale.source.w,
-									   m_scale.source.h);
+									   m_scale.buffer.w,
+									   m_scale.buffer.h);
 		if (rc != kIOReturnSuccess) {
 			m_provider->FreeSurfaceID(m_gl.depth_sid);
 			m_gl.depth_sid = SVGA_ID_INVALID;
@@ -2300,7 +2305,8 @@ IOReturn CLASS::resizeGL()
 			return rc;
 		}
 	}
-	memcpy(&m_gl.rt_size, &m_scale.source, sizeof m_scale.source);
+	m_gl.rt_size.w = m_scale.buffer.w;
+	m_gl.rt_size.h = m_scale.buffer.h;
 	touchRenderTarget();
 	return kIOReturnSuccess;
 }
@@ -2308,7 +2314,7 @@ IOReturn CLASS::resizeGL()
 HIDDEN
 IOReturn CLASS::detachGL()
 {
-	SFLog(3, "%s()\n", __FUNCTION__);
+	SFLog(3, "%s[%#x]()\n", __FUNCTION__, m_wID);
 	if (bGLMode) {
 		if (__sync_fetch_and_add(&m_gl.attach_count, -1) <= 0)
 			m_gl.attach_count = 0;
@@ -2320,4 +2326,10 @@ HIDDEN
 void CLASS::touchRenderTarget()
 {
 	OSTestAndSet(0U, &m_gl.rt_dirty);
+#if LOGGING_LEVEL >= 2
+	if (m_wID == 1U) {
+		SFLog(1, "%s: autoflush\n", __FUNCTION__);
+		flushGLSurface();
+	}
+#endif
 }

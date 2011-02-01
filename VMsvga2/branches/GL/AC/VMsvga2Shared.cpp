@@ -592,7 +592,7 @@ VMsvga2TextureBuffer* CLASS::new_surface_texture(uint32_t surface_id,
 		return 0;
 	surface = m_provider->findSurfaceForID(surface_id);
 	if (!surface) {
-		SHLog(1, "%s: surface id %u not found\n", __FUNCTION__, surface_id);
+		SHLog(1, "%s: surface id %#x not found\n", __FUNCTION__, surface_id);
 		return 0;
 	}
 	p = common_texture_init(TEX_TYPE_SURFACE);
@@ -781,8 +781,10 @@ IOReturn CLASS::pageoffDirtyTexture(VMsvga2TextureBuffer* tx)
 		return kIOReturnNotReady;
 	sys_obj_type = tx->sys_obj_type;
 	if (sys_obj_type != TEX_TYPE_STD &&
-		sys_obj_type != TEX_TYPE_OOB)
+		sys_obj_type != TEX_TYPE_OOB) {
+		SHLog(1, "%s: called for texture type %u, unsupported\n", __FUNCTION__, sys_obj_type);
 		return kIOReturnUnsupported;
+	}
 	mmap = 0;
 	hostImage.sid = tx->surface_id;
 	bzero(&copyBox, sizeof copyBox);

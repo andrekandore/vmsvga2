@@ -413,14 +413,8 @@ void CLASS::CleanupApp()
 {
 	int i, count;
 	VMsvga2TextureBuffer* del_txs[21];
-	if (m_fbo[0]) {
-		for (i = 0; i != 2; ++i)
-			if (m_txs[17 + i]) {
-				dirtyTexture(m_txs[17 + i],
-							 m_fbo[0]->txs[i].face,
-							 m_fbo[0]->txs[i].mipmap);
-			}
-	}
+	if (m_fbo[0])
+		touchDrawFBO();
 	for (i = 0; i != 2; ++i)
 		if (m_fbo[i]) {
 			IOFree(m_fbo[i], sizeof(FBODescriptor));
@@ -483,7 +477,7 @@ uint32_t CLASS::processCommandBuffer(VendorCommandDescriptor* result)
 	result->next = &m_command_buffer.kernel_ptr->downstream[0] + cb_iter.dso_bytes / sizeof(uint32_t);
 	result->ds_ptr = m_command_buffer.xfer.gart_ptr + static_cast<uint32_t>(sizeof(VendorCommandBufferHeader)) + cb_iter.dso_bytes;
 	result->ds_count_dwords = cb_iter.ds_count_dwords;
-	result->f2 = cb_iter.f2;
+	result->end_point = cb_iter.p;
 	return cb_iter.flags;
 }
 
@@ -710,6 +704,17 @@ void CLASS::write_tex_data(uint32_t i, uint32_t* q, VMsvga2TextureBuffer* tx)
 }
 
 HIDDEN
+void CLASS::touchDrawFBO(void)
+{
+	for (int i = 0; i != 2; ++i)
+		if (m_txs[17 + i]) {
+			dirtyTexture(m_txs[17 + i],
+						 m_fbo[0]->txs[i].face,
+						 m_fbo[0]->txs[i].mipmap);
+		}
+}
+
+HIDDEN
 IOReturn CLASS::create_host_surface_for_texture(VMsvga2TextureBuffer* tx)
 {
 	IOReturn rc;
@@ -725,8 +730,10 @@ IOReturn CLASS::create_host_surface_for_texture(VMsvga2TextureBuffer* tx)
 		return kIOReturnNotReady;
 	if (!tx)
 		return kIOReturnBadArgument;
-	if (tx->sys_obj_type == TEX_TYPE_SURFACE)
+	if (tx->sys_obj_type == TEX_TYPE_SURFACE) {
+		GLLog(1, "%s: called for surface texture\n", __FUNCTION__);
 		return kIOReturnSuccess;
+	}
 	if (isIdValid(tx->surface_id))
 		return kIOReturnSuccess;
 	tx->surface_id = m_provider->AllocSurfaceID();	// Note: doesn't fail
@@ -963,6 +970,11 @@ IOReturn CLASS::alloc_and_load_texture(VMsvga2TextureBuffer* tx)
 					copyBox.d = gld_th->depth;
 					extra.mem_offset_in_gmr = gld_th->offset_in_client;
 					extra.mem_pitch = gld_th->pitch;
+#if 1
+					if (sys_obj_type == TEX_TYPE_OOB &&
+						extra.mem_offset_in_gmr + copyBox.h * extra.mem_pitch > ltx->agp_size)
+						--copyBox.h;	// TBD: temporary
+#endif
 					rc = m_provider->surfaceDMA3DEx(&hostImage,
 													SVGA3D_WRITE_HOST_VRAM,
 													&copyBox,
@@ -1005,6 +1017,10 @@ IOReturn CLASS::tex_subimage_2d(VMsvga2TextureBuffer* tx,
 		GLLog(1, "%s: invalid surface format\n", __FUNCTION__);
 		return kIOReturnNotReady;
 	}
+#if LOGGING_LEVEL >= 1
+	if (tx->sys_obj_type == TEX_TYPE_SURFACE)
+		GLLog(1, "%s: called for surface texture\n", __FUNCTION__);
+#endif
 	bzero(&extra, sizeof extra);
 	extra.mem_offset_in_gmr = desc->source_addr;
 	extra.mem_pitch = desc->source_pitch;
@@ -1043,6 +1059,10 @@ void CLASS::setup_drawbuffer_registers(uint32_t* p)
 {
 	uint32_t gart_pitch;
 
+#if LOGGING_LEVEL >= 3
+	GLLog(3, "%s: using DrawFBO %p, surface_client %p\n", __FUNCTION__,
+		  m_fbo[0], m_surface_client);
+#endif
 	/*
 	 * First command sets gart_ptr and pitch of
 	 *   render target color buffer

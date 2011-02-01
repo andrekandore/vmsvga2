@@ -111,6 +111,7 @@ private:
 	static void dirtyTexture(VMsvga2TextureBuffer* tx, uint8_t face, uint8_t mipmap);
 	static void get_tex_data(VMsvga2TextureBuffer* tx, uint32_t* tex_gart_address, uint32_t* tex_pitch, int kind);
 	static void write_tex_data(uint32_t, uint32_t*, VMsvga2TextureBuffer*);
+	void touchDrawFBO(void);
 	IOReturn create_host_surface_for_texture(VMsvga2TextureBuffer*);
 	IOReturn alloc_and_load_texture(VMsvga2TextureBuffer*);
 	IOReturn tex_subimage_2d(VMsvga2TextureBuffer* tx,

@@ -339,6 +339,11 @@ IOReturn CLASS::clientMemoryForType(UInt32 type, IOOptionBits* options, IOMemory
 			if (!m_shared || !m_ipp)
 				return kIOReturnNotReady;
 			m_shared->lockShared();
+#if 0
+			for (d = 0U; d != 21U; ++d)
+				if (m_txs[i])
+					addTextureToStream(m_txs[i]);
+#endif
 			pcbRet = processCommandBuffer(&result);
 			if (m_stream_error) {
 				m_shared->unlockShared();
@@ -346,25 +351,21 @@ IOReturn CLASS::clientMemoryForType(UInt32 type, IOOptionBits* options, IOMemory
 				*memory = 0;
 				return kIOReturnBadArgument;
 			}
-			m_ipp->submit_buffer(result.next, result.ds_count_dwords);
-			for (d = 0U; d != 16U; ++d)
-				if (m_txs[d]) {
-					removeTextureFromStream(m_txs[d]);
-					if (__sync_fetch_and_add(&m_txs[d]->sys_obj->refcount, -1) == 1)
-						m_shared->delete_texture(m_txs[d]);
-					m_txs[d] = 0;
-				}
-			m_shared->unlockShared();
-			if ((pcbRet & 2U) && m_surface_client)
-				m_surface_client->touchRenderTarget();
-			m_command_buffer.xfer.complete(m_provider);
 #if 0
-			if (m_autoflush && (pcbRet & 2U) && m_surface_client) {
-				GLLog(3, "%s: autoflushing\n", __FUNCTION__);
-				m_surface_client->surface_flush(1U, 0U);
-				pcbRet &= ~2U;
-			}
+			for (d = 0U; d != 21U; ++d)
+				if (m_txs[d])
+					removeTextureFromStream(m_txs[d]);
 #endif
+			m_shared->unlockShared();
+			if (result.ds_count_dwords)
+				m_ipp->submit_buffer(result.next, result.ds_count_dwords);
+			if (pcbRet & 2U) {
+				if (m_fbo[0])
+					touchDrawFBO();
+				if (m_surface_client)
+					m_surface_client->touchRenderTarget();
+			}
+			m_command_buffer.xfer.complete(m_provider);
 			lockAccel(m_provider);
 			/*
 			 * AB58: reinitialize buffer
@@ -377,12 +378,14 @@ IOReturn CLASS::clientMemoryForType(UInt32 type, IOOptionBits* options, IOMemory
 			*memory = md;
 			p = m_command_buffer.kernel_ptr;
 			initCommandBufferHeader(p, m_command_buffer.size);
-			p->flags = pcbRet;
+			p->flags = pcbRet /* var_88 */;
 			p->downstream[-1] = 1;
-			p->downstream[0] = 1U << 24;// terminating token
-			p->stamp = 0;				// TBD: from this+0x7C
+			p->downstream[0] = 1U << 24;	// terminating token
+			p->stamp = 0 /* this->0x7C */;
 			unlockAccel(m_provider);
-			// sleepForSwapCompleteNoLock(this+0x84)
+#if 0
+			sleepForSwapCompleteNoLock(var_84);
+#endif
 			return kIOReturnSuccess;
 		case 1:
 			lockAccel(m_provider);
@@ -620,6 +623,7 @@ IOReturn CLASS::set_surface(uintptr_t surface_id, uintptr_t /* eIOGLContextModeB
 	rc = surface_client->attachGL(static_cast<uint32_t>(context_mode_bits));
 	if (rc != kIOReturnSuccess) {
 		surface_client->release();
+		GLLog(1, "%s: attachGL failed, rc %#x\n", __FUNCTION__, rc);
 		return rc;
 	}
 	m_surface_client = surface_client;

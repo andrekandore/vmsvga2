@@ -677,7 +677,7 @@ void CLASS::adjust_texture_coords(uint8_t const* map,
 		for (j = 0U; j != num_vertices; ++j) {
 			q = reinterpret_cast<typeof q>(vertex_array + j * _decls[i].array.stride + _decls[i].array.offset);
 #if LOGGING_LEVEL >= DETAIL_COORD
-			PPLog(3, "%s:   adjusting X == %d, Y == %d, Z == %d, W == %d\n", __FUNCTION__,a
+			PPLog(3, "%s:   adjusting X == %d, Y == %d, Z == %d, W == %d\n", __FUNCTION__,
 				  static_cast<int>(q[0]),
 				  static_cast<int>(q[1]),
 				  static_cast<int>(q[2] * 32767.0F),
@@ -1313,7 +1313,7 @@ void CLASS::ip_3d_sampler_state(uint32_t* p)
 #endif
 #if LOGGING_LEVEL >= DETAIL_COORD
 			PPLog(3, "%s:   binding S%u to T%u%s\n", __FUNCTION__,
-				  i, tmi, bit_select(q[1], 5, 1) ? "" : " unnormalized-coords");
+				  i, tmi, bit_select(q[1], 5, 1) ? "" : " nonnormalized-coords");
 #endif
 			if (bit_select(q[1], 5, 1))
 				nonnormalized_tex_coordinates &= ~(1U << i);
@@ -1886,7 +1886,7 @@ uint32_t CLASS::decode_3d(uint32_t* p, uint32_t cmd)
 	uint32_t skip = 0U;
 	switch (bit_select(cmd, 24, 5)) {
 		case 0x06U: /* 3DSTATE_AA_CMD */
-#if LOGGING_LEVEL >= 2
+#if LOGGING_LEVEL >= 3
 			if (cache_misc_reg(0U, cmd & 0xFFFFFFU)) {
 				PPLog(3, "%s: 3DSTATE_AA_CMD EWEn %u, EW %u, RWEn %u, RW %u\n", __FUNCTION__,
 					  bit_select(cmd, 16, 1),
