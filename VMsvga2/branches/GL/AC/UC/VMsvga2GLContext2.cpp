@@ -970,16 +970,39 @@ IOReturn CLASS::alloc_and_load_texture(VMsvga2TextureBuffer* tx)
 					copyBox.d = gld_th->depth;
 					extra.mem_offset_in_gmr = gld_th->offset_in_client;
 					extra.mem_pitch = gld_th->pitch;
-#if 1
-					if (sys_obj_type == TEX_TYPE_OOB &&
-						extra.mem_offset_in_gmr + copyBox.h * extra.mem_pitch > ltx->agp_size)
-						--copyBox.h;	// TBD: temporary
-#endif
-					rc = m_provider->surfaceDMA3DEx(&hostImage,
-													SVGA3D_WRITE_HOST_VRAM,
-													&copyBox,
-													&extra,
-													&ltx->xfer.fence);
+					/*
+					 * Note: This is a workaround for a bug in VMware backend.
+					 *   It checks if offset_in_gmr + height * pitch <= gmr_end
+					 *   and clips the entire transfer if so.  This is wrong.
+					 *   The correct test is
+					 *     offset_in_gmr + (height - 1) * pitch + width_bytes <= gmr_end
+					 * The workaround only handles depth 1
+					 */
+					if (sys_obj_type == TEX_TYPE_OOB && copyBox.d == 1U &&
+						extra.mem_offset_in_gmr + copyBox.h * extra.mem_pitch > ltx->agp_size) {
+						--copyBox.h;
+						m_provider->surfaceDMA3DEx(&hostImage,
+												   SVGA3D_WRITE_HOST_VRAM,
+												   &copyBox,
+												   &extra);
+						extra.mem_offset_in_gmr += copyBox.h * extra.mem_pitch;
+						extra.mem_pitch = gld_th->width_bytes;
+						copyBox.y = copyBox.h;
+						copyBox.h = 1U;
+						extra.suffix_flags = 2U;
+						rc = m_provider->surfaceDMA3DEx(&hostImage,
+														SVGA3D_WRITE_HOST_VRAM,
+														&copyBox,
+														&extra,
+														&ltx->xfer.fence);
+						copyBox.y = 0U;
+						extra.suffix_flags = 3U;
+					} else
+						rc = m_provider->surfaceDMA3DEx(&hostImage,
+														SVGA3D_WRITE_HOST_VRAM,
+														&copyBox,
+														&extra,
+														&ltx->xfer.fence);
 					if (rc != kIOReturnSuccess)
 						goto clean2;
 				}

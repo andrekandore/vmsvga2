@@ -46,6 +46,8 @@
 #define GLDLog(log_level, ...)
 #endif
 
+#define GLD_VERSION "APPLE-1.6.26"
+
 #pragma GCC visibility push(hidden)
 
 kern_return_t glrPopulateDevice(io_connect_t connect, display_info_t* dinfo)
@@ -138,7 +140,7 @@ uint32_t glrGLIAlphaGE(int alpha_bits)
 static
 int glrCheckTimeStampShared(gld_shared_t* shared, int32_t num_to_compare)
 {
-	int32_t const* p = (int32_t const*) shared->channel_memory;
+	int32_t const volatile* p = (int32_t const volatile*) shared->channel_memory;
 	return (num_to_compare - p[16]) <= 0;
 }
 
@@ -147,11 +149,11 @@ void glrWaitSharedObject(gld_shared_t* shared, gld_sys_object_t* obj)
 	uint64_t input;
 	int index;
 	switch (obj->type) {
-		case 6:
+		case TEX_TYPE_AGPREF:
 			index = 0;
 			break;
-		case 2:
-		case 9:
+		case TEX_TYPE_IOSURFACE:
+		case TEX_TYPE_OOB:
 			index = 1;
 			break;
 		default:
@@ -188,17 +190,17 @@ void glrFlushSysObject(gld_context_t* context, gld_sys_object_t* obj, int arg2)
 	if (arg2) {
 		if (arg2 == 1)
 			switch (obj->type) {
-				case 6:
-				case 8:
-				case 9:
+				case TEX_TYPE_AGPREF:
+				case TEX_TYPE_STD:
+				case TEX_TYPE_OOB:
 					break;
 				default:
 					return;
 			}
 	} else switch (obj->type) {
-		case 9:
-		case 6:
-		case 2:
+		case TEX_TYPE_OOB:
+		case TEX_TYPE_AGPREF:
+		case TEX_TYPE_IOSURFACE:
 			break;
 		default:
 			return;
@@ -250,9 +252,27 @@ void glrReleaseVendShrPipeProg(gld_shared_t* shared, void* arg1)
 {
 }
 
-void glrDeleteCachedProgram(gld_pipeline_program_t* pp, void* arg1)
+void glrReleaseVendCtxPipeProg(void* arg0, void* arg1)
 {
-	// FIXME
+	int* refcounted = (int*) arg1;
+	if (!(--(*refcounted)))
+		free(arg1);
+}
+
+void glrDeleteCachedProgram(gld_pipeline_program_t* pp, vend_ctx_pipe_prog* ctxp)
+{
+	if (ctxp->prev)
+		ctxp->prev->next = ctxp->next;
+	else
+		pp->ctx_next = ctxp->next;
+	if (ctxp->next)
+		ctxp->next->prev = ctxp->prev;
+	else
+		pp->ctx_prev = ctxp->prev;
+	--pp->ctx_count;
+	if (ctxp->f2)
+		glrReleaseVendCtxPipeProg(ctxp->f0, ctxp->f2);
+	free(ctxp);
 }
 
 void glrDeleteSysPipelineProgram(gld_shared_t* shared, gld_pipeline_program_t* pp)
@@ -262,6 +282,23 @@ void glrDeleteSysPipelineProgram(gld_shared_t* shared, gld_pipeline_program_t* p
 		pp->f0.p = 0;
 		pp->f0.f = 0;
 	}
+}
+
+void glrModifySysPipelineProgram(gld_shared_t* shared, gld_pipeline_program_t* pp)
+{
+	if (!(pp->f1 & 5U) || !pp->f0.f)
+		return;
+	if (shared->needs_locking) {
+		pthread_mutex_lock(&shared->mutex);
+		if (!pp->f0.f)
+			goto done;
+	}
+	libglprogrammability.glpFreePPShaderToProgram(pp->f0.p);
+	pp->f0.p = 0;
+	pp->f0.f = 0U;
+done:
+	if (shared->needs_locking)
+		pthread_mutex_unlock(&shared->mutex);
 }
 
 GLDReturn glrValidatePixelFormat(PixelFormat* pixel_format)
@@ -337,11 +374,11 @@ char const* glrGetString(display_info_t* dinfo, int string_code)
 		case GL_VERSION:
 #if 0
 			if (dinfo->config[0] & 0x100000U)
-				return "2.1 APPLE-1.6.24";
+				return "2.1 " GLD_VERSION;
 			if (dinfo->config[0] & 0x80000U)
-				return "2.0 APPLE-1.6.24";
+				return "2.0 " GLD_VERSION;
 #endif
-			return "1.4 APPLE-1.6.24";
+			return "1.4 " GLD_VERSION;
 		case GL_EXTENSIONS:
 			break;
 		case GL_VENDOR + 4:
@@ -359,9 +396,28 @@ char const* glrGetString(display_info_t* dinfo, int string_code)
 	return 0;
 }
 
-void glrFlushMemory(int arg0, void* arg1, int arg2)
+static inline
+uint8_t const* round_ptr(uint8_t const* p, ptrdiff_t c)
 {
-	// FIXME: neat function, flushes cache line
+	return (uint8_t const*) (((ptrdiff_t) p) & -c);
+}
+
+void glrFlushMemory(int arg0, uint8_t const* base, uint32_t num_bytes)
+{
+	uint8_t const* p;
+	ptrdiff_t clsize;
+	uint32_t v;
+#ifdef __LP64__
+	v = *(uint32_t const*) 0x7FFFFFE00020ULL;
+#else
+	v = *(uint32_t const*) 0xFFFF0020U;
+#endif
+	clsize = 64;
+	if (!(v & 32U))
+		clsize = (v & 64U) ? 128 : 32;
+	for (p = round_ptr(base, clsize); p < base + num_bytes; p += clsize)
+		__builtin_ia32_clflush(p);
+	__builtin_ia32_mfence();
 }
 
 void glrReleaseDrawable(gld_context_t* context)

@@ -179,7 +179,7 @@ typedef struct _gld_context_t {
 	uint32_t f8[2];					// ( 9C,  D0)
 	uint64_t f9[3];					// ( A4,  D8)
 	uint32_t f10;					// ( BC,  F0)
-	uint32_t f11;					// ( C0,  F4)
+	GLDReturn last_error;			// ( C0,  F4)
 	uint64_t f12[2];				// ( C4,  F8)
 	struct _gld_texture_t* stages[16];
 									// ( D4, 108) - 16 Sampler Stages
@@ -192,9 +192,9 @@ typedef struct _gld_context_t {
 	size_t mem1_size;				// (15c, 1F8)
 	void* pad_addr;					// (160, 200)
 	uint32_t pad_size;				// (164, 208)
-	void* mem2_addr;				// (168, 210)
-	size_t mem2_size;				// (16C, 218)
-	void* mem2_local;				// (170, 220)
+	struct GLDFence* kfence_addr;	// (168, 210)
+	size_t kfence_size_bytes;		// (16C, 218)
+	uint32_t* fences_bitmap;		// (170, 220)
 	void* f20;						// (174, 228)
 	uint32_t f21;					// (178, 230)
 	void* f22;						// (17C, 238)
@@ -262,6 +262,18 @@ typedef struct _gld_vertex_array_t {
 	void* f1;
 } gld_vertex_array_t;
 
+typedef struct _vend_ctx_pipe_prog {
+	void* f0;	// ( 0,  0)
+	struct _vend_ctx_pipe_prog* next;
+				// ( 4,  8)
+	struct _vend_ctx_pipe_prog* prev;
+				// ( 8, 10)
+	uint32_t f1[4];
+				// ( C, 18)
+	void* f2;	// (1C, 28)
+				// (20, 30)
+} vend_ctx_pipe_prog;
+
 typedef struct _gld_pipeline_program_t {
 	void* arg2;        // ( 0,  0)
 	struct {
@@ -269,7 +281,12 @@ typedef struct _gld_pipeline_program_t {
 		uint8_t f;     // ( 8, 10)
 	} f0;
 	uint32_t f1;       // ( C, 18)
-	void* f2[4];       // (10, 20)
+	void* f2;          // (10, 20)
+	struct _vend_ctx_pipe_prog* ctx_next;
+                       // (14, 28)
+	struct _vend_ctx_pipe_prog* ctx_prev;
+                       // (18, 30)
+	int ctx_count;     // (1C, 38)
 	struct _gld_pipeline_program_t* next;
                        // (20, 40)
 	struct _gld_pipeline_program_t* prev;

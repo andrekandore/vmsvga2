@@ -87,7 +87,7 @@ enum eIOGLContextModeBits {
 	CGLCMB_StencilMode0      = 0x00000080U,
 	CGLCMB_AuxBuffersMask    = 0x00000300U,
 	CGLCMB_DoubleBuffer      = 0x00000400U,
-	CGLCMB_FullScreen        = 0x00000800U,
+	CGLCMB_SBNFS             = 0x00000800U, /* SingleBuffer, not FullScreen */
 	CGLCMB_HaveSampleBuffers = 0x00001000U,
 	CGLCMB_AuxDepthStencil   = 0x00002000U,
 	CGLCMB_BeamSync          = 0x00008000U,

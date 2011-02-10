@@ -111,7 +111,7 @@ GLD_DECLARE_GENERIC(gldDestroyTextureLevel);
 GLDReturn gldCreateBuffer(gld_shared_t* shared, gld_buffer_t** struct_out, void* arg2, void* arg3);
 GLDReturn gldBufferSubData(void);
 GLDReturn gldLoadBuffer(void);
-GLDReturn gldFlushBuffer(gld_shared_t* shared, gld_buffer_t* buffer, void* arg2, int arg3);
+GLDReturn gldFlushBuffer(gld_shared_t* shared, gld_buffer_t* buffer, void const* base, uint32_t num_bytes);
 void gldPageoffBuffer(gld_shared_t* shared, void*, gld_buffer_t* buffer);
 void gldUnbindBuffer(gld_context_t* context, gld_buffer_t* buffer);
 void gldReclaimBuffer(gld_shared_t* shared, gld_buffer_t* buffer);

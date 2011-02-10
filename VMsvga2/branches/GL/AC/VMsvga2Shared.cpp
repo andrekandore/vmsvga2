@@ -302,6 +302,10 @@ void CLASS::finalize_texture(class VMsvga2Accel* provider, VMsvga2TextureBuffer*
 		texture->client_map = 0;
 	}
 	texture->xfer.discard();
+#ifdef ATTACH_SURFACE_TEXTURE
+	if (texture->sys_obj_type == TEX_TYPE_SURFACE && texture->linked_surface)
+		texture->linked_surface->detachGL();
+#endif
 	if (!provider)
 		return;
 	if (isIdValid(texture->yuv_shadow)) {
@@ -588,6 +592,9 @@ VMsvga2TextureBuffer* CLASS::new_surface_texture(uint32_t surface_id,
 {
 	class VMsvga2Surface* surface;
 	VMsvga2TextureBuffer* p;
+#ifdef ATTACH_SURFACE_TEXTURE
+	IOReturn rc;
+#endif
 	if (!m_provider)
 		return 0;
 	surface = m_provider->findSurfaceForID(surface_id);
@@ -595,9 +602,19 @@ VMsvga2TextureBuffer* CLASS::new_surface_texture(uint32_t surface_id,
 		SHLog(1, "%s: surface id %#x not found\n", __FUNCTION__, surface_id);
 		return 0;
 	}
+#ifdef ATTACH_SURFACE_TEXTURE
+	rc = surface->attachGL(0);
+	if (rc != kIOReturnSuccess) {
+		SHLog(1, "%s: failed to attach to surface %#x, return %#x\n", __FUNCTION__, surface_id, rc);
+		return 0;
+	}
+#endif
 	p = common_texture_init(TEX_TYPE_SURFACE);
 	if (!p) {
 		SHLog(1, "%s: common_texture_init failed\n", __FUNCTION__);
+#ifdef ATTACH_SURFACE_TEXTURE
+		surface->detachGL();
+#endif
 		return 0;
 	}
 	p->creator = this;

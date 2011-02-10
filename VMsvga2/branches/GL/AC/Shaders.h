@@ -10,7 +10,7 @@
 #ifndef __SHADERS_H__
 #define __SHADERS_H__
 
-#define NUM_FIXED_SHADERS 17U
+#define NUM_FIXED_SHADERS 22U
 
 #ifdef __cplusplus
 extern "C" {
