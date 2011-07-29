@@ -123,7 +123,7 @@ public:
 	 * Command buffer process & discard methods [Apple]
 	 */
 	/*
-	 * Tokens 0 - 10
+	 * Tokens 0 - 11
 	 */
 	void process_token_Noop(VendorGLStreamInfo*);
 	void process_token_TextureVolatile(VendorGLStreamInfo*);
@@ -135,11 +135,12 @@ public:
 	void process_token_UnbindReadFBO(VendorGLStreamInfo*);
 	void process_token_Start(VendorGLStreamInfo*);
 	void process_token_End(VendorGLStreamInfo*);
+	void process_token_UserEnd(VendorGLStreamInfo*);
 	void process_token_Swap(VendorGLStreamInfo*);
 	void process_token_Flush(VendorGLStreamInfo*);
 
 	/*
-	 * Tokens 32 - 61
+	 * Tokens 32 - 64
 	 */
 	void discard_token_Texture(VendorGLStreamInfo*);
 	void discard_token_NoTex(VendorGLStreamInfo*);
@@ -150,6 +151,8 @@ public:
 	void discard_token_TexSubImage2D(VendorGLStreamInfo*);
 	void discard_token_CopyPixelsDst(VendorGLStreamInfo*);
 	void discard_token_AsyncReadDrawBuffer(VendorGLStreamInfo*);
+	void discard_token_BindHeap(VendorGLStreamInfo*);
+	void discard_token_SetShaderHeapOffsets(VendorGLStreamInfo*);
 	void process_token_Texture(VendorGLStreamInfo*);
 	void process_token_NoTex(VendorGLStreamInfo*);
 	void process_token_VertexBuffer(VendorGLStreamInfo*);
@@ -162,6 +165,8 @@ public:
 	void process_token_CopyPixelsSrcFBO(VendorGLStreamInfo*);
 	void process_token_DrawRect(VendorGLStreamInfo*);
 	void process_token_AsyncReadDrawBuffer(VendorGLStreamInfo*);
+	void process_token_BindHeap(VendorGLStreamInfo*);
+	void process_token_SetShaderHeapOffsets(VendorGLStreamInfo*);
 
 public:
 	/*

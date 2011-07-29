@@ -302,11 +302,16 @@ IOReturn mapGLDTextureHeader(VMsvga2TextureBuffer* tx, IOMemoryMap** map);
 
 typedef void (CLASS::*dispatch_function_t)(VendorGLStreamInfo*);
 
+#define DEFINE_COUNT(name) static size_t const name##_count = sizeof name / sizeof name[0]
+
 static
-dispatch_function_t dispatch_discard_1[] =
+dispatch_function_t const dispatch_discard_1[] =
 {
 	&CLASS::process_token_Noop,
 	&CLASS::process_token_Noop,
+#if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ >= 1070
+	&CLASS::process_token_Noop,
+#endif
 	&CLASS::process_token_Noop,
 	&CLASS::process_token_Noop,
 	&CLASS::process_token_TextureVolatile,
@@ -317,9 +322,10 @@ dispatch_function_t dispatch_discard_1[] =
 	&CLASS::process_token_UnbindDrawFBO,
 	&CLASS::process_token_UnbindReadFBO,
 };
+DEFINE_COUNT(dispatch_discard_1);
 
 static
-dispatch_function_t dispatch_discard_2[] =
+dispatch_function_t const dispatch_discard_2[] =
 {
 	&CLASS::discard_token_Texture,
 	&CLASS::discard_token_Texture,
@@ -351,13 +357,22 @@ dispatch_function_t dispatch_discard_2[] =
 	&CLASS::discard_token_Noop,
 	&CLASS::discard_token_Noop,
 	&CLASS::discard_token_AsyncReadDrawBuffer,
+#if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ >= 1070
+	&CLASS::discard_token_BindHeap,
+	&CLASS::discard_token_BindHeap,
+	&CLASS::discard_token_SetShaderHeapOffsets,
+#endif
 };
+DEFINE_COUNT(dispatch_discard_2);
 
 static
-dispatch_function_t dispatch_process_1[] =
+dispatch_function_t const dispatch_process_1[] =
 {
 	&CLASS::process_token_Start,
 	&CLASS::process_token_End,
+#if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ >= 1070
+	&CLASS::process_token_UserEnd,
+#endif
 	&CLASS::process_token_Swap,
 	&CLASS::process_token_Flush,
 	&CLASS::process_token_TextureVolatile,
@@ -368,9 +383,10 @@ dispatch_function_t dispatch_process_1[] =
 	&CLASS::process_token_UnbindDrawFBO,
 	&CLASS::process_token_UnbindReadFBO,
 };
+DEFINE_COUNT(dispatch_process_1);
 
 static
-dispatch_function_t dispatch_process_2[] =
+dispatch_function_t const dispatch_process_2[] =
 {
 	&CLASS::process_token_Texture,
 	&CLASS::process_token_Texture,
@@ -402,7 +418,15 @@ dispatch_function_t dispatch_process_2[] =
 	&CLASS::process_token_CopyPixelsSrcFBO,
 	&CLASS::process_token_DrawRect,
 	&CLASS::process_token_AsyncReadDrawBuffer,
+#if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ >= 1070
+	&CLASS::process_token_BindHeap,
+	&CLASS::process_token_BindHeap,
+	&CLASS::process_token_SetShaderHeapOffsets,
+#endif
 };
+DEFINE_COUNT(dispatch_process_2);
+
+#undef DEFINE_COUNT
 
 #pragma mark -
 #pragma mark Private Methods
@@ -458,9 +482,9 @@ uint32_t CLASS::processCommandBuffer(VendorCommandDescriptor* result)
 #if LOGGING_LEVEL >= 4
 		GLLog(4, "%s:   cmd %#x length %u\n", __FUNCTION__, upper, cb_iter.cmd & 0xFFFFFFU);
 #endif
-		if (upper <= 10U)
+		if (upper < dispatch_process_1_count)
 			(this->*dispatch_process_1[upper])(&cb_iter);
-		else if (upper >= 32U && upper <= 61U)
+		else if (upper >= 32U && upper < 32U + dispatch_process_2_count)
 			(this->*dispatch_process_2[upper - 32U])(&cb_iter);
 		if (m_stream_error)
 			break;
@@ -496,9 +520,9 @@ void CLASS::discardCommandBuffer()
 	do {
 		cb_iter.cmd = *cb_iter.p;
 		upper = cb_iter.cmd >> 24;
-		if (upper <= 10U)
+		if (upper < dispatch_discard_1_count)
 			(this->*dispatch_discard_1[upper])(&cb_iter);
-		else if (upper >= 32U && upper <= 61U)
+		else if (upper >= 32U && upper < 32U + dispatch_discard_2_count)
 			(this->*dispatch_discard_2[upper - 32U])(&cb_iter);
 		else
 			m_stream_error = 5;
@@ -1462,6 +1486,7 @@ void CLASS::process_token_UnbindReadFBO(VendorGLStreamInfo* info)
 
 HIDDEN void CLASS::process_token_Start(VendorGLStreamInfo*) {} // Null
 HIDDEN void CLASS::process_token_End(VendorGLStreamInfo*) {} // Null
+HIDDEN void CLASS::process_token_UserEnd(VendorGLStreamInfo*) {} // TBD OS 10.7
 
 HIDDEN
 void CLASS::process_token_Swap(VendorGLStreamInfo* info)
@@ -1657,6 +1682,9 @@ void CLASS::discard_token_AsyncReadDrawBuffer(VendorGLStreamInfo* info)
 		m_shared->delete_texture(tx);
 	bzero(&info->p[0], 10U * sizeof(uint32_t));
 }
+
+HIDDEN void CLASS::discard_token_BindHeap(VendorGLStreamInfo*) {} // TBD OS 10.7
+HIDDEN void CLASS::discard_token_SetShaderHeapOffsets(VendorGLStreamInfo*) {} // TBD OS 10.7
 
 HIDDEN
 void CLASS::process_token_Texture(VendorGLStreamInfo* info)
@@ -2034,4 +2062,18 @@ void CLASS::process_token_AsyncReadDrawBuffer(VendorGLStreamInfo* info)
 {
 	GLLog(1, "%s() Unsupported\n", __FUNCTION__);
 	discard_token_AsyncReadDrawBuffer(info);
+}
+
+HIDDEN
+void CLASS::process_token_BindHeap(VendorGLStreamInfo* info)
+{
+	GLLog(1, "%s() Unsupported\n", __FUNCTION__);
+	discard_token_BindHeap(info);
+}
+
+HIDDEN
+void CLASS::process_token_SetShaderHeapOffsets(VendorGLStreamInfo* info)
+{
+	GLLog(1, "%s() Unsupported\n", __FUNCTION__);
+	discard_token_SetShaderHeapOffsets(info);
 }
