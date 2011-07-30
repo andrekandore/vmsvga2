@@ -88,6 +88,9 @@ IOExternalMethod iofbFuncsCache[kIOVMGLNumMethods] =
 {0, reinterpret_cast<IOMethod>(&CLASS::get_channel_memory), kIOUCScalarIStructO, 0, kIOUCVariableStructureSize},
 #else
 {0, reinterpret_cast<IOMethod>(&CLASS::submit_command_buffer), kIOUCScalarIStructO, 1, kIOUCVariableStructureSize},
+#if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ < 1070
+{0, reinterpret_cast<IOMethod>(&CLASS::filter_control), kIOUCStructIStructO, kIOUCVariableStructureSize, kIOUCVariableStructureSize},
+#endif
 #endif
 // Note: Methods from NVGLContext
 {0, reinterpret_cast<IOMethod>(&CLASS::get_query_buffer), kIOUCScalarIStructO, 1, kIOUCVariableStructureSize},
@@ -1151,6 +1154,18 @@ IOReturn CLASS::submit_command_buffer(uintptr_t do_get_data,
 	mm->release();
 	return rc;
 }
+
+#if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ < 1070
+HIDDEN
+IOReturn CLASS::filter_control(struct sIOGLFilterControl const* struct_in,
+							   struct sIOGLFilterControl* struct_out,
+							   size_t struct_in_size,
+							   size_t* struct_out_size)
+{
+	GLLog(2, "%s(struct_in, struct_out, %lu, %lu)\n", __FUNCTION__, struct_in_size, *struct_out_size);
+	return kIOReturnUnsupported;
+}
+#endif
 #endif
 
 #pragma mark -

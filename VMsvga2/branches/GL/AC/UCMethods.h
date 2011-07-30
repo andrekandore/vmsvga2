@@ -60,6 +60,9 @@ enum eIOVMGLMethods {
 	kIOVMGLGetChannelMemory,
 #else
 	kIOVMGLSubmitCommandBuffer,
+#if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ < 1070
+	kIOVMGLFilterControl,	// This method only appeared in OS 10.6.8
+#endif
 #endif
 
 	kIOVMGLGetQueryBuffer,
