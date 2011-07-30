@@ -665,7 +665,11 @@ IOReturn CLASS::get_config(uint32_t* c1, uint32_t* c2, uint32_t* c3)
 {
 	uint32_t const vram_size = m_provider->getVRAMSize();
 
+#if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ >= 1070
+	*c1 = 0x40000U;			// GMA 950 [The GMA 900 is unsupported on OS 10.7]
+#else
 	*c1 = 0;				// same as c1 in VMsvga2Device::get_config, used by GLD to discern Intel 915/965/Ironlake(HD)
+#endif
 	*c2 = vram_size;		// same as c3 in VMsvga2Device::get_config, total memory available for textures (no accounting by VMsvga2)
 	*c3 = vram_size;		// same as c4 in VMsvga2Device::get_config, total VRAM size
 	GLLog(2, "%s(*%u, *%u, *%u)\n", __FUNCTION__, *c1, *c2, *c3);

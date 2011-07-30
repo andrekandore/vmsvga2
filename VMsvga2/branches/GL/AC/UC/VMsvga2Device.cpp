@@ -225,7 +225,18 @@ IOReturn CLASS::get_config(uint32_t* c1, uint32_t* c2, uint32_t* c3, uint32_t* c
 {
 	uint32_t const vram_size = m_provider->getVRAMSize();
 
-	*c1 = 0U;	// used by GLD to discern Intel 915/965/Ironlake(HD)
+	/*
+	 * c1 used by GLD to discern Intel 915/965/Ironlake(HD)
+	 *   0x100000U - "HD Graphics"
+	 *   0x080000U - "GMA X3100"
+	 *   0x040000U - "GMA 950"
+	 *   else      - "GMA 900" [Unsupported in OS 10.7]
+	 */
+#if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ >= 1070
+	*c1 = 0x40000U;
+#else
+	*c1 = 0U;
+#endif
 #if LOGGING_LEVEL >= 2
 #if 0
 	*c2 = static_cast<uint32_t>(m_provider->getLogLevelGLD()) & 7U;
