@@ -237,7 +237,7 @@ IOReturn CLASS::get_config(uint32_t* c1, uint32_t* c2, uint32_t* c3, uint32_t* c
 #else
 	*c1 = 0U;
 #endif
-#if LOGGING_LEVEL >= 2
+#ifdef USE_OWN_GLD
 #if 0
 	*c2 = static_cast<uint32_t>(m_provider->getLogLevelGLD()) & 7U;
 #else

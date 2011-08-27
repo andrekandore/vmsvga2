@@ -770,7 +770,7 @@ bool CLASS::start(IOService* provider)
 	 *   GeForce8xxxGLDriver
 	 */
 	if (checkOptionAC(VMW_OPTION_AC_GL_CONTEXT)) {
-#if LOGGING_LEVEL >= 2
+#ifdef USE_OWN_GLD
 		setProperty("IOGLBundleName", "VMsvga2GLDriver");
 #else
 		setProperty("IOGLBundleName", "AppleIntelGMA950GLDriver");
