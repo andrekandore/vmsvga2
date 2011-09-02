@@ -243,6 +243,7 @@
 				INFOPLIST_FILE = "Info-Ensoniq.plist";
 				INFOPLIST_PREPROCESS = YES;
 				MODULE_NAME = net.osx86.driver.EnsoniqAudioPCI;
+				OTHER_LDFLAGS = "-Wl,-i__ZN9IOService22copyClientWithCategoryEPK8OSSymbol:__ZN9IOService19_RESERVEDIOService5Ev";
 				PRODUCT_NAME = EnsoniqAudioPCI;
 				WRAPPER_EXTENSION = kext;
 			};
