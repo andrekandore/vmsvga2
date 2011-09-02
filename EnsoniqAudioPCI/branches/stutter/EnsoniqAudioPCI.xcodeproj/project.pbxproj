@@ -245,6 +245,7 @@
 				MODULE_NAME = net.osx86.driver.EnsoniqAudioPCI;
 				OTHER_LDFLAGS = "-Wl,-i__ZN9IOService22copyClientWithCategoryEPK8OSSymbol:__ZN9IOService19_RESERVEDIOService5Ev";
 				PRODUCT_NAME = EnsoniqAudioPCI;
+				STRIPFLAGS = "-no_uuid -i -r strip_kext_1050.txt";
 				WRAPPER_EXTENSION = kext;
 			};
 			name = ReleaseLeo;
@@ -262,6 +263,7 @@
 				MACOSX_DEPLOYMENT_TARGET = 10.5;
 				MODULE_VERSION = "$(CURRENT_PROJECT_VERSION)";
 				SDKROOT = macosx;
+				STRIPFLAGS = "-no_uuid";
 			};
 			name = ReleaseLeo;
 		};
@@ -295,6 +297,7 @@
 				MACOSX_DEPLOYMENT_TARGET = 10.6;
 				MODULE_VERSION = "$(CURRENT_PROJECT_VERSION)";
 				SDKROOT = macosx;
+				STRIPFLAGS = "-no_uuid";
 			};
 			name = ReleaseSnowLeo;
 		};
