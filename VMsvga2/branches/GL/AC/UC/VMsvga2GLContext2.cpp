@@ -28,6 +28,7 @@
  */
 
 #include <IOKit/IOLib.h>
+#include <libkern/version.h>
 #define GL_INCL_SHARED
 #define GL_INCL_PUBLIC
 #define GL_INCL_PRIVATE
@@ -309,9 +310,7 @@ dispatch_function_t const dispatch_discard_1[] =
 {
 	&CLASS::process_token_Noop,
 	&CLASS::process_token_Noop,
-#if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ >= 1070
-	&CLASS::process_token_Noop,
-#endif
+	&CLASS::process_token_Noop,	// OS 10.7
 	&CLASS::process_token_Noop,
 	&CLASS::process_token_Noop,
 	&CLASS::process_token_TextureVolatile,
@@ -357,11 +356,10 @@ dispatch_function_t const dispatch_discard_2[] =
 	&CLASS::discard_token_Noop,
 	&CLASS::discard_token_Noop,
 	&CLASS::discard_token_AsyncReadDrawBuffer,
-#if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ >= 1070
+	/* Rest are OS 10.7 */
 	&CLASS::discard_token_BindHeap,
 	&CLASS::discard_token_BindHeap,
 	&CLASS::discard_token_SetShaderHeapOffsets,
-#endif
 };
 DEFINE_COUNT(dispatch_discard_2);
 
@@ -370,9 +368,7 @@ dispatch_function_t const dispatch_process_1[] =
 {
 	&CLASS::process_token_Start,
 	&CLASS::process_token_End,
-#if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ >= 1070
-	&CLASS::process_token_UserEnd,
-#endif
+	&CLASS::process_token_UserEnd,	// OS 10.7
 	&CLASS::process_token_Swap,
 	&CLASS::process_token_Flush,
 	&CLASS::process_token_TextureVolatile,
@@ -418,11 +414,10 @@ dispatch_function_t const dispatch_process_2[] =
 	&CLASS::process_token_CopyPixelsSrcFBO,
 	&CLASS::process_token_DrawRect,
 	&CLASS::process_token_AsyncReadDrawBuffer,
-#if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ >= 1070
+	/* Rest are OS 10.7 */
 	&CLASS::process_token_BindHeap,
 	&CLASS::process_token_BindHeap,
-	&CLASS::process_token_SetShaderHeapOffsets,
-#endif
+	&CLASS::process_token_SetShaderHeapOffsets
 };
 DEFINE_COUNT(dispatch_process_2);
 
@@ -482,6 +477,9 @@ uint32_t CLASS::processCommandBuffer(VendorCommandDescriptor* result)
 #if LOGGING_LEVEL >= 4
 		GLLog(4, "%s:   cmd %#x length %u\n", __FUNCTION__, upper, cb_iter.cmd & 0xFFFFFFU);
 #endif
+		if (version_major >= 11 &&	// OS 10.7
+			upper >= 2U && upper < 32U)
+			++upper;
 		if (upper < dispatch_process_1_count)
 			(this->*dispatch_process_1[upper])(&cb_iter);
 		else if (upper >= 32U && upper < 32U + dispatch_process_2_count)
@@ -520,6 +518,9 @@ void CLASS::discardCommandBuffer()
 	do {
 		cb_iter.cmd = *cb_iter.p;
 		upper = cb_iter.cmd >> 24;
+		if (version_major >= 11 &&	// OS 10.7
+			upper >= 2U && upper < 32U)
+			++upper;
 		if (upper < dispatch_discard_1_count)
 			(this->*dispatch_discard_1[upper])(&cb_iter);
 		else if (upper >= 32U && upper < 32U + dispatch_discard_2_count)

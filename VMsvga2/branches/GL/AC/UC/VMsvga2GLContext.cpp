@@ -28,6 +28,7 @@
  */
 
 #include <IOKit/IOBufferMemoryDescriptor.h>
+#include <libkern/version.h>
 #define GL_INCL_SHARED
 #define GL_INCL_PUBLIC
 #define GL_INCL_PRIVATE
@@ -55,7 +56,7 @@ OSDefineMetaClassAndStructors(VMsvga2GLContext, IOUserClient);
 #define HIDDEN __attribute__((visibility("hidden")))
 
 static
-IOExternalMethod iofbFuncsCache[kIOVMGLNumMethods] =
+IOExternalMethod const iofbFuncsCache[kIOVMGLNumMethods] =
 {
 // Note: methods from IONVGLContext
 {0, reinterpret_cast<IOMethod>(&CLASS::set_surface), kIOUCScalarIScalarO, 4, 0},
@@ -88,9 +89,7 @@ IOExternalMethod iofbFuncsCache[kIOVMGLNumMethods] =
 {0, reinterpret_cast<IOMethod>(&CLASS::get_channel_memory), kIOUCScalarIStructO, 0, kIOUCVariableStructureSize},
 #else
 {0, reinterpret_cast<IOMethod>(&CLASS::submit_command_buffer), kIOUCScalarIStructO, 1, kIOUCVariableStructureSize},
-#if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ < 1070
 {0, reinterpret_cast<IOMethod>(&CLASS::filter_control), kIOUCStructIStructO, kIOUCVariableStructureSize, kIOUCVariableStructureSize},
-#endif
 #endif
 // Note: Methods from NVGLContext
 {0, reinterpret_cast<IOMethod>(&CLASS::get_query_buffer), kIOUCScalarIStructO, 1, kIOUCVariableStructureSize},
@@ -278,6 +277,10 @@ IOReturn CLASS::get_status(uint32_t* status)
 
 IOExternalMethod* CLASS::getTargetAndMethodForIndex(IOService** targetP, UInt32 index)
 {
+#if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ >= 1060
+	if (index >= kIOVMGLFilterControl && (version_major != 10 || version_minor != 8))
+		++index;
+#endif
 	if (index >= kIOVMGLNumMethods)
 		GLLog(2, "%s(target_out, %u)\n", __FUNCTION__, static_cast<unsigned>(index));
 	if (!targetP || index >= kIOVMGLNumMethods)
@@ -293,7 +296,7 @@ IOExternalMethod* CLASS::getTargetAndMethodForIndex(IOService** targetP, UInt32 
 #else
 	*targetP = this;
 #endif
-	return &iofbFuncsCache[index];
+	return const_cast<IOExternalMethod*>(&iofbFuncsCache[index]);
 }
 
 IOReturn CLASS::clientClose()
@@ -665,11 +668,8 @@ IOReturn CLASS::get_config(uint32_t* c1, uint32_t* c2, uint32_t* c3)
 {
 	uint32_t const vram_size = m_provider->getVRAMSize();
 
-#if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ >= 1070
-	*c1 = 0x40000U;			// GMA 950 [The GMA 900 is unsupported on OS 10.7]
-#else
-	*c1 = 0;				// same as c1 in VMsvga2Device::get_config, used by GLD to discern Intel 915/965/Ironlake(HD)
-#endif
+	// 0x40000U - GMA 950 [The GMA 900 is unsupported on OS 10.7]
+	*c1 = version_major >= 11 ? 0x40000U : 0U;
 	*c2 = vram_size;		// same as c3 in VMsvga2Device::get_config, total memory available for textures (no accounting by VMsvga2)
 	*c3 = vram_size;		// same as c4 in VMsvga2Device::get_config, total VRAM size
 	GLLog(2, "%s(*%u, *%u, *%u)\n", __FUNCTION__, *c1, *c2, *c3);
@@ -1159,7 +1159,6 @@ IOReturn CLASS::submit_command_buffer(uintptr_t do_get_data,
 	return rc;
 }
 
-#if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ < 1070
 HIDDEN
 IOReturn CLASS::filter_control(struct sIOGLFilterControl const* struct_in,
 							   struct sIOGLFilterControl* struct_out,
@@ -1169,7 +1168,6 @@ IOReturn CLASS::filter_control(struct sIOGLFilterControl const* struct_in,
 	GLLog(2, "%s(struct_in, struct_out, %lu, %lu)\n", __FUNCTION__, struct_in_size, *struct_out_size);
 	return kIOReturnUnsupported;
 }
-#endif
 #endif
 
 #pragma mark -
