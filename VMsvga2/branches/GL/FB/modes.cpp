@@ -3,7 +3,7 @@
  *  VMsvga2
  *
  *  Created by Zenith432 on July 11th 2009.
- *  Copyright 2009-2010 Zenith432. All rights reserved.
+ *  Copyright 2009-2011 Zenith432. All rights reserved.
  *
  */
 
@@ -40,6 +40,7 @@ DisplayModeEntry const modeList[NUM_DISPLAY_MODES] =
 	 800,  600, kDisplayModeValidFlag | kDisplayModeSafeFlag,	// 4x3 Note: reserved for Custom Mode
 	 800,  600, kDisplayModeValidFlag | kDisplayModeSafeFlag,	// 4x3
 	1024,  768, kDisplayModeValidFlag | kDisplayModeSafeFlag | kDisplayModeDefaultFlag,	// 4x3
+	1152,  720, kDisplayModeValidFlag | kDisplayModeSafeFlag,	// 8x5
 	1152,  864, kDisplayModeValidFlag | kDisplayModeSafeFlag,	// 4x3
 	1152,  900, kDisplayModeValidFlag | kDisplayModeSafeFlag,	// 32x25
 	1280,  720, kDisplayModeValidFlag | kDisplayModeSafeFlag,	// 16x9
@@ -60,5 +61,6 @@ DisplayModeEntry const modeList[NUM_DISPLAY_MODES] =
 	2048, 1152, kDisplayModeValidFlag | kDisplayModeSafeFlag,	// 16x9
 	2048, 1536, kDisplayModeValidFlag | kDisplayModeSafeFlag,	// 4x3
 	2360, 1770, kDisplayModeValidFlag | kDisplayModeSafeFlag,	// 4x3 Note: was 2364x1773
+	2560, 1440, kDisplayModeValidFlag | kDisplayModeSafeFlag,	// 16x9
 	2560, 1600, kDisplayModeValidFlag | kDisplayModeSafeFlag	// 8x5
 };

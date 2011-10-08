@@ -45,7 +45,7 @@ OSDefineMetaClassAndStructors(VMsvga2OCDContext, IOUserClient);
 #endif
 
 static
-IOExternalMethod iofbFuncsCache[kIOVMOCDNumMethods] =
+IOExternalMethod const iofbFuncsCache[kIOVMOCDNumMethods] =
 {
 // IONVOCDContext
 	{0, reinterpret_cast<IOMethod>(&CLASS::finish), kIOUCScalarIScalarO, 0, 0},
@@ -78,7 +78,7 @@ IOExternalMethod* CLASS::getTargetAndMethodForIndex(IOService** targetP, UInt32 
 #else
 	*targetP = this;
 #endif
-	return &iofbFuncsCache[index];
+	return const_cast<IOExternalMethod*>(&iofbFuncsCache[index]);
 }
 
 IOReturn CLASS::clientClose()
