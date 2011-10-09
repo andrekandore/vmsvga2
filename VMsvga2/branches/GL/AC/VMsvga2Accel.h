@@ -120,9 +120,6 @@ private:
 								   SInt32 event,
 								   void* info);
 #endif
-	void dumpSurfaceCaps(uint32_t caps);
-	void dumpGPUCaps();
-	void getGPUCaps();
 
 public:
 	/*
