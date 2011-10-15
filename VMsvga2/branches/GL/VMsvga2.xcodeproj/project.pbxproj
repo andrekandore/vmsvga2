@@ -555,6 +555,9 @@
 /* Begin PBXProject section */
 		089C1669FE841209C02AAC07 /* Project object */ = {
 			isa = PBXProject;
+			attributes = {
+				LastUpgradeCheck = 0420;
+			};
 			buildConfigurationList = 1DEB91DD08733DB10010E9CD /* Build configuration list for PBXProject "VMsvga2" */;
 			compatibilityVersion = "Xcode 3.2";
 			developmentRegion = English;
@@ -676,6 +679,7 @@
 					VLOG_LOCAL,
 					VECTORIZE,
 				);
+				GCC_VERSION = com.apple.compilers.llvmgcc42;
 				INFOPLIST_FILE = "Info-FB.plist";
 				MODULE_NAME = net.osx86.driver.VMsvga2;
 				PRODUCT_NAME = VMsvga2;
@@ -709,6 +713,7 @@
 					FRAGILE,
 					VECTORIZE,
 				);
+				GCC_VERSION = com.apple.compilers.llvmgcc42;
 				INFOPLIST_FILE = "Info-AC.plist";
 				MODULE_NAME = net.osx86.driver.VMsvga2Accel;
 				PRODUCT_NAME = VMsvga2Accel;
@@ -758,6 +763,7 @@
 					VLOG_LOCAL,
 					VECTORIZE,
 				);
+				GCC_VERSION = com.apple.compilers.llvmgcc42;
 				INFOPLIST_FILE = "Info-FB.plist";
 				MODULE_NAME = net.osx86.driver.VMsvga2;
 				PRODUCT_NAME = VMsvga2;
@@ -774,6 +780,7 @@
 					FRAGILE,
 					VECTORIZE,
 				);
+				GCC_VERSION = com.apple.compilers.llvmgcc42;
 				INFOPLIST_FILE = "Info-AC.plist";
 				MODULE_NAME = net.osx86.driver.VMsvga2Accel;
 				PRODUCT_NAME = VMsvga2Accel;
