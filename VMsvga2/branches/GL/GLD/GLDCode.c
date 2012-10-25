@@ -3,7 +3,7 @@
  *  VMsvga2GLDriver
  *
  *  Created by Zenith432 on December 5th 2010.
- *  Copyright 2010-2011 Zenith432. All rights reserved.
+ *  Copyright 2010-2012 Zenith432. All rights reserved.
  *
  *  Permission is hereby granted, free of charge, to any person
  *  obtaining a copy of this software and associated documentation
@@ -33,12 +33,14 @@
 #include <IOKit/IOKitLib.h>
 #include <OpenGL/CGLTypes.h>
 #include <OpenGL/gl.h>
+#include <pthread.h>
 #include "EntryPointNames.h"
 #include "GLDTypes.h"
 #include "GLDCode.h"
 #include "GLDData.h"
 #include "UCMethods.h"
 #include "VLog.h"
+#include "VMsvga2GLDriver.h"
 
 #if LOGGING_LEVEL >= 1
 #define GLDLog(log_level, ...) do { if (log_level <= logLevel) VLog("GLD: ", ##__VA_ARGS__); } while(false)

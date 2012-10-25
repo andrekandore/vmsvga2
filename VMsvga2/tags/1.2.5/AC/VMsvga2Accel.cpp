@@ -29,14 +29,11 @@
 #include <IOKit/pci/IOPCIDevice.h>
 #include <IOKit/graphics/IOGraphicsInterfaceTypes.h>
 #include <IOKit/IOBufferMemoryDescriptor.h>
-#define GL_INCL_PUBLIC
-#include "GLCommon.h"
 #if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ >= 1060
 #include "IOSurfaceRoot.h"
 #endif
 #include "vmw_options_ac.h"
 #include "VLog.h"
-#include "DevCaps.h"
 #include "VMsvga2Accel.h"
 #include "VMsvga2Surface.h"
 #include "VMsvga2GLContext.h"
@@ -262,10 +259,6 @@ void CLASS::Cleanup()
 		bHaveSVGA3D = false;
 		svga3d.Init(0);
 	}
-	if (m_devcaps) {
-		freeGPUCaps(m_devcaps);
-		m_devcaps = 0;
-	}
 	if (bHaveScreenObject) {
 		cleanupPrimaryScreen();
 		bHaveScreenObject = false;
@@ -356,7 +349,7 @@ void CLASS::processOptions()
 {
 	uint32_t boot_arg;
 
-	vmw_options_ac = VMW_OPTION_AC_GL_CONTEXT | VMW_OPTION_AC_2D_CONTEXT | VMW_OPTION_AC_SURFACE_CONNECT;
+	vmw_options_ac = VMW_OPTION_AC_2D_CONTEXT | VMW_OPTION_AC_SURFACE_CONNECT;
 	if (PE_parse_boot_argn("vmw_options_ac", &boot_arg, sizeof boot_arg))
 		vmw_options_ac = boot_arg;
 	if (PE_parse_boot_argn("-svga3d", &boot_arg, sizeof boot_arg))
@@ -367,8 +360,8 @@ void CLASS::processOptions()
 		vmw_options_ac |= VMW_OPTION_AC_DIRECT_BLIT;
 	if (PE_parse_boot_argn("-vmw_no_screen_object", &boot_arg, sizeof boot_arg))
 		vmw_options_ac |= VMW_OPTION_AC_NO_SCREEN_OBJECT;
-	if (PE_parse_boot_argn("-vmw_no_gl", &boot_arg, sizeof boot_arg))
-		vmw_options_ac &= ~VMW_OPTION_AC_GL_CONTEXT;
+	if (PE_parse_boot_argn("-vmw_gl", &boot_arg, sizeof boot_arg))
+		vmw_options_ac |= VMW_OPTION_AC_GL_CONTEXT;
 	if (PE_parse_boot_argn("-vmw_qe", &boot_arg, sizeof boot_arg))
 		vmw_options_ac |= VMW_OPTION_AC_QE;
 	if (checkOptionAC(VMW_OPTION_AC_QE))
@@ -570,22 +563,11 @@ bool CLASS::start(IOService* provider)
 		bHaveScreenObject = true;
 		ACLog(1, "Screen Object On\n");
 	}
-	m_devcaps = allocGPUCaps();
-	if (!m_devcaps) {
-		ACLog(1, "Unable to allocate space for devcaps\n");
-		stop(provider);
-		return false;
-	}
 	if ((bHaveScreenObject || checkOptionAC(VMW_OPTION_AC_SVGA3D | VMW_OPTION_AC_GL_CONTEXT)) &&
 		svga3d.Init(m_svga)) {
 		uint32_t hwv = svga3d.getHWVersion();
 		bHaveSVGA3D = true;
 		ACLog(1, "SVGA3D On, 3D HWVersion == %u.%u\n", SVGA3D_MAJOR_HWVERSION(hwv), SVGA3D_MINOR_HWVERSION(hwv));
-		if (hwv >= SVGA3D_HWVERSION_WS65_B1) {
-			getGPUCaps(m_svga->get3DCapsBlock(), m_devcaps);
-			if (m_log_level_gld >= 2)
-				dumpGPUCaps(m_devcaps);
-		}
 	}
 	if (checkOptionAC(VMW_OPTION_AC_NO_YUV))
 		ACLog(1, "YUV Off\n");
