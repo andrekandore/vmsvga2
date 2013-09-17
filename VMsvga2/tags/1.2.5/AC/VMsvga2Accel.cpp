@@ -29,6 +29,7 @@
 #include <IOKit/pci/IOPCIDevice.h>
 #include <IOKit/graphics/IOGraphicsInterfaceTypes.h>
 #include <IOKit/IOBufferMemoryDescriptor.h>
+#include <libkern/version.h>
 #if __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ >= 1060
 #include "IOSurfaceRoot.h"
 #endif
@@ -623,10 +624,17 @@ bool CLASS::start(IOService* provider)
 #endif
 	}
 	/*
+	 * Similar stupid bug to mentioned below appeared in libGFXShared.dylib
+	 *   starting with OS 10.9 if it can't find this property.
+	 */
+	else if (version_major >= 13)
+		setProperty("IOGLBundleName", "");
+	/*
 	 * Stupid bug in AppleVA attempts to CFRelease a NULL pointer
 	 *   if it can't find this property.
 	 */
 	setProperty("IODVDBundleName", "AppleVADriver");
+	registerService();
 	return true;
 }
 
